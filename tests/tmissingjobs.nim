@@ -30,11 +30,11 @@
 ## With the X record at a shared source picked by the record number,
 ## `several_x_records_at_one_source` rejected found 0 missing 4 at record number 2.
 
-import std/[os, strutils, times]
+import std/[os, strutils, tables, times]
 when defined(release):
   import std/[monotimes, times]
 import parseSEG
-import viewSEG/core/[jobs, missingjobs, missingreport]
+import viewSEG/core/[jobs, missingjobs, missingreport, recordingkind, reportside]
 import utils/[faultyfs, kindfiles, waiting]
 
 proc put(line: var string; at: int; text: string) =
@@ -207,12 +207,17 @@ proc componentFile(path: string; points: openArray[tuple[point, comp: int]];
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
 
-proc run(folder: string; paths: seq[string]; relations: ref SurveyGeometry; cacheDir = ""):
+proc forcing(paths: openArray[string]; kind: RecordingKind): Table[string, RecordingKind] =
+  ## The kind the user set in the Files window for each of `paths`.
+  for p in paths: result[p.normalizedPath] = kind
+
+proc run(folder: string; paths: seq[string]; relations: ref SurveyGeometry; cacheDir = "";
+    forced = initTable[string, RecordingKind](); receivers: ref SurveyGeometry = nil):
     tuple[st: JobState; sink: MissingSink; error: string] =
   let jobs = initJobs()
   let sink = MissingSink()
   let id = jobs.submit(missingSpec(folder, paths),
-    scanMissing(folder, paths, relations, sink, cacheDir))
+    scanMissing(folder, paths, relations, sink, cacheDir, forced, receivers))
   doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}),
     "the scan did not finish: " & $jobs.state(id)
   let info = jobs.info(id).get
@@ -581,7 +586,11 @@ proc main*() =
       var traces: seq[tuple[point, comp: int]] = @[]
       for comp in 1 .. components: traces.add (point: 7, comp: comp)
       componentFile(path, traces, true)
-      let got = run(dir, @[path], spread)
+      # one receiver and one source: not told, so left out until the user sets it
+      let unset = run(dir, @[path], spread).sink.result
+      doAssert unset.notChecked.len == 1 and unset.receiver.stats.records == 0 and
+        unset.shot.stats.records == 0, $unset.notChecked
+      let got = run(dir, @[path], spread, forced = @[path].forcing(rkReceiverSliced))
       doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
       let r = got.sink.result
       doAssert r.notChecked.len == 0 and r.unmatched.len == 0, $r.notChecked & $r.unmatched
@@ -590,24 +599,21 @@ proc main*() =
       doAssert t.files == 1 and t.records == 1 and t.inTemplate == 5 and t.found == 1 and
         t.missing == 4, $components & " " & $t
       for src in 2 .. 5: doAssert rowAt(r.receiver.rows, 1, float64(src)).missing == 1
-      doAssert r.singleSlice, $components
     # two traces of one component: receiver data still, but not one slice
     let twice = dir / "slice-twice.sgd"
     componentFile(twice, [(point: 7, comp: 1), (point: 7, comp: 1)], true)
-    var r = run(dir, @[twice], spread).sink.result
+    var r = run(dir, @[twice], spread, forced = @[twice].forcing(rkReceiverSliced)).sink.result
     doAssert r.shot.stats.records == 0 and r.receiver.stats.records == 1, $r.receiver.stats
-    doAssert not r.singleSlice
     # one source and two receivers is a shot
     let pair = dir / "two-receivers.sgd"
     plainFile(pair, 1, 7 .. 8)
     r = run(dir, @[pair], spread).sink.result
     doAssert r.receiver.stats.records == 0 and r.shot.stats.records == 1 and
       r.shot.stats.found == 2 and r.shot.stats.missing == 98, $r.shot.stats
-    doAssert not r.singleSlice
     # one receiver and no source station: receiver data that cannot be checked
     let blind = dir / "slice-no-source.sgd"
     plainFile(blind, 1, 7 .. 7, sourceless = true)
-    r = run(dir, @[blind], spread).sink.result
+    r = run(dir, @[blind], spread, forced = @[blind].forcing(rkReceiverSliced)).sink.result
     doAssert r.shot.stats.records == 0 and r.receiver.stats.records == 0
     doAssert r.unmatched.len == 1 and r.unmatched[0].path == "slice-no-source.sgd" and
       r.unmatched[0].record == 1 and r.unmatched[0].why == "no source station in the " &
@@ -636,7 +642,8 @@ proc main*() =
             let path = folder / ("r" & $int(st.receiver) & "-s" & $int(src) & ".sgd")
             slicedFile(path, [(receiver: st.receiver, sources: @[src])])
             paths.add path
-      let got = run(folder, paths, survey)
+      # each file a receiver's (one slice alone cannot be told from a shot): set in the Files window
+      let got = run(folder, paths, survey, forced = paths.forcing(rkReceiverSliced))
       doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
       let r = got.sink.result
       doAssert r.unmatched.len == 0 and r.shot.stats.records == 0, layout & " " & $r.unmatched
@@ -647,12 +654,11 @@ proc main*() =
         t.missingInRecords == 3, layout & " " & $t
       doAssert r.receiver.rows.len == 2 and rowAt(r.receiver.rows, 1, 3).missing == 2 and
         rowAt(r.receiver.rows, 1, 4).missing == 1, layout & " " & $r.receiver.rows
-      doAssert not r.singleSlice
-    # one slice alone, as the File tab checks it: the receiver's other shots are missing
-    let alone = run(dir / "across-slices", @[dir / "across-slices" / "r8-s1.sgd"], survey)
+      # one slice alone, as the File tab checks it: the receiver's other shots are missing
+    let one = dir / "across-slices" / "r8-s1.sgd"
+    let alone = run(dir / "across-slices", @[one], survey, forced = @[one].forcing(rkReceiverSliced))
     let t = alone.sink.result.receiver.stats
     doAssert t.records == 1 and t.found == 1 and t.missing == 3, $t
-    doAssert alone.sink.result.singleSlice
 
   block two_o_records_of_one_receiver:
     ## Receiver 2 has two O records, sources 1..3 (record 50) and 4..6 (record 51). Its
@@ -704,7 +710,7 @@ proc main*() =
       xRec(2, "1.00", "2.00", 1, 1, 10, 7, 7), xRec(3, "1.00", "3.00", 1, 1, 10, 7, 7))
     let path = dir / "index-0-1.sgd"
     indexFile(path, [(src: 1.0, index: 0), (src: 2.0, index: 1)])
-    var r = run(dir, @[path], one).sink.result
+    var r = run(dir, @[path], one, forced = @[path].forcing(rkReceiverSliced)).sink.result
     doAssert r.unmatched.len == 0, $r.unmatched
     var t = r.receiver.stats
     doAssert t.records == 1 and t.inTemplate == 3 and t.found == 2 and t.missing == 1, $t
@@ -718,6 +724,9 @@ proc main*() =
     let both = dir / "index-1-2.sgd"
     indexFile(both, [(src: 1.0, index: 1), (src: 2.0, index: 1), (src: 4.0, index: 2),
       (src: 5.0, index: 0)])
+    # (one receiver point whose index varies is one receiver, told a receiver gather: a
+    # station is its line and point. Seen to fail with the index in the place compared:
+    # the file read as a shot gather and no receiver was checked.)
     r = run(dir, @[both], split).sink.result
     t = r.receiver.stats
     doAssert t.records == 2 and t.inTemplate == 6 and t.found == 3 and t.missing == 3, $t

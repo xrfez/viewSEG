@@ -27,16 +27,29 @@
 import std/[os, strutils, tables]
 import parseSEG
 import processSEG/qc/amplitude
-import viewSEG/core/[edits, jobs, noisearea, qualityjobs, qualityreport, state]
+import viewSEG/core/[edits, jobs, noisearea, qualityjobs, qualityreport, recordingkind,
+  reportside, settings, state]
 import utils/[faultyfs, fixtures, noisefiles, waiting]
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state
 
-proc run(paths: seq[string]; edits: Table[string, FileEdits]; cacheDir = ""):
+proc forcing(paths: openArray[string]; kind: RecordingKind): Table[string, RecordingKind] =
+  ## The kind the user set in the Files window for each of `paths`.
+  for p in paths: result[p.normalizedPath] = kind
+
+proc run(paths: seq[string]; edits: Table[string, FileEdits]; cacheDir = "";
+    forced = initTable[string, RecordingKind](); kind = some(rkShotGather);
+    untold = ukNotChecked; folderRun = false):
     tuple[st: JobState; sink: QualitySink; error: string] =
+  ## Scans `paths`. The files these tests write are small, with traces that repeat a
+  ## receiver and files of one receiver and one source, so each is set as a shot gather
+  ## (`kind`) unless `forced` says otherwise or `kind` is none (the kind is then told).
+  let forced = if forced.len == 0 and kind.isSome: paths.forcing(kind.get) else: forced
   let jobs = initJobs()
   let sink = QualitySink()
-  let id = jobs.submit(qualitySpec(paths), scanQuality(paths, edits, sink, cacheDir))
+  let work = scanQuality(paths, edits, sink, cacheDir, NoiseSettings(), forced, untold,
+    folderRun)
+  let id = jobs.submit(qualitySpec(paths), work)
   doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}),
     "the scan did not finish: " & $jobs.state(id)
   let info = jobs.info(id).get
@@ -582,20 +595,131 @@ proc main*() =
     doAssert both.seen == 2 and both.counts[qfAllZero] == 1 and both.counts[qfClipped] == 1,
       $both
 
-  block a_file_of_one_receiver_and_one_source_takes_the_side_of_the_others:
-    # Seen to fail: with the open file always counted at the receivers, the lone file's
-    # station was in the receivers table; with it always at the sources, the one beside
-    # shots was.
+  proc shotFile(path: string) =
+    ## One shot received at three stations: told as a shot from its stations.
+    seismicFile(path, 1, @[
+      (line: 10.0, point: 1.0, component: 1'u8, status: tsLive, samples: zeros(32)),
+      (line: 10.0, point: 2.0, component: 1'u8, status: tsLive, samples: zeros(32)),
+      (line: 10.0, point: 3.0, component: 1'u8, status: tsLive, samples: zeros(32))])
+
+  block a_file_of_one_receiver_and_one_source_is_set_by_the_user:
+    # Seen to fail: with such a file counted at the receivers whatever was set, the forced
+    # receiver gather's station was in the receivers table; with the side of the other
+    # files taken as before, the lone file was measured though no kind was set; with a
+    # mix measured, the report held figures.
     let z = zeros(32)
     let lone = dir / "lone.sgd"
     seismicFile(lone, 1, @[(line: 5.0, point: 5.0, component: 1'u8, status: tsLive, samples: z)])
-    let alone = run(@[lone], none).sink.result
-    doAssert alone.receivers.totals.traces == 0 and alone.sources.totals.traces == 1,
-      "a lone slice is counted at its source"
-    let shot = dir / "b1.sgd"
-    let beside = run(@[lone, shot], none).sink.result
-    doAssert beside.receivers.totals.traces == 5 + 1 and beside.sources.totals.traces == 0,
-      "beside a shot it is counted at the receivers: " & $beside.receivers.totals
+    let alone = run(@[lone], none, kind = none(RecordingKind)).sink.result
+    doAssert alone.receivers.totals.traces == 0 and alone.sources.totals.traces == 0 and
+      alone.notChecked.len == 1 and alone.notChecked[0].why.contains("Files window"),
+      $alone.notChecked
+    doAssert alone.mixed.len == 0 and alone.sides.untold == 1
+    let slice = run(@[lone], none, forced = @[lone].forcing(rkReceiverSliced)).sink.result
+    doAssert slice.receivers.totals.traces == 0 and slice.sources.totals.traces == 1,
+      "a receiver gather is counted at its source"
+    let shot = dir / "qa.sgd"
+    shotFile(shot)
+    let beside = run(@[lone, shot], none, kind = none(RecordingKind)).sink.result
+    doAssert beside.receivers.totals.traces == 3 and beside.sources.totals.traces == 0 and
+      beside.notChecked.len == 1 and beside.mixed.len == 0,
+      "beside a shot it is left out, not a mix: " & $beside.receivers.totals
+    let flipped = run(@[lone, shot], none, forced = @[lone].forcing(rkShotGather)).sink.result
+    doAssert flipped.receivers.totals.traces == 3 + 1 and flipped.notChecked.len == 0
+
+  block a_mix_of_shot_and_receiver_gathers_is_not_reported:
+    let z = zeros(32)
+    let lone = dir / "mixlone.sgd"
+    seismicFile(lone, 1, @[(line: 5.0, point: 5.0, component: 1'u8, status: tsLive, samples: z)])
+    let shot = dir / "qa.sgd"
+    shotFile(shot)
+    let other = dir / "qb.sgd"
+    shotFile(other)
+    let got = run(@[shot, lone, other], none, forced = @[lone].forcing(rkReceiverSliced))
+    doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+    let r = got.sink.result
+    doAssert r.ok and r.receivers.totals.traces == 0 and r.sources.totals.traces == 0,
+      "nothing is calculated for a mix"
+    doAssert r.sides.shots == 2 and r.sides.receivers == 1 and r.sides.untold == 0, $r.sides
+    doAssert r.mixed.contains("2 are shot gathers") and
+      r.mixed.contains("1 is a receiver gather") and r.mixed.contains("Files window"), r.mixed
+
+  block a_continuous_recording_is_still_measured:
+    # Seen to fail: with a continuous recording left out as not a gather, its traces were
+    # not measured (no traces at the receivers).
+    let path = currentSourcePath().parentDir.parentDir / "samples" / "impulsive" /
+      "continuous" / "10_1001.sgd"
+    let got = run(@[path], none, kind = none(RecordingKind))
+    doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+    let r = got.sink.result
+    doAssert r.notChecked.len == 0 and r.mixed.len == 0, $r.notChecked
+    doAssert r.receivers.totals.traces > 0, "a continuous recording is measured at its receivers"
+
+  block files_that_cannot_be_told_in_a_folder:
+    # Seen to fail: with the unanimous rule not applied, the slices were left out beside
+    # the shots; with the choice ignored, "the choice wins" counted none of them.
+    let z = zeros(32)
+    var slices: seq[string] = @[]
+    for n in 1 .. 2:
+      let p = dir / ("untold" & $n & ".sgd")
+      seismicFile(p, n, @[(line: float64(50 + n), point: 5.0, component: 1'u8,
+        status: tsLive, samples: z)])
+      slices.add p
+    let a = dir / "qa.sgd"
+    let b = dir / "qb.sgd"
+    shotFile(a)
+    shotFile(b)
+    let auto = none(RecordingKind)
+    # none told: they stay not checked
+    var r = run(slices, none, kind = auto, folderRun = true).sink.result
+    doAssert r.notChecked.len == 2 and r.sides.untold == 2 and r.taken.len == 0 and
+      r.receivers.totals.traces + r.sources.totals.traces == 0, $r.sides
+    # told shots only: the slices are taken as shot gathers, and the report says so
+    r = run(@[a, b] & slices, none, kind = auto, folderRun = true).sink.result
+    doAssert r.notChecked.len == 0 and r.sides.shots == 4 and r.mixed.len == 0, $r.sides
+    doAssert r.receivers.totals.traces == 3 + 3 + 2, $r.receivers.totals
+    doAssert r.taken == "2 files of one receiver and one source are taken as shot gathers, " &
+      "like the others in the folder.", r.taken
+    # not on the File tab's one file
+    r = run(@[slices[0]], none, kind = auto).sink.result
+    doAssert r.notChecked.len == 1 and r.taken.len == 0
+    # told receivers only: taken as receiver gathers
+    let rg = dir / "qrecv.sgd"
+    var w = openSeismicWriter(rg, SegdOutputOptions(sampleIntervalUs: 2000, numSamples: 32,
+      time: 1_700_000_000.0))
+    for i in 0 ..< 3:
+      writeTraceAt(w, i + 1, 1, 5, 5, 1, tsLive, zeros(32), srcLine = 80,
+        srcPoint = float64(i + 1))
+    doAssert w.close().len == 0
+    r = run(@[rg] & slices, none, kind = auto, folderRun = true).sink.result
+    doAssert r.sides.receivers == 3 and r.sources.totals.traces == 3 + 2 and
+      r.taken.contains("taken as receiver gathers"), $r.sides & r.taken
+    # told shots and receivers: a mix (not a vote), the untold ones counted
+    r = run(@[a, rg] & slices, none, kind = auto, folderRun = true).sink.result
+    doAssert r.mixed.len > 0 and r.sides.untold == 2 and r.receivers.totals.traces == 0
+    # the folder's choice wins over the told files; a file's own kind wins over the choice
+    r = run(@[a, b] & slices, none, kind = auto, untold = ukReceiver).sink.result
+    doAssert r.mixed.len > 0 and r.sides.receivers == 2 and r.taken.contains("as chosen"),
+      $r.sides
+    r = run(slices, none, kind = auto, untold = ukShot).sink.result
+    doAssert r.sides.shots == 2 and r.receivers.totals.traces == 2 and r.taken.len > 0
+    let firstSlice = slices[0]
+    r = run(slices, none, forced = @[firstSlice].forcing(rkReceiverSliced),
+      untold = ukShot).sink.result
+    doAssert r.sides.shots == 1 and r.sides.receivers == 1 and r.mixed.len > 0, $r.sides
+
+  block a_relative_path_finds_the_kind_set_for_the_file:
+    # Seen to fail: with the kind looked up by the path as given, the relative path found
+    # none and the file was not checked.
+    let z = zeros(32)
+    let p = dir / "relative.sgd"
+    seismicFile(p, 1, @[(line: 5.0, point: 5.0, component: 1'u8, status: tsLive, samples: z)])
+    let rel = relativePath(p, getCurrentDir())
+    doAssert not rel.isAbsolute
+    var forced = initTable[string, RecordingKind]()
+    forced[p.normalizedPath] = rkReceiverSliced
+    let r = run(@[rel], none, forced = forced).sink.result
+    doAssert r.sides.receivers == 1 and r.notChecked.len == 0, $r.sides
 
   block a_receiver_gather_is_counted_at_its_sources:
     # one receiver, three sources: its traces are named by the source stations
@@ -606,7 +730,7 @@ proc main*() =
       writeTraceAt(w, i + 1, 1, 5, 5, 1, tsLive, zeros(32), srcLine = 80,
         srcPoint = float64(i + 1))
     doAssert w.close().len == 0
-    let got = run(@[path], none)
+    let got = run(@[path], none, kind = none(RecordingKind))
     doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
     doAssert got.sink.result.receivers.totals.traces == 0
     let report = got.sink.result.sources

@@ -1,7 +1,8 @@
 ## Words for the Missing traces window and the Reports menu. Drawing lives in
 ## the frontend; this module holds the sentences.
 
-import ../core/[missingjobs, missingreport]
+import std/strutils
+import ../core/[missingjobs, missingreport, reportside, settings]
 
 const
   MenuTip* = "Stations the survey's relation records call for that a file does not hold: " &
@@ -16,8 +17,6 @@ const
   NoTemplate* = "No relation records (X records) are imported, so there is nothing to " &
     "check against: import a survey with an X or O relation file."
   KilledNote* = "Killed traces count as present: the file is checked as it is on disk."
-  SingleSliceNote* = "This file holds one shot slice of one receiver: the other shots of " &
-    "this receiver are in other files. Run the folder to check the receiver as a whole."
   SignatureNote* = "A vibrator signature file is not checked: it holds no survey stations."
   Continuous* = "This file is a continuous receiver recording; it is not checked."
   NoTemplateRecord* = "No record of the file has a record in the relation records."
@@ -50,13 +49,46 @@ const
   NoneNotChecked* = "Every file was checked."
   ColLine* = "Line"
   ColPoint* = "Point"
+  ColReceiverLine* = "Receiver line"
+  ColReceiverPoint* = "Receiver point"
+  ColSourceLine* = "Source line"
+  ColSourcePoint* = "Source point"
   ColMissing* = "Missing"
   MissingTip* = "The records (of the files) whose relation record calls for this station and " &
     "that do not have it."
   FilterStations* = "Filter by line or point"
   FilterStationsTip* = "Show only the stations whose line or point holds every word typed here."
-  ReceiversOption* = "Receiver stations (shot gathers)"
+
+const
+  ReceiversOption* = "Receiver stations (shot gathers, continuous recordings)"
   SourcesOption* = "Source stations (receiver gathers)"
+  UntoldLabel* = "Files whose kind cannot be told are:"
+  UntoldTip* = "A file of one receiver and one source may be one slice of a receiver or a " &
+    "shot of one receiver. When every file whose kind is told is of one side, such files " &
+    "are taken as that side; here you can say what they are taken as instead. A kind set " &
+    "in the Files window always wins."
+  UntoldNames*: array[UntoldKind, string] = ["not checked", "shot gathers", "receiver gathers"]
+
+func nothingChecked*(rows: openArray[tuple[path, why: string]]): string =
+  ## What the tab says when no file was checked and some were left out on purpose. The
+  ## advice to set a kind comes only when a file that cannot be told is among them.
+  let files = rows.len
+  result = $files & (if files == 1: " file was" else: " files were") &
+    " not checked, so there is nothing to show."
+  for r in rows:
+    if r.why.contains(SetKindHint):
+      return result & " A file of one receiver and one source cannot be told: " &
+        SetKindHint & ", or say above what such files are."
+
+func columnNames*(side: StationSide): array[3, string] =
+  ## The table's headers: the stations are the receivers missing from shot gathers, or the
+  ## shots (source stations) missing from receiver gathers.
+  if side == ssReceivers: [ColReceiverLine, ColReceiverPoint, ColMissing]
+  else: [ColSourceLine, ColSourcePoint, ColMissing]
+
+func fileNotChecked*(why: string): string =
+  ## What the File tab says of a file that is not checked.
+  if why == ContinuousWhy: Continuous else: "This file is not checked: " & why & "."
 
 func stationNoun*(side: StationSide): string =
   ## "Receiver" for a shot gather's stations, "Source" for a receiver gather's.

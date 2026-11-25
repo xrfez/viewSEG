@@ -31,25 +31,24 @@
 ## listed unread once.
 ##
 ## A station is a line and point. Which of a trace's two stations names it is the
-## file's side (`fileSide`, the rule the missing-traces scan applies to a file): a
-## shot gather's traces are by their receiver stations, a receiver gather's by their
-## source stations, and a file's traces all take the one side. A file of one receiver and
-## one source takes the side most of the other files of the scan took, and a lone one (or
-## a folder of such files only) is a slice, counted at its source station, as the
-## missing-traces scan checks it as a receiver; such a file is measured once and its notes
-## kept for both sides until the scan ends. A scan keeps one report for
-## each side (`receivers`, `sources`); a side no file took is empty. Nothing is
-## computed from a trace's record number.
+## file's side (`reportside.reportSide`, the rule the missing-traces scan applies to a
+## file: the kind of recording the file is treated as, the one the user set in the Files
+## window or else the one told from the file): a shot gather's traces are by their
+## receiver stations, a receiver gather's by their source stations, and a file's traces
+## all take the one side. A continuous receiver recording, and a file whose kind is not
+## told (one receiver and one source) and was not set, are not measured (`notChecked`).
+## Shot gathers and receiver gathers together are not reported: the result says so
+## (`mixed`). A scan keeps one report for each side (`receivers`, `sources`); a side no
+## file took is empty. Nothing is computed from a trace's record number.
 ##
 ## `folderScan` lists a folder (its subfolders only when asked) and scans its files.
 
-import std/[algorithm, os, sets, sequtils, tables]
+import std/[algorithm, options, os, sets, sequtils, tables]
 import parseSEG
 import processSEG/core/[pool, rows, types, workspace]
 import processSEG/qc/amplitude
 import components, edits, filejobs, filesystem, firstbreakjobs, firstbreaks, jobs, noisearea,
-  qualityreport, recordqc, session, state, threads
-from missingjobs import fileSide
+  qualityreport, recordingkind, recordqc, relationside, reportside, session, settings, state, threads
 from missingreport import StationSide
 export StationSide
 
@@ -67,6 +66,16 @@ type
     ok*: bool
     receivers*, sources*: QualityReport ## by the side of the file each trace was in
     unread*: seq[tuple[path, why: string]]
+    notChecked*: seq[tuple[path, why: string]]
+      ## files left out on purpose: a continuous receiver recording, or a file whose kind
+      ## is not told (one receiver and one source) and was not set
+    sides*: SideCounts ## the files of the scan that were shot gathers, receiver gathers, or untold
+    taken*: string
+      ## not empty when files whose kind cannot be told were taken for a side, and which
+      ## (`reportside.takenNote`)
+    mixed*: string
+      ## not empty when the files are of both kinds: nothing is measured into a report,
+      ## and this says so (`reportside.mixedNote`)
     paths*: seq[string] ## the files the scan was given, normalised (what an export must not replace)
     reason*: string
 
@@ -307,77 +316,122 @@ proc fail(sink: QualitySink; why: string; unread: seq[tuple[path, why: string]])
   raise newException(ValueError, why)
 
 proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: QualitySink;
-    cacheDir = ""; noise = NoiseSettings()): JobWork =
+    cacheDir = ""; noise = NoiseSettings();
+    forced = initTable[string, RecordingKind](); untold = ukNotChecked;
+    folderRun = false): JobWork =
   ## The work of a job that scans `paths` and fills `sink` (`qualitySpec`
   ## is the spec to submit it with). Worker-only. `edits` is keyed by the
   ## path strings in `paths`. A cancel raises `JobCancelledError` and leaves
   ## `sink` as it was. `cacheDir` is the index cache folder: "" leaves the
   ## cache alone. A nil `sink` is not filled. `noise` is the user's choice of
-  ## exclusion area for the noisy test.
+  ## exclusion area for the noisy test. `forced` holds the kind the user set for a file in
+  ## the Files window, by the canonical path (`reportside.forcedPath`): it replaces the kind
+  ## told from the file. Files whose kind cannot be told are taken for what `untold` says;
+  ## with "not checked" and `folderRun`, for the side of the files that are told when all of
+  ## those are of one (`takenNote` says so), else left out.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     var unread: seq[tuple[path, why: string]] = @[]
     var builds: array[StationSide, QualityBuild] = [initQualityBuild(), initQualityBuild()]
-    # files of one receiver and one source: kept until the others say which side they are
-    var opened: seq[array[StationSide, QualityBuild]] = @[]
-    var took = [0, 0] # files that were not open: at the receivers, at the sources
+    var notChecked: seq[tuple[path, why: string]] = @[]
+    var counts: SideCounts
     var seen = initHashSet[string]()
     # the files the scan read as seismic: only these are taken by the CSV refusal
     var read: seq[string] = @[]
     # one set of threads for every record
     var workers = newProcessPool(defaultBreakWorkers())
+    var list = paths
+    var round = 0 # 0: the files; 1: those whose kind cannot be told, taken as `takenAs`
+    var takenAs = rsCannotTell
+    var deferred: seq[tuple[path, why: string]] = @[]
+    var taken = 0
     try:
-      for i, path in paths:
-        ctx.setPhase "reading " & path.extractFilename
-        ctx.checkCancelled()
-        let key = path.normalizedPath
-        if key notin seen:
-          seen.incl key
-          var s: Session = nil
-          var why = ""
-          var shortWhy = ""
-          try:
-            s = openKeys(path, cacheDir, ctx, i, paths.len)
-            if s.file.kind != skUnknown: read.add path
-            if s.file.kind == skUnknown: why = "not a SEG-Y, SEG-D or SEG-2 file"
-            elif s.file.len == 0: why = "has no trace keys"
-            else:
-              # (a file that fails part-way counts nothing: it is listed unread, once)
-              var part: array[StationSide, QualityBuild] =
-                [initQualityBuild(), initQualityBuild()]
-              var partUnread: seq[tuple[path, why: string]] = @[]
-              let (side, open) = fileSide(s.file.index.keys)
-              measure(s.filePtr, path, if open: {ssReceivers, ssSources} else: {side},
-                killedSet(edits, path), part, partUnread, s.gathers, noise, ctx,
-                addr workers, i, paths.len)
-              if open: opened.add part
+      while true:
+        for i, path in list:
+          ctx.setPhase "reading " & path.extractFilename
+          ctx.checkCancelled()
+          let key = path.normalizedPath
+          let at = if round == 0: i else: paths.len - 1
+          if round == 1 or key notin seen:
+            seen.incl key
+            var s: Session = nil
+            var why = ""
+            var shortWhy = ""
+            try:
+              s = openKeys(path, cacheDir, ctx, at, paths.len)
+              if s.file.kind != skUnknown and round == 0: read.add path
+              if s.file.kind == skUnknown: why = "not a SEG-Y, SEG-D or SEG-2 file"
+              elif s.file.len == 0: why = "has no trace keys"
               else:
-                builds[side].absorb part[side]
-                inc took[ord(side)]
-              unread.add partUnread
-              shortWhy = cutShortWhy(s.file)
-          except SegCancelledError:
+                let isForced = forcedPath(path) in forced
+                let kind =
+                  if isForced: some(forced[forcedPath(path)]) else: autoKindOf(s, path, ctx)
+                var whole = initStations()
+                for k in s.file.index.keys: whole.note(k)
+                var fileSide = reportSide(kind, isForced, whole)
+                if round == 1: fileSide = (takenAs, "")
+                elif fileSide.side == rsCannotTell and untold != ukNotChecked:
+                  # the user's choice for the files that cannot be told
+                  takenAs = if untold == ukShot: rsShot else: rsReceiver
+                  fileSide = (takenAs, "")
+                  inc taken
+                if round == 0 and fileSide.side == rsCannotTell and folderRun:
+                  # taken for the side of the files that are told, when all are of one
+                  deferred.add (path: path, why: fileSide.why)
+                else:
+                  counts.note fileSide.side
+                  if fileSide.side == rsCannotTell:
+                    notChecked.add (path: path, why: fileSide.why)
+                  elif not counts.isMixed:
+                    # (a mix is not reported: once both sides are seen, files are only
+                    # counted; a continuous recording is measured at its receiver stations)
+                    let side = if fileSide.side == rsReceiver: ssSources else: ssReceivers
+                    # (a file that fails part-way counts nothing: it is listed unread, once)
+                    var part: array[StationSide, QualityBuild] =
+                      [initQualityBuild(), initQualityBuild()]
+                    var partUnread: seq[tuple[path, why: string]] = @[]
+                    measure(s.filePtr, path, {side}, killedSet(edits, path), part, partUnread,
+                      s.gathers, noise, ctx, addr workers, at, paths.len)
+                    builds[side].absorb part[side]
+                    unread.add partUnread
+                    shortWhy = cutShortWhy(s.file)
+            except SegCancelledError:
+              raise newException(JobCancelledError, "cancelled")
+            except JobCancelledError:
+              raise
+            except CatchableError as e:
+              why = if e.msg.len > 0: e.msg else: $e.name
+            finally:
+              s = nil
+              clearCycleRoots()
+            if why.len > 0: unread.add (path: path, why: why)
+            if shortWhy.len > 0: unread.add (path: path, why: shortWhy)
+          if round == 0 and not ctx.progress(PerFile * int64(i + 1), PerFile * int64(paths.len)):
             raise newException(JobCancelledError, "cancelled")
-          except JobCancelledError:
-            raise
-          except CatchableError as e:
-            why = if e.msg.len > 0: e.msg else: $e.name
-          finally:
-            s = nil
-            clearCycleRoots()
-          if why.len > 0: unread.add (path: path, why: why)
-          if shortWhy.len > 0: unread.add (path: path, why: shortWhy)
-        if not ctx.progress(PerFile * int64(i + 1), PerFile * int64(paths.len)):
-          raise newException(JobCancelledError, "cancelled")
-      let openSide = if took[0] > took[1]: ssReceivers else: ssSources
-      for part in opened: builds[openSide].absorb part[openSide]
+        if round == 1 or deferred.len == 0: break
+        # the files that cannot be told: the side of those that are, when all are of one
+        let one = unanimousSide(counts)
+        if one == rsCannotTell:
+          counts.untold += deferred.len
+          for d in deferred: notChecked.add (path: d.path, why: d.why)
+          deferred.setLen 0
+          break
+        takenAs = one
+        taken = deferred.len
+        list = @[]
+        for d in deferred: list.add d.path
+        round = 1
       ctx.setPhase "reporting"
       ctx.checkCancelled()
       if sink != nil:
-        sink.result = QualityJobResult(ok: true,
-          receivers: qualityReport(builds[ssReceivers]),
-          sources: qualityReport(builds[ssSources]), unread: unread,
-          paths: read.mapIt(it.normalizedPath))
+        sink.result = QualityJobResult(ok: true, unread: unread, notChecked: notChecked,
+          sides: counts, paths: read.mapIt(it.normalizedPath),
+          taken: takenNote(taken, takenAs, untold != ukNotChecked))
+        if counts.isMixed:
+          sink.result.mixed = mixedNote(counts)
+        else:
+          sink.result.receivers = qualityReport(builds[ssReceivers])
+          sink.result.sources = qualityReport(builds[ssSources])
     except JobCancelledError:
       raise
     except SegCancelledError:
@@ -403,12 +457,14 @@ proc editsFor(paths: openArray[string]; snap: EditsSnapshot): Table[string, File
       result[path] = snap.byKey[key]
 
 proc fileScan*(path, cacheDir: string; snap: EditsSnapshot; sink: QualitySink;
-    noise: NoiseSettings): JobWork =
+    noise: NoiseSettings; forced = initTable[string, RecordingKind](); untold = ukNotChecked):
+    JobWork =
   ## The work of a job that scans the one file `path`, with the edits `snap` holds for it.
-  scanQuality(@[path], editsFor([path], snap), sink, cacheDir, noise)
+  scanQuality(@[path], editsFor([path], snap), sink, cacheDir, noise, forced)
 
 proc folderScan*(folder: string; subfolders: bool; cacheDir: string; snap: EditsSnapshot;
-    sink: QualitySink; note: QualityNote; noise: NoiseSettings): JobWork =
+    sink: QualitySink; note: QualityNote; noise: NoiseSettings;
+    forced = initTable[string, RecordingKind](); untold = ukNotChecked): JobWork =
   ## The work of a job that lists the seismic files of `folder`, its subfolders only
   ## when `subfolders`, and scans them as `scanQuality` does. `note.capped` says the list
   ## stopped at the file limit.
@@ -424,5 +480,5 @@ proc folderScan*(folder: string; subfolders: bool; cacheDir: string; snap: Edits
       raise newException(ValueError, CannotList)
     if note != nil: note.capped = capped
     ctx.checkCancelled()
-    let scan = scanQuality(paths, editsFor(paths, snap), sink, cacheDir, noise)
+    let scan = scanQuality(paths, editsFor(paths, snap), sink, cacheDir, noise, forced, untold, true)
     scan(ctx)

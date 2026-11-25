@@ -20,23 +20,17 @@
 ## no relations) fails the job with one sentence (`NoSurvey`). A cancel,
 ## also while the receivers are checked, leaves the sink untouched.
 ##
-## What a file is (`sideOf`, the one rule; stations are by line and point): a
-## continuous receiver recording (`rkReceiverContinuous`, as the program shows
-## the file) is not checked (`notChecked`). Otherwise the file's stations
-## decide. Several receivers and one source (or none) is a shot, checked
-## against its X record, receivers expected; one receiver and several sources
-## (or none) is a receiver, checked against its O record, sources expected. One
-## receiver and one source is open: one shot slice and a shot that one receiver
-## recorded look alike, so it is kept as one trace's keys and, when every file
-## is read, takes the side most of the files that were not open took; with none
-## (one file alone, or a folder of slices only) it is a slice. Several of both:
-## the recording kind (`planRecording` and `describeRecording`: shot gather or
-## sliced receiver gather) decides, or, when it cannot be told, the same rule
-## for each gather, a gather of one receiver and one source being a slice and
-## one of several of both listed in `unmatched`. Every trace of one receiver
-## station, in any file and any number of gathers (one for each shot slice), is
-## one check, so a receiver side's `records` are receivers checked, and its
-## `Missing` for a source is the receivers that lack it.
+## What a file is (`reportside.reportSide`, the one rule: the kind of recording the file
+## is treated as, the one the user set in the Files window or else the one told from the
+## file; stations are by line and point): a shot gather is checked against its X record,
+## receivers expected; a receiver gather (a receiver's record sliced by shot) against the
+## O record of its receiver, shots expected. A continuous receiver recording is not
+## checked (`notChecked`), nor is a file whose kind cannot be told (one receiver and one
+## source) and was not set. A scan of shot gathers and receiver gathers together is not
+## calculated: the result says so (`mixed`, `sides`) and holds no figures. Every trace of
+## one receiver station, in any file and any number of gathers (one for each shot slice),
+## is one check, so a receiver side's `records` are receivers checked, and its `Missing`
+## for a source is the receivers that lack it.
 ##
 ## Several X records at a shot's source station: the record number does not
 ## pick one (`recordCompleteness` would). The shot is checked against each, a
@@ -55,12 +49,12 @@
 ## and index 1 are one receiver, and the index splits it only where the survey
 ## has the point at several indices.
 
-import std/[math, os, sets, strutils, tables]
+import std/[math, options, os, sets, strutils, tables]
 import parseSEG
 import processSEG/qc/record
 import processSEG/survey/relwalk
-import correlatejobs, filejobs, filesystem, jobs, missingreport, recordingkind,
-  relationcheck, session, threads, vendormaps
+import filejobs, filesystem, jobs, missingreport, recordingkind, settings,
+  relationcheck, reportside, session, threads
 
 const
   NoSurvey* = "Import a survey with relation records (X records) first."
@@ -82,9 +76,14 @@ type
     unmatched*: seq[tuple[path: string; record: int64; why: string]]
       ## A gather not checked: path relative to the folder, the header record
       ## number (−1 when it has none), and why.
-    singleSlice*: bool
-      ## The scan was of one file, and it holds one shot slice of one receiver
-      ## (one receiver and one source station, one trace for each component).
+    sides*: SideCounts
+      ## the files of the scan that were shot gathers, receiver gathers, or could not be told
+    taken*: string
+      ## not empty when files whose kind cannot be told were taken for a side, and which
+      ## (`reportside.takenNote`)
+    mixed*: string
+      ## not empty when the files are of both kinds: nothing is calculated, and this says
+      ## so (`reportside.mixedNote`); the reports above are empty
     reason*: string
 
   ScanNote* = ref object
@@ -176,22 +175,6 @@ proc openKeys(path, cacheDir: string; ctx: JobContext): Session =
       result.file.saveIndex(index)
   except ValueError, IOError, OSError:
     discard
-
-func fileSide*(keys: openArray[TraceKeys]): tuple[side: StationSide; open: bool] =
-  ## The side whose stations name a file's traces, by the rule `sideOf` applies to a
-  ## file: one receiver and several sources is a receiver gather (`ssSources`: its
-  ## stations are the sources); several receivers is a shot (`ssReceivers`). `open`: one
-  ## receiver and one source, which `sideOf` leaves to the other files (the caller decides;
-  ## `side` is then `ssReceivers`). A file it cannot tell is a shot, as is one receiver with
-  ## no source station at all (the sources would have no stations to name).
-  var st = initStations()
-  for k in keys: st.note(k)
-  case st.sideOf((known: false, receiver: false, continuous: false))
-  of sdOpen: (ssReceivers, true)
-  of sdReceiver:
-    let side = if st.sources >= 2: ssSources else: ssReceivers
-    (side, false)
-  of sdShot, sdNeither: (ssReceivers, false)
 
 type
   IdSet* = object
@@ -369,36 +352,23 @@ proc checkShot(tally: var StationTally; g: SurveyGeometry; rows: TraceRows; path
     tally.addGather(g.templateStations(checked.xpsRecord), checked)
   why.len == 0
 
-proc verdictOf(s: Session; path: string; ctx: JobContext): Verdict =
-  ## The recording kind of the open file, as the program shows it; not known
-  ## when the file has no sample interval or no live trace, when the plan
-  ## cannot be made, or when it reads as continuous only for want of a boundary
-  ## between segments to judge by.
-  let dtMs = seismicDtMs(s.filePtr)
-  if dtMs.isNaN or dtMs <= 0: return
-  try:
-    {.cast(gcsafe).}:
-      let facts = describeRecording(planRecording(s.filePtr, path, dtMs, currentVendors(),
-        proc () {.gcsafe.} = ctx.checkCancelled()))
-      # One segment for each receiver and no boundary between segments leaves nothing to
-      # judge continuity by (one live trace, or the components of one station at one
-      # start): the kind is not told, and the gather's own kind decides.
-      if facts.ready and not (facts.kind == rkReceiverContinuous and facts.boundaries == 0):
-        result = (known: true, receiver: facts.kind == rkReceiverSliced,
-          continuous: facts.kind == rkReceiverContinuous)
-  except JobCancelledError, SegCancelledError:
-    raise
-  except CatchableError:
-    result = (known: false, receiver: false, continuous: false)
-
 proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeometry;
-    sink: MissingSink; cacheDir = ""): JobWork =
+    sink: MissingSink; cacheDir = ""; forced = initTable[string, RecordingKind]();
+    receivers: ref SurveyGeometry = nil; receiversDerived = false;
+    untold = ukNotChecked; folderRun = false): JobWork =
   ## The work of a job that scans `paths` (relative to `folder` in messages)
   ## against `relations` and fills `sink` (`missingSpec` is the spec to
   ## submit it with). Worker-only. A cancel raises `JobCancelledError` and
   ## leaves `sink` as it was. `cacheDir` is the index cache folder: a current
   ## cache is read instead of walking the file, and a walk saves one.
-  ## "" leaves the cache alone.
+  ## "" leaves the cache alone. `forced` holds the kind the user set for a file in the
+  ## Files window, by the path normalised (`normalizedPath`): it replaces the kind told
+  ## from the file. `receivers` holds the O records the receiver gathers are checked
+  ## against (a loaded O file's, or those derived from the X records, `receiversDerived`);
+  ## nil: the O records of `relations`, else derived here from its X records. `forced` is
+  ## keyed by `forcedPath` (the canonical path). Files whose kind cannot be told are taken
+  ## for what `untold` says; with "not checked" and `folderRun`, for the side of the files
+  ## that are told when all of those are of one (`takenNote` says so), else left out.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     if relations == nil or not relations[].hasRelations:
@@ -406,119 +376,112 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
     var skipped: seq[tuple[path, why: string]] = @[]
     var notChecked: seq[tuple[path, why: string]] = @[]
     var unmatched: seq[tuple[path: string; record: int64; why: string]] = @[]
-    let derived = relations[].relationCount(rdReceiver) == 0
+    let oSource = if receivers != nil and receivers[].relationCount(rdReceiver) > 0: receivers
+      else: relations
+    let derived = receiversDerived or oSource[].relationCount(rdReceiver) == 0
     var shot = initTally(ssReceivers)
     var recv = initTally(ssSources, derived)
     var merge = initReceiverMerge()
-    # open files, one trace's keys each
-    var opened: seq[tuple[file: int; keys: TraceKeys]] = @[]
-    var decided = [0, 0] # files that were not open: shots, receivers
-    var sliceFiles = 0
+    var counts: SideCounts
     var seen = initHashSet[string]()
+    var list = paths
+    var round = 0 # 0: the files; 1: those whose kind cannot be told, taken as `takenAs`
+    var takenAs = rsCannotTell
+    var deferred: seq[tuple[path, why: string]] = @[]
+    var taken = 0
     try:
-      for i, path in paths:
-        ctx.setPhase "reading " & path.extractFilename
-        ctx.checkCancelled()
-        let key = path.normalizedPath
-        if key notin seen:
-          seen.incl key
-          let rel = relTo(folder, path)
-          var s: Session = nil
-          var skip = ""
-          var anyShot = false
-          try:
-            s = openKeys(path, cacheDir, ctx)
-            if s.file.kind == skUnknown: skip = "not a SEG-Y, SEG-D or SEG-2 file"
-            elif s.file.index.keys.len == 0: skip = "has no trace keys"
-            else:
-              let verdict = verdictOf(s, path, ctx)
-              if verdict.continuous:
-                notChecked.add (path: rel,
-                  why: "a continuous receiver recording is not checked")
+      while true:
+        for i, path in list:
+          ctx.setPhase "reading " & path.extractFilename
+          ctx.checkCancelled()
+          let key = path.normalizedPath
+          if round == 1 or key notin seen:
+            seen.incl key
+            let rel = relTo(folder, path)
+            var s: Session = nil
+            var skip = ""
+            var anyShot = false
+            try:
+              s = openKeys(path, cacheDir, ctx)
+              if s.file.kind == skUnknown: skip = "not a SEG-Y, SEG-D or SEG-2 file"
+              elif s.file.index.keys.len == 0: skip = "has no trace keys"
               else:
-                {.cast(gcsafe).}:
-                  let gathers = s.gathers
-                  var whole = initStations()
-                  for k in s.file.index.keys: whole.note(k)
-                  if whole.isOneSlice: inc sliceFiles
-                  let fileSide = whole.sideOf(verdict)
-                  var fileId = -1
-                  if fileSide == sdOpen:
-                    # Told after the pass, by the files that are not open; kept as one
-                    # trace's keys, which is all a check of one station needs.
-                    fileId = merge.addFile(rel)
-                    var kept = false
-                    for k in s.file.index.keys:
-                      if not kept and k.status != tsAuxiliary and
-                          hasStation(k.rcvLine, k.rcvPoint) and hasStation(k.srcLine, k.srcPoint):
-                        opened.add (file: fileId, keys: k)
-                        kept = true
-                  var votes = [0, 0] # gathers checked as shots, as receivers
-                  for g in gathers:
-                    if g.traces.len > 0 and fileSide != sdOpen:
-                      beat(ctx, g.traces.len)
-                      var side = fileSide
-                      if side == sdNeither:
-                        var own = initStations()
-                        for t in g.traces: own.note(s.file.index.keys[t])
-                        side = own.sideOf((known: false, receiver: false, continuous: false))
-                        # One slice of a file of several receivers and sources.
-                        if side == sdOpen: side = sdReceiver
-                        if side == sdNeither:
-                          let k = s.file.index.keys[g.traces.a]
-                          unmatched.add (path: rel, record: wholeRecord(k.record),
-                            why: neitherWhy(own))
-                      case side
-                      of sdNeither, sdOpen: discard
-                      of sdShot:
-                        inc votes[0]
-                        if shot.checkShot(relations[], s.file.rowsOf(g.traces), rel, ctx,
-                            unmatched):
-                          anyShot = true
-                      of sdReceiver:
-                        # Kept by receiver station over the whole scan: each receiver is
-                        # checked once at the end, over every slice and file of it.
-                        inc votes[1]
-                        if fileId < 0: fileId = merge.addFile(rel)
-                        var stations = 0
-                        for t in g.traces:
-                          let k = s.file.index.keys[t]
-                          if k.status != tsAuxiliary and hasStation(k.rcvLine, k.rcvPoint):
-                            merge.add(fileId, k)
-                            inc stations
-                        if stations == 0:
-                          let k = s.file.index.keys[g.traces.a]
-                          unmatched.add (path: rel, record: wholeRecord(k.record),
-                            why: NoReceiverStation)
-                  if votes[0] > votes[1]: inc decided[0]
-                  elif votes[1] > votes[0]: inc decided[1]
-          except SegCancelledError:
+                let isForced = forcedPath(path) in forced
+                let kind = if isForced: some(forced[forcedPath(path)]) else: autoKindOf(s, path, ctx)
+                var fileId = -1
+                var whole = initStations()
+                for k in s.file.index.keys: whole.note(k)
+                var fileSide = reportSide(kind, isForced, whole)
+                if round == 1: fileSide = (takenAs, "")
+                elif fileSide.side == rsCannotTell and untold != ukNotChecked:
+                  # the user's choice for the files that cannot be told
+                  takenAs = if untold == ukShot: rsShot else: rsReceiver
+                  fileSide = (takenAs, "")
+                  inc taken
+                if round == 0 and fileSide.side == rsCannotTell and folderRun:
+                  # taken for the side of the files that are told, when all are of one
+                  deferred.add (path: path, why: fileSide.why)
+                else:
+                  counts.note fileSide.side
+                  case fileSide.side
+                  of rsNotGather, rsCannotTell:
+                    notChecked.add (path: rel, why: fileSide.why)
+                  of rsShot, rsReceiver:
+                    # (a mix is not calculated: once both sides are seen, only the files
+                    # are counted)
+                    if not counts.isMixed:
+                      {.cast(gcsafe).}:
+                        for g in s.gathers:
+                          if g.traces.len == 0: continue
+                          beat(ctx, g.traces.len)
+                          if fileSide.side == rsShot:
+                            if shot.checkShot(relations[], s.file.rowsOf(g.traces), rel, ctx,
+                                unmatched):
+                              anyShot = true
+                          else:
+                            # Kept by receiver station over the whole scan: each receiver is
+                            # checked once at the end, over every slice and file of it.
+                            if fileId < 0: fileId = merge.addFile(rel)
+                            var stations = 0
+                            for t in g.traces:
+                              let k = s.file.index.keys[t]
+                              if k.status != tsAuxiliary and hasStation(k.rcvLine, k.rcvPoint):
+                                merge.add(fileId, k)
+                                inc stations
+                            if stations == 0:
+                              let k = s.file.index.keys[g.traces.a]
+                              unmatched.add (path: rel, record: wholeRecord(k.record),
+                                why: NoReceiverStation)
+            except SegCancelledError:
+              raise newException(JobCancelledError, "cancelled")
+            except JobCancelledError:
+              raise
+            except CatchableError as e:
+              skip = if e.msg.len > 0: e.msg else: $e.name
+            finally:
+              s = nil
+              clearCycleRoots()
+            if skip.len > 0: skipped.add (path: rel, why: skip)
+            if anyShot: shot.noteFile()
+          if round == 0 and not ctx.progress(i + 1, paths.len):
             raise newException(JobCancelledError, "cancelled")
-          except JobCancelledError:
-            raise
-          except CatchableError as e:
-            skip = if e.msg.len > 0: e.msg else: $e.name
-          finally:
-            s = nil
-            clearCycleRoots()
-          if skip.len > 0: skipped.add (path: rel, why: skip)
-          if anyShot: shot.noteFile()
-        if not ctx.progress(i + 1, paths.len):
-          raise newException(JobCancelledError, "cancelled")
-      # An open file takes the side most of the files that were not open took; with
-      # none, it is a slice.
-      let openAsShot = decided[0] > decided[1]
-      for o in opened:
-        ctx.checkCancelled()
-        if openAsShot:
-          if shot.checkShot(relations[], rowsOf([o.keys], [0]), merge.files[o.file].path,
-              ctx, unmatched):
-            shot.noteFile()
-        else:
-          merge.add(o.file, o.keys)
-      if merge.list.len > 0:
+        if round == 1 or deferred.len == 0: break
+        # the files that cannot be told: the side of those that are, when all are of one
+        let one = unanimousSide(counts)
+        if one == rsCannotTell:
+          counts.untold += deferred.len
+          for d in deferred:
+            notChecked.add (path: relTo(folder, d.path), why: d.why)
+          deferred.setLen 0
+          break
+        takenAs = one
+        taken = deferred.len
+        list = @[]
+        for d in deferred: list.add d.path
+        round = 1
+      if merge.list.len > 0 and not counts.isMixed:
         ctx.setPhase "checking the receivers"
-        let rels = relations[].receiverRelationsOf(relations[].highestRecord + 1)
+        let rels = oSource[].receiverRelationsOf(oSource[].highestRecord + 1)
         var receiver = initSurveyGeometry()
         receiver.addSps(SpsFile(relations: rels), rdSource)
         for _ in 1 .. checkReceivers(recv, merge, receiver, ctx, unmatched): recv.noteFile()
@@ -526,9 +489,14 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
       ctx.checkCancelled()
       clearCycleRoots()
       if sink != nil:
-        sink.result = MissingJobResult(ok: true, shot: shot.report, receiver: recv.report,
-          skipped: skipped, notChecked: notChecked, unmatched: unmatched,
-          singleSlice: seen.len == 1 and sliceFiles == 1)
+        sink.result = MissingJobResult(ok: true, sides: counts, skipped: skipped,
+          notChecked: notChecked, taken: takenNote(taken, takenAs, untold != ukNotChecked))
+        if counts.isMixed:
+          sink.result.mixed = mixedNote(counts)
+        else:
+          sink.result.shot = shot.report
+          sink.result.receiver = recv.report
+          sink.result.unmatched = unmatched
     except JobCancelledError:
       raise
     except SegCancelledError:
@@ -537,7 +505,9 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
       fail(sink, if e.msg.len > 0: e.msg else: $e.name, skipped)
 
 proc folderScan*(folder: string; subfolders: bool; cacheDir: string;
-    relations: ref SurveyGeometry; sink: MissingSink; note: ScanNote = nil): JobWork =
+    relations: ref SurveyGeometry; sink: MissingSink; note: ScanNote = nil;
+    forced = initTable[string, RecordingKind](); receivers: ref SurveyGeometry = nil;
+    receiversDerived = false; untold = ukNotChecked): JobWork =
   ## The work of a job that lists the seismic files of `folder`, its
   ## subfolders only when `subfolders`, and scans them as `scanMissing` does.
   ## `note.capped` says the list stopped at the file limit.
@@ -553,5 +523,6 @@ proc folderScan*(folder: string; subfolders: bool; cacheDir: string;
       raise newException(ValueError, CannotList)
     if note != nil: note.capped = capped
     ctx.checkCancelled()
-    let scan = scanMissing(folder, paths, relations, sink, cacheDir)
+    let scan = scanMissing(folder, paths, relations, sink, cacheDir, forced, receivers,
+      receiversDerived, untold, true)
     scan(ctx)

@@ -335,16 +335,33 @@ number could tell them apart.
 
 The File tab checks the file shown only while it is in sight (not behind another tab, nor while the Folder tab is on), says nothing in Messages and raises no pop-up when it finishes, and does not check a vibrator signature file (`.dat`, `.vib`); the Folder tab's **Run** still announces its end.
 
-Which of the two a file is: a continuous receiver recording is not checked. Otherwise the
-stations in the trace headers decide. Several receivers and one source is a shot; one
-receiver and several sources is a receiver. One receiver and one source can be either a
-single shot slice or a shot that only one receiver recorded, so the other files of the
-folder decide: it is checked the way most of the files that could be told were. A file
-on its own (the File tab), or a folder of nothing but such files, is taken for a slice.
-When the traces hold several sources and several receivers, the recording kind the
-program shows for the file decides (shot gather or time-sliced receiver gather); when that
-cannot be told either, each record of the file is judged on its own, and one that is
-neither one shot nor one receiver is listed under **Unmatched** with the reason.
+Which of the two a file is comes from the Files window: the kind of recording shown for
+the file there, the one told from the file or the one you set (right-click the file). A
+shot gather is checked against its X record, and the rows are the receivers missing, with
+how many shots lack each. A receiver gather (a receiver's record sliced by shot, say) is
+checked against its O record, and the rows are the shots (source stations) missing, with
+how many receivers lack each; the column headers and the first line of the CSV say which
+(**Receiver line**, **Receiver point** or **Source line**, **Source point**). The O
+records are the loaded O file's when there is one, else those worked out from the X
+records. A file whose kind cannot be told, because it holds one receiver and one source
+(it may be one slice of a receiver or a shot that one receiver recorded), is not checked
+until you set its kind in the Files window; the File tab says so. A continuous receiver
+recording is not checked either. A change of a kind in the Files window drops the answer
+on screen and computes it again.
+
+On the Folder tab, many files of one receiver and one source (one slice for each file, say)
+need not be set one by one. When every file whose kind is told is on one side, the files
+that cannot be told are taken as that side too, and the window says so ("12 files of one
+receiver and one source are taken as receiver gathers, like the others in the folder.").
+When the told files are of both sides it is a mix, and when none is told they stay not
+checked. **Files whose kind cannot be told are:** (not checked, shot gathers, receiver
+gathers; remembered) overrides this for the folder; a kind you set for a file always wins.
+
+A folder (or a file list) that holds both shot gathers and receiver gathers is not
+calculated: the window says how many files are of each kind (and how many could not be
+told) and that the kind can be set in the Files window, and shows no figures. Files that
+are neither (a continuous recording, a vibrator signature file) do not make a folder mixed;
+they are listed under **Not checked** or **Skipped**.
 
 A receiver is checked once, over all its traces: in a file, however many records (one
 for each shot slice) its traces are cut into, and on the Folder tab across every file of
@@ -366,9 +383,7 @@ out again.
 A record is never matched to the survey by its record (file) number alone: one whose trace
 headers hold no source station (no receiver station, for a receiver gather) is not checked
 and is listed under **Unmatched**.
-A continuous receiver recording is not checked, and the window says so; a file with one
-live trace, or the components of one station, has nothing to judge continuity by and is
-checked.
+A continuous receiver recording is not checked, and the window says so.
 
 A station is one line and point, however many components it has: a station with three
 or four components is one station, and it is present when any of its traces is in the
@@ -384,13 +399,15 @@ keeps the place you last gave it. It has two tabs.
   records"), how many are in the template, how many are found in the file, how many are
   missing, and the percent of the template missing. A file with several records also has
   a line that counts per record (each station once for each record that calls for it:
-  expected, present, missing, percent). The table has the columns **Line**, **Point** and
-  **Missing**: how many records of the file call for that station and do not have it. The
+  expected, present, missing, percent). The table has the columns **Receiver line**,
+  **Receiver point** and **Missing** (for a receiver gather **Source line**, **Source
+  point** and **Missing**): how many records of the file call for that station and do not
+  have it. The
   file is read from disk, so killed traces and other edits of the session count as
-  present; the tab says so when the file has killed traces. A file that holds one shot
-  slice of one receiver is checked as that receiver, so the receiver's other shots show
-  as missing; the tab says that they are in other files and that the Folder tab checks
-  the receiver as a whole.
+  present; the tab says so when the file has killed traces. A file that holds one slice of
+  one receiver, set as a receiver gather in the Files window, is checked as that receiver,
+  so the receiver's other shots show as missing; the Folder tab checks the receiver as a
+  whole.
 - **Folder** checks the files of a folder you choose, and does nothing until you press
   **Run**. **Folder...** opens the folder dialog and the chosen path is shown and kept for
   next time. **Include subfolders** is off until you tick it; changing the folder or the
@@ -401,9 +418,9 @@ keeps the place you last gave it. It has two tabs.
 While a check runs, a progress bar and **Stop** show; the Jobs window lists it too.
 **Skipped** lists files that were not seismic or could not be read, **Unmatched**
 records that have no relation record to be checked against, and (Folder tab) **Not
-checked** the continuous recordings. A box narrows the rows by line or point. Click a
+checked** the continuous recordings and the files whose kind is not told. A box narrows the rows by line or point. Click a
 column header to sort by it (again for the other way; Shift-click adds a column).
-**Export CSV...** writes the rows of the table on screen (`line,point,missing`): with
+**Export CSV...** writes the rows of the table on screen (`receiverLine,receiverPoint,missing`, or `sourceLine,sourcePoint,missing` for receiver gathers): with
 words in the filter box, only the rows they let through. **statistics in a second file**
 also writes the figures of the whole result beside it, with `-statistics` before the
 extension and the filter text in its last column.
@@ -432,9 +449,17 @@ traces (read, killed, measured), the bad traces and the stations with one, each 
 finite**), the noisy and the weak among the traces tested for them, each with its percent,
 and, when a file has more than one component, how many stations lack a component (in at least one file). The
 stations are the receiver stations of a shot gather's traces, the source stations of a
-receiver gather's (the rule the Missing traces window uses for a file; a file of one receiver and one source takes the side most of the other files took, and a lone one is a slice, counted at its source station); when a folder holds
-both, **Receiver stations** and **Source stations** choose which are shown. A killed trace
-is counted as killed, not as bad, and it is not measured.
+receiver gather's, by the kind of recording the Files window shows for the file, the one
+told from it or the one you set (the rule the Missing traces window uses). A file of one
+receiver and one source cannot be told: it is not measured until you set its kind there,
+and the window says so. A folder that holds
+both shot gathers and receiver gathers is not measured: the window says how many files
+are of each kind and that the kind can be set in the Files window. A change of a kind
+there drops the answer on screen. A continuous receiver recording is measured, at its
+receiver stations. The Folder tab takes files whose kind cannot be told for the side of the
+files that are told when these are all of one, and has the same choice **Files whose kind
+cannot be told are:** as Missing traces. A killed trace is counted as killed, not as bad, and it
+is not measured.
 
 Traces that name no line or no point are one row, **unknown**, which is not counted as a station in the figures (its traces are in the trace figures). The table has one row per station (line and point), whatever its components and files: a
 station's traces in every file measured count in its one row, so on the Folder tab the

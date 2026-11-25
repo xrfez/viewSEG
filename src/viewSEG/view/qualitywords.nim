@@ -3,8 +3,9 @@
 
 import std/strutils
 import ../core/[missingreport, qualityreport]
-from missingwords import ReceiversOption, SourcesOption, stationNoun
-export ReceiversOption, SourcesOption, stationNoun
+from missingwords import ReceiversOption, SourcesOption, UntoldLabel, UntoldTip, UntoldNames,
+  stationNoun
+export ReceiversOption, SourcesOption, UntoldLabel, UntoldTip, UntoldNames, stationNoun
 
 const
   QualityTip* = "Traces that are dead, all zero, constant, clipped, spiky, offset or not " &
@@ -170,6 +171,13 @@ func unreadNote*(rows: openArray[tuple[path, why: string]]): string =
   if files > 0 and traces > 0: filePart & " and " & tracePart & " could not be read."
   elif files > 0: filePart & " could not be read."
   else: tracePart & " could not be read."
+
+func notCheckedNote*(rows: openArray[tuple[path, why: string]]): string =
+  ## One line for the files left out because they are not gathers of one side (a continuous
+  ## receiver recording) or their kind is not told; "" for none.
+  if rows.len == 0: return ""
+  if rows.len == 1: return "1 file was not measured: " & rows[0].why & "."
+  $rows.len & " files were not measured: " & rows[0].why & " (the first of them)."
 
 func countLabel*(what: string; n: int): string =
   ## A button label with its count.

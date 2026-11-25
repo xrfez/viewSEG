@@ -49,8 +49,8 @@
 ##  (shotLog (followPlot false))
 ##  (cutGather (recordMs 10000.0))
 ##  (output (segyRevision same) (segdRevision same))
-##  (missing (folder "/jobs/Land 2026/lines") (subfolders true))
-##  (quality (folder "/jobs/Land 2026/lines") (subfolders false))
+##  (missing (folder "/jobs/Land 2026/lines") (subfolders true) (untold notChecked))
+##  (quality (folder "/jobs/Land 2026/lines") (subfolders false) (untold shot))
 ##  (hideKilled false)
 ##  (spectrum
 ##   (window (scale db) (logFrequency false) (time whole) (raw true) (processed true)
@@ -126,6 +126,7 @@ const
   SeverityNames: array[Severity, string] = ["info", "warning", "error", "fatal"]
   HeadersTabNames: array[HeadersTab, string] = ["summary", "fileHeaders", "trace", "traceTable"]
   TableScopeNames: array[TableScope, string] = ["record", "file"]
+  UntoldKindNames: array[UntoldKind, string] = ["notChecked", "shot", "receiver"]
   OutputRevisionNames: array[OutputRevision, string] = ["same", "segy0", "segy1", "segy20",
     "segy21", "segd30", "segd31"]
   TraceTabNames: array[TraceTab, string] = ["header", "data"]
@@ -157,7 +158,7 @@ func persistedNames*(): seq[seq[string]] =
     @StatNames, @LengthNames, @FieldNames, @ReadoutNames, @SeverityNames, @HeadersTabNames,
     @TraceTabNames, @HeaderColumnNames, @SpectrumScaleNames, @SpectrumTimeNames,
     @PhasePictureNames, @PhaseAgainstNames, @PhaseShowNames, @TableScopeNames, @UnitNames,
-    @OutputRevisionNames]
+    @OutputRevisionNames, @UntoldKindNames]
 
 # ----------------------------------------------------------------- writing --
 
@@ -543,10 +544,12 @@ proc settingsDocument*(s: Settings): string =
   w.open("missing")
   w.value("folder", s.missing.folder)
   w.value("subfolders", s.missing.subfolders)
+  w.choice("untold", UntoldKindNames[s.missing.untold])
   w.close()
   w.open("quality")
   w.value("folder", s.quality.folder)
   w.value("subfolders", s.quality.subfolders)
+  w.choice("untold", UntoldKindNames[s.quality.untold])
   w.close()
   w.value("hideKilled", s.hideKilled)
   w.open("spectrum")
@@ -1282,11 +1285,13 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
         for k in c.kids:
           if k.isTree("folder"): r.text(k, result.missing.folder, allowEmpty = true)
           elif k.isTree("subfolders"): r.flag(k, result.missing.subfolders)
+          elif k.isTree("untold"): r.choice(k, UntoldKindNames, result.missing.untold)
           else: r.unknown(k, "missing")
       of "quality":
         for k in c.kids:
           if k.isTree("folder"): r.text(k, result.quality.folder, allowEmpty = true)
           elif k.isTree("subfolders"): r.flag(k, result.quality.subfolders)
+          elif k.isTree("untold"): r.choice(k, UntoldKindNames, result.quality.untold)
           else: r.unknown(k, "quality")
       of "output":
         for k in c.kids:

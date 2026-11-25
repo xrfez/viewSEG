@@ -182,9 +182,13 @@ func percentText*(x: float64): string =
   ## `x` with no fraction when it is a whole number, otherwise two places.
   if x == round(x) and abs(x) < 1e15: $int64(x) else: formatFloat(x, ffDecimal, 2)
 
-proc stationsCsv*(rows: openArray[StationRow]): string =
-  ## A header and one line per station: line, point, missing.
-  result = csvLine("line", "point", "missing")
+proc stationsCsv*(rows: openArray[StationRow]; side = ssReceivers): string =
+  ## A header and one line per station: line, point, missing. The header names the
+  ## stations: the receivers missing from shot gathers or the sources (shots) missing
+  ## from receiver gathers.
+  result =
+    if side == ssReceivers: csvLine("receiverLine", "receiverPoint", "missing")
+    else: csvLine("sourceLine", "sourcePoint", "missing")
   for r in rows:
     result.add csvLine(stationNumber(r.line), stationNumber(r.point), $r.missing)
 

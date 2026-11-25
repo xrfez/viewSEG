@@ -10,10 +10,11 @@
 ## the one asked for (another file shown, another folder or the subfolders tick
 ## changed, another survey): the job is cancelled and its result never read.
 
-import std/[os, strutils]
+import std/[algorithm, os, strutils, tables]
 import parseSEG
 import imguin/cimgui
-import ../../core/[edits, filejobs, filelist, filesystem, jobs, missingjobs, missingreport, state]
+import ../../core/[edits, filejobs, filelist, filesystem, jobs, missingjobs, missingreport,
+  recordingkind, reportside, state]
 import ../../core/records as filerecs
 import ../../view/missingwords
 import focus, icons, marks, overflow
@@ -25,7 +26,8 @@ type
   ExportAsk* = object
     rows*: seq[StationRow]
     stats*: MissingStats
-    filter*: string ## the text that narrowed `rows`; "" for none
+    filter*: string    ## the text that narrowed `rows`; "" for none
+    side*: StationSide ## which stations the rows are: the CSV's header says
     withStats*, live*: bool
 
   Scan = object
@@ -42,7 +44,6 @@ type
   MissingUi* = object
     file, folder: Scan
     tab: MissingTab
-    side: StationSide
     runAsked: bool
     wantFile: string ## the File tab's key for the file shown now; "" for none
     chosen: string
@@ -70,12 +71,33 @@ proc setFolder*(ui: var MissingUi; path: string) =
   ## The folder dialog's answer: kept in the settings on the next draw.
   ui.chosen = path
 
+func relationsLayer(st: AppState): int =
+  ## The loaded layer the reports read: the first with X records, else the first with O
+  ## records alone (its receiver gathers are checked); -1 for none.
+  result = st.relationLayer
+  if result < 0: result = st.survey.listedLayer(rdReceiver)
+
 proc surveyKey(st: AppState): string =
-  ## Which survey the answers are for: the layer holding the relation records, by the
-  ## id its load gave it (a reloaded file is another layer with a new id).
-  let layer = st.relationLayer
-  if layer < 0: ""
-  else: $layer & "#" & $int(st.survey.layers[layer].id)
+  ## Which survey, and which O records, and which kinds of recording the user set (the
+  ## Files window), the answers are for: the layers by the id their load gave them (a
+  ## reloaded file is another layer with a new id).
+  let layer = st.relationsLayer
+  if layer < 0: return ""
+  result = $layer & "#" & $int(st.survey.layers[layer].id)
+  let o = st.survey.listedLayer(rdReceiver)
+  if o >= 0: result.add "|o" & $int(st.survey.layers[o].id)
+  var forced: seq[string] = @[]
+  for path, kind in st.forcedKinds: forced.add path & "=" & $kind
+  forced.sort()
+  if forced.len > 0: result.add "|" & forced.join(";")
+
+proc oRecordsFor(st: AppState): tuple[relations: ref SurveyGeometry; derived: bool] =
+  ## The O records the receiver gathers are checked against: a loaded file's, else those
+  ## derived from the X records (`derivedReceivers`) when they are made, else nil (the
+  ## job derives them).
+  let o = st.survey.listedLayer(rdReceiver)
+  if o >= 0: (st.survey.layers[o].relations, false)
+  else: (st.derivedReceivers, true)
 
 proc shownPath(st: AppState): string =
   ## The disk path of the file shown in the main panel; "" for none.
@@ -286,12 +308,6 @@ proc finish(ui: var MissingUi; s: var Scan; state: JobState; error: string) =
   s.status = Ready
   ui.sortDirty = true
   ui.shownKey = ""
-  if ui.side == ssReceivers and s.result.shot.stats.records == 0 and
-      s.result.receiver.stats.records > 0:
-    ui.side = ssSources
-  elif ui.side == ssSources and s.result.receiver.stats.records == 0 and
-      s.result.shot.stats.records > 0:
-    ui.side = ssReceivers
 
 proc poll(ui: var MissingUi; s: var Scan; st: AppState) =
   if s.job == NoJob: return
@@ -310,7 +326,8 @@ proc poll(ui: var MissingUi; s: var Scan; st: AppState) =
     s.job = NoJob
 
 proc submitFile(ui: var MissingUi; st: AppState; key, path: string) =
-  let layer = st.relationLayer
+  let layer = st.relationsLayer
+  let (receivers, derived) = st.oRecordsFor
   let folder = path.parentDir
   ui.file = Scan(key: key, running: true, status: Scanning, sink: MissingSink())
   var spec = missingSpec(folder, @[path])
@@ -318,16 +335,18 @@ proc submitFile(ui: var MissingUi; st: AppState; key, path: string) =
   spec.auto = true # started by the window, not by the user: no "is done" line or toast
   ui.file.job = st.jobs.submit(spec,
     scanMissing(folder, @[path], st.survey.layers[layer].relations, ui.file.sink,
-      st.indexCache))
+      st.indexCache, st.forcedKinds, receivers, derived))
 
 proc submitFolder(ui: var MissingUi; st: AppState; key: string) =
-  let layer = st.relationLayer
+  let layer = st.relationsLayer
+  let (receivers, derived) = st.oRecordsFor
   let folder = st.settings.missing.folder
   ui.folder = Scan(key: key, running: true, status: Scanning, sink: MissingSink(),
     note: ScanNote())
   ui.folder.job = st.jobs.submit(missingSpec(folder, @[folder]),
     folderScan(folder, st.settings.missing.subfolders, st.indexCache,
-      st.survey.layers[layer].relations, ui.folder.sink, ui.folder.note))
+      st.survey.layers[layer].relations, ui.folder.sink, ui.folder.note, st.forcedKinds,
+      receivers, derived, st.settings.missing.untold))
 
 proc startFile(ui: var MissingUi; st: AppState) =
   ## Called while the File tab is on screen: starts the computation for the file shown, after
@@ -356,7 +375,8 @@ proc consider(ui: var MissingUi; st: AppState) =
   ui.wantFile = if survey.len > 0 and path.len > 0: path & "|" & survey else: ""
   let folder = st.settings.missing.folder
   let folderKey = if survey.len > 0 and folder.len > 0:
-    folder & "|" & $st.settings.missing.subfolders & "|" & survey else: ""
+    folder & "|" & $st.settings.missing.subfolders & "|" & $st.settings.missing.untold & "|" &
+      survey else: ""
   if ui.folder.key.len > 0 and ui.folder.key != folderKey:
     ui.folder.cancel(st)
     ui.shownKey = ""
@@ -382,7 +402,7 @@ proc startExport*(ui: var MissingUi; st: AppState; path: string) =
   ui.exportJob = st.jobs.submit(JobSpec(title: "Export missing traces",
     lane: jlBackground, reads: @[]), proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
-    writeCsv(dest, stationsCsv(ask.rows))
+    writeCsv(dest, stationsCsv(ask.rows, ask.side))
     if ask.withStats: writeCsv(beside, statsCsv(ask.stats, ask.filter)))
 
 proc pollExport(ui: var MissingUi; st: AppState) =
@@ -404,7 +424,8 @@ proc applySort(ui: var MissingUi) =
     sortStations(s.result.shot.rows, ui.sort)
     sortStations(s.result.receiver.rows, ui.sort)
 
-proc drawRows(ui: var MissingUi; rows: seq[StationRow]; key: string; marks: var Marks) =
+proc drawRows(ui: var MissingUi; rows: seq[StationRow]; side: StationSide; key: string;
+    marks: var Marks) =
   let words = filterWords(filterText(ui.filter))
   let next = key & "|" & filterText(ui.filter) & "|" & sortText(ui.sort) & "|" & $rows.len
   if words.len > 0 and next != ui.shownKey:
@@ -418,7 +439,7 @@ proc drawRows(ui: var MissingUi; rows: seq[StationRow]; key: string; marks: var 
     igTextDisabled(if rows.len == 0: NothingMissing else: NoRows)
     marks.mark("missing.norows")
     return
-  const names = [ColLine, ColPoint, ColMissing]
+  let names = columnNames(side)
   const keys = [scLine, scPoint, scMissing]
   if not igBeginTable("##stations", names.len.cint, tableFlags, ImVec2_c(x: 0, y: 0), 0):
     return
@@ -455,7 +476,7 @@ proc drawScan(ui: var MissingUi; st: AppState; folderTab: bool; marks: var Marks
   ## What a tab shows below its own controls: a sentence for what is missing, the
   ## job in progress, or the figures and the table.
   template s: untyped = (if folderTab: ui.folder else: ui.file)
-  if st.relationLayer < 0:
+  if st.relationsLayer < 0:
     igPushTextWrapPos(0)
     igTextUnformatted(NoTemplate.cstring, nil)
     igPopTextWrapPos()
@@ -492,23 +513,33 @@ proc drawScan(ui: var MissingUi; st: AppState; folderTab: bool; marks: var Marks
   var status = ""
   if s.capped: status = CappedNote
   if status.len > 0: igTextUnformatted(status.cstring, nil)
-  if r.notChecked.len > 0 and not folderTab:
-    igTextUnformatted(Continuous.cstring, nil)
-    marks.mark("missing.message " & Continuous)
-  if r.shot.stats.records == 0 and r.receiver.stats.records == 0:
+  if r.taken.len > 0 and r.mixed.len == 0:
+    igPushTextWrapPos(0)
+    igTextUnformatted(r.taken.cstring, nil)
+    igPopTextWrapPos()
+    marks.mark("missing.message " & r.taken)
+  if r.mixed.len > 0:
+    igPushTextWrapPos(0)
+    igTextUnformatted(r.mixed.cstring, nil)
+    igPopTextWrapPos()
+    marks.mark("missing.message " & r.mixed)
+  elif r.notChecked.len > 0 and not folderTab:
+    let note = fileNotChecked(r.notChecked[0].why)
+    igPushTextWrapPos(0)
+    igTextUnformatted(note.cstring, nil)
+    igPopTextWrapPos()
+    marks.mark("missing.message " & note)
+  if r.mixed.len > 0:
+    discard
+  elif r.shot.stats.records == 0 and r.receiver.stats.records == 0:
     if not (r.notChecked.len > 0 and not folderTab):
+      let note = if r.notChecked.len > 0: nothingChecked(r.notChecked) else: NoTemplateRecord
       igPushTextWrapPos(0)
-      igTextUnformatted(NoTemplateRecord.cstring, nil)
+      igTextUnformatted(note.cstring, nil)
       igPopTextWrapPos()
-      marks.mark("missing.message " & NoTemplateRecord)
+      marks.mark("missing.message " & note)
   else:
-    if r.shot.stats.records > 0 and r.receiver.stats.records > 0:
-      var sources = ui.side == ssSources
-      if igRadioButton_Bool(ReceiversOption.cstring, not sources): ui.side = ssReceivers
-      igSameLine(0, -1)
-      if igRadioButton_Bool(SourcesOption.cstring, sources): ui.side = ssSources
-      marks.mark("missing.side")
-    let side = if ui.side == ssReceivers: r.shot else: r.receiver
+    let side = if r.shot.stats.records > 0: r.shot else: r.receiver
     marks.mark("missing.sort " & sortText(ui.sort))
     let counts = countsLine(side.stats, folderTab)
     igTextUnformatted(counts.cstring, nil)
@@ -517,18 +548,13 @@ proc drawScan(ui: var MissingUi; st: AppState; folderTab: bool; marks: var Marks
       igTextUnformatted(line.cstring, nil)
       marks.mark("missing.stat " & line)
       tip(FiguresTip)
-    if not folderTab and r.singleSlice:
-      igPushTextWrapPos(0)
-      igTextUnformatted(SingleSliceNote.cstring, nil)
-      igPopTextWrapPos()
-      marks.mark("missing.message " & SingleSliceNote)
     if not folderTab and st.shownHasKilled:
       igTextUnformatted(KilledNote.cstring, nil)
       marks.mark("missing.message " & KilledNote)
     if igButton(ExportButton.cstring, ImVec2_c(x: 0, y: 0)):
       let text = filterText(ui.filter)
       ui.ask = ExportAsk(rows: shownRows(side.rows, text), stats: side.stats,
-        filter: text, withStats: ui.withStats, live: true)
+        side: side.stats.side, filter: text, withStats: ui.withStats, live: true)
       out0.exportAsked = true
       out0.exportPath = (if folderTab and st.settings.missing.folder.len > 0:
         st.settings.missing.folder else: st.shownPath.parentDir) / SuggestedName
@@ -557,14 +583,15 @@ proc drawScan(ui: var MissingUi; st: AppState; folderTab: bool; marks: var Marks
   drawPopup("##skipped", NoneSkipped, "missing.skippedline ", skippedLines, marks)
   drawPopup("##unmatched", NoneUnmatched, "", unmatchedLines, marks)
   drawPopup("##notchecked", NoneNotChecked, "missing.notcheckedline ", notCheckedLines, marks)
-  if r.shot.stats.records > 0 or r.receiver.stats.records > 0:
-    let side = if ui.side == ssReceivers: r.shot else: r.receiver
+  if r.mixed.len == 0 and (r.shot.stats.records > 0 or r.receiver.stats.records > 0):
+    let side = if r.shot.stats.records > 0: r.shot else: r.receiver
     igSetNextItemWidth(-1)
     discard igInputTextWithHint("##filterstations", (IconFilter & "  " & FilterStations).cstring,
       cast[cstring](addr ui.filter[0]), csize_t(ui.filter.len), 0, nil, nil)
     marks.mark("missing.filter")
     tip(FilterStationsTip)
-    ui.drawRows(side.rows, (if folderTab: "folder" else: "file") & $ui.side, marks)
+    ui.drawRows(side.rows, side.stats.side, (if folderTab: "folder" else: "file") &
+      $side.stats.side, marks)
 
 proc drawFolderControls(ui: var MissingUi; st: AppState; marks: var Marks;
     out0: var MissingOutput) =
@@ -585,10 +612,20 @@ proc drawFolderControls(ui: var MissingUi; st: AppState; marks: var Marks;
   if sub: marks.mark("missing.subfolderson")
   tip(SubfoldersTip)
   igSameLine(0, -1)
-  igBeginDisabled(chosen.len == 0 or st.relationLayer < 0 or ui.folder.running)
+  igBeginDisabled(chosen.len == 0 or st.relationsLayer < 0 or ui.folder.running)
   if igButton(RunButton.cstring, ImVec2_c(x: 0, y: 0)): ui.runAsked = true
   igEndDisabled()
   marks.mark("missing.run")
+  igTextUnformatted(UntoldLabel.cstring, nil)
+  for choice in UntoldKind:
+    igSameLine(0, -1)
+    if igRadioButton_Bool((UntoldNames[choice] & "##untold" & $ord(choice)).cstring,
+        st.settings.missing.untold == choice) and ui.focus.acts:
+      var s = st.settings
+      s.missing.untold = choice
+      out0.commands.add Command(kind: ckSettings, settings: s)
+    marks.mark("missing.untold " & UntoldNames[choice])
+  tip(UntoldTip)
 
 proc drawMissing*(ui: var MissingUi; title: string; st: AppState; marks: var Marks): MissingOutput =
   ## The window titled `title`. Closing it cancels what runs.

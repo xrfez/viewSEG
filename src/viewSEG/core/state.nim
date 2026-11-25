@@ -1912,8 +1912,9 @@ func treatInForce(state: AppState; path: string): TreatAs =
   state.treats.getOrDefault(path)
 
 func forcedKinds*(state: AppState): Table[string, RecordingKind] =
-  ## The kind the user set for each file, by path: what a slice of a folder treats the files
-  ## as, as the slice of one file does (`treatInForce`).
+  ## The kind the user set for each file, by canonical path: what a slice of a folder and the
+  ## reports that tell shot gathers from receiver gathers treat the files as, over the kind
+  ## told from the file; only what jobs use (`treatInForce`).
   for path, t in state.treats:
     if t.kind.isSome: result[path] = t.kind.get
 

@@ -85,12 +85,13 @@ func isCoordinate(v: float64): bool =
   v.classify in {fcNormal, fcZero, fcNegZero, fcSubnormal} and abs(v) < FarCoordinate
 
 func stationPlace*(k: TraceKeys): StationPlace =
-  ## Where the trace `k` was recorded: its receiver line and point (`how` 0), else its group
+  ## Where the trace `k` was recorded: its receiver line and point (`how` 0; the receiver index is left out), else its group
   ## coordinates when they are not both zero (1), else its channel alone (2; -1 when it has
   ## none). The coordinates are as written: `stationPlaces` takes near ones as one point.
   if not (k.rcvLine.isNaN or k.rcvPoint.isNaN):
-    let s = stationKey(k.rcvLine, k.rcvPoint, k.rcvIndex)
-    (0'i8, s.line, s.point, s.index)
+    # a station is its line and point: the index the headers give does not make another one
+    let s = stationKey(k.rcvLine, k.rcvPoint, 0)
+    (0'i8, s.line, s.point, 0'i16)
   elif k.rcvX.isCoordinate and k.rcvY.isCoordinate and (k.rcvX != 0 or k.rcvY != 0):
     (1'i8, k.rcvX, k.rcvY, 0'i16)
   else:

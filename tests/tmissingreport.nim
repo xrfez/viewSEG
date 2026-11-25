@@ -14,6 +14,7 @@ import std/strutils
 import parseSEG
 import processSEG/qc/record
 import viewSEG/core/missingreport
+import viewSEG/core/reportside
 import viewSEG/view/missingwords
 
 proc st(line, point: float64): StationKey = stationKey(line, point, 1)
@@ -39,7 +40,7 @@ proc main*() =
     let r = initTally(ssReceivers).report
     doAssert r.rows.len == 0 and r.stats.inTemplate == 0 and r.stats.records == 0
     doAssert r.stats.percentMissing == 0 and r.stats.percentMissingInRecords == 0
-    doAssert stationsCsv(r.rows) == "line,point,missing\n"
+    doAssert stationsCsv(r.rows) == "receiverLine,receiverPoint,missing\n"
 
   block percent_of_the_template:
     var t = initTally(ssReceivers)
@@ -127,7 +128,9 @@ proc main*() =
 
   block csv_quotes:
     let rows = @[StationRow(line: 1, point: 1.5, missing: 2)]
-    doAssert stationsCsv(rows) == "line,point,missing\n1,1.5,2\n", stationsCsv(rows)
+    doAssert stationsCsv(rows) == "receiverLine,receiverPoint,missing\n1,1.5,2\n",
+      stationsCsv(rows)
+    doAssert stationsCsv(rows, ssSources) == "sourceLine,sourcePoint,missing\n1,1.5,2\n"
     var t = initTally(ssReceivers)
     t.addGather(template4(), rec(template4(), [2]))
     let text = statsCsv(t.report.stats)
@@ -181,6 +184,16 @@ proc main*() =
     var shots = initTally(ssReceivers)
     shots.addGather(template4(), rec(template4(), [4]))
     doAssert countsLine(shots.report.stats, false) == "1 record"
+
+  block nothing_checked_advises_only_for_files_that_cannot_be_told:
+    ## Seen to fail: with the advice always added, a folder of continuous recordings was told
+    ## to set a kind it cannot be given.
+    let continuous = @[(path: "a.sgd", why: ContinuousWhy), (path: "b.sgd", why: ContinuousWhy)]
+    let said = nothingChecked(continuous)
+    doAssert said == "2 files were not checked, so there is nothing to show.", said
+    let untold = @[(path: "a.sgd", why: ContinuousWhy),
+      (path: "b.sgd", why: "one receiver and one source: it may be one slice; " & SetKindHint)]
+    doAssert "cannot be told" in nothingChecked(untold) and "Files window" in nothingChecked(untold)
 
   echo "tmissingreport: ok"
 
