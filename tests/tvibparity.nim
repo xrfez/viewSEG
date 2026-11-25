@@ -19,7 +19,9 @@
 ## signature files' 100 % force applied raw to the converter's SEG-Y, its row read 0 % average
 ## force and failed; with the top frequency of the window's layout used for every file, the
 ## converter's row was judged in another band than its window; with the unclear polarity lines
-## left without the reversal, a reversed ground force of noise was not said to be reversed. The
+## left without the reversal, a reversed ground force of noise was not said to be reversed; with
+## the profile's top kept when the project's top for the stored reference was typed again on a
+## SEG-Y window, the row's distortion was measured in another band than its window's. The
 ## comparison itself (`differences`) was seen to fail on a row's polarity line changed, on its
 ## reason for the force not judged changed to one the window does not give, and on a limit the
 ## row has and the window lacks.
@@ -29,7 +31,7 @@ import parseSSDAT
 import viewSEG/core/[analysis, jobs, openchoice, project, settings, signatures, state,
   sweepinfo, threads, vibfolderconf, vibfolderjobs, vibfolderqc, vibjudge]
 import viewSEG/view/vibfolderwords
-import utils/[fixtures, gfsynth, sigfiles, vibsynth, waiting]
+import utils/[chosenref, fixtures, gfsynth, sigfiles, vibsynth, waiting]
 
 const Samples = 6000
 
@@ -262,6 +264,45 @@ proc main*() =
       let t = st.run(files)
       doAssert rowOf(t, noise).polarity == line, rowOf(t, noise).polarity
       doAssert "reversed for the analysis, as you chose" in resultsCsv(t), resultsCsv(t)
+      st.shutdown()
+
+  block storedReferenceTop:
+    # against a stored reference, a window takes the top the project keeps for it, whatever the
+    # profile held when it was stored: 80 Hz in the profile, 90 Hz typed since on a converter's
+    # window (which writes the project's tops, not the profile)
+    withFixtures fx:
+      let dir = fx.dir / "config"
+      createDir(dir)
+      let a11 = sweep(fx.dir / "sweeps", "a11.dat", 11, 7001, 1.0)
+      let c = converterOf()
+      createDir(fx.dir / "segy")
+      let sgy = fx.dir / "segy" / "converted.sgy"
+      writeVibSegy(sgy, [c.reference, c.mass, c.plate, c.record], 1.0, [21'i16, 19, 18, 20])
+      var st = initAppState()
+      st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      let w = st.window(a11)
+      let r = st.chooseStored(fx.dir / "refs", st.plots[w].traces[
+        st.plots[w].params.roles.reference], "pilot 11")
+      var p = st.plots[w].params
+      (p.harmonics, p.tops) = (4, p.tops.withTop(r, 80.0))
+      st.change(w, p)
+      doAssert st.vibTopKey(st.plots[w]) == r
+      doAssert st.project.doc.vibProfile.referenceId == r and
+        st.project.doc.vibProfile.topHz == 80, $st.project.doc.vibProfile.topHz
+      st.close(w)
+      let other = st.window(sgy)
+      doAssert st.vibTopKey(st.plots[other]) == r
+      p = st.plots[other].params
+      p.tops = p.tops.withTop(r, 90.0)
+      st.change(other, p)
+      st.close(other)
+      doAssert st.project.doc.vibProfile.topHz == 80 and
+        topsOf(st.project.doc.vibTops).topOf(r) == 90
+      doAssert vibQcConfig(st).ask.topHz == 90, $vibQcConfig(st).ask.topHz
+      let files = @[listed(a11)]
+      st.parity(files, st.run(files))
       st.shutdown()
 
   block noProject:

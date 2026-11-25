@@ -70,18 +70,20 @@ func referenceChoice*(loaded: bool; index: ReferenceIndex; home, id: string): tu
 
 func vibQcConfig*(st: AppState): VibQcConfig =
   ## The configuration in force. The project's chosen reference is used; the
-  ## profile's stored one only when none is chosen. The force scale is the
-  ## one set now. Not configured without an open project that holds a profile.
+  ## profile's stored one only when none is chosen; either with the top the project keeps
+  ## for it now. The force scale is the one set now. Not configured without an open project that holds a profile.
   if not (st.inProject and st.project.doc.hasVibProfile):
     if st.inProject and st.project.readOnly: result.unsetWhy = ReadOnlyProject
     return
   result.configured = true
   result.profile = st.project.doc.vibProfile
   let chosen = st.chosenReference
-  if chosen.len > 0 and chosen != result.profile.referenceId:
-    # the top typed was typed for the reference the profile was stored with
-    result.profile.referenceId = chosen
-    result.profile.topHz = topsOf(st.project.doc.vibTops).topOf(chosen)
+  if chosen.len > 0: result.profile.referenceId = chosen
+  if result.profile.referenceId.len > 0:
+    # the top a window measured against that reference takes: the one the project keeps for it
+    # now, not the one the profile held when it was stored (a top typed since on a window that
+    # writes no profile, a SEG-Y one's, changes the project's alone)
+    result.profile.topHz = topsOf(st.project.doc.vibTops).topOf(result.profile.referenceId)
   result.profile.forceScale = st.settings.forceScale
   result.ask = applied(result.profile, archiveIds(st))
   result.ask.layouts = st.vibRoleChoices
