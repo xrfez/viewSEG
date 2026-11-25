@@ -47,6 +47,11 @@ type
     order*: CutOrder
       ## the order of the traces of a record; a grouped order needs the headers built from
       ## keys (a SEG-D slice that carries the recording's headers keeps the recording's order)
+    sweepPath*: string
+      ## Set: each record is correlated with this stored sweep (the reference archive's SEG-Y
+      ## file) before it is written, and holds the listen time only. "": the records are
+      ## written as cut. The headers are built from keys, never carried.
+    sweepName*: string ## the sweep's name in the archive, for the notes the output carries
 
   CutShots* = object
     ## The timed shots of a log, in time order.

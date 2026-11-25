@@ -47,7 +47,7 @@
 ##   (columns description bytes) (tableFields "keys.record" "keys.channel")
 ##   (tableScope record))
 ##  (shotLog (followPlot false))
-##  (cutGather (recordMs 10000.0))
+##  (cutGather (recordMs 10000.0) (correlated false))
 ##  (output (segyRevision same) (segdRevision same))
 ##  (missing (folder "/jobs/Land 2026/lines") (subfolders true) (untold notChecked))
 ##  (quality (folder "/jobs/Land 2026/lines") (subfolders false) (untold shot))
@@ -537,6 +537,7 @@ proc settingsDocument*(s: Settings): string =
   w.close()
   w.open("cutGather")
   w.value("recordMs", s.cutGather.recordMs)
+  w.value("correlated", s.cutGather.correlated)
   w.close()
   w.open("output")
   w.choice("segyRevision", OutputRevisionNames[s.output.segyRevision])
@@ -1282,6 +1283,7 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
         for k in c.kids:
           if k.isTree("recordMs"): r.number(k, MinRecordMs, MaxRecordMs,
             result.cutGather.recordMs)
+          elif k.isTree("correlated"): r.flag(k, result.cutGather.correlated)
           else: r.unknown(k, "cutGather")
       of "missing":
         for k in c.kids:

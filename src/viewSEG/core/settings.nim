@@ -187,6 +187,8 @@ type
   CutGatherView* = object
     ## What the Slice by shot log window offers again.
     recordMs*: float64 = DefaultRecordMs ## the record length, in ms
+    correlated*: bool
+      ## the records are correlated with the project's stored sweep as they are cut; off
 
   UntoldKind* = enum
     ## What a report takes the files of a folder whose kind cannot be told (one receiver and
@@ -265,7 +267,7 @@ type
     join*: JoinOptions ## the geometry join's options, as set last
     headers*: HeadersView ## the Headers window's tabs and toggles
     shotLog*: ShotLogView ## the Shot log window's follow tick
-    cutGather*: CutGatherView ## the Slice by shot log window's record length
+    cutGather*: CutGatherView ## the Slice by shot log window's record length and tick
     output*: OutputView ## the Output window's revisions
     missing*: MissingView ## the Missing traces window's folder and subfolders tick
     quality*: QualityView ## the Trace quality window's folder and subfolders tick

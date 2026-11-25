@@ -77,6 +77,14 @@ func orderTip*(o: CutOrder): string =
       "in station order."
 
 const
+  OptCorrelated* = "Correlated with the project's reference##cut"
+  CorrelatedTip* = "Correlate each record with the project's stored sweep as it is cut and " &
+    "write the listen time only: the samples are those of slicing without this, then " &
+    "writing the sliced file from Output with Correlated, in one step and one file."
+  CorrelatedPilotWhy* = "A recording has no pilot for each shot: choose a stored sweep in " &
+    "References."
+  CorrelatedNoCarry* = "The recording's own SEG-D headers are not carried: correlated " &
+    "records are not the length of the recording's, so the headers are built from the options."
   UseTextTip* = "The SEG-Y text header is the project's template, filled in for this file; " &
     "the note that the file was sliced by this program follows its last line, in the cards " &
     "it leaves free. Clear the box for the header a slice writes without one."

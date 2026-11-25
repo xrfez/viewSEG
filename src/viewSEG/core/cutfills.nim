@@ -299,11 +299,11 @@ func startWords(startMs: float64): string =
   "FIRST SAMPLE " & n & " MS " & (if startMs < 0: "BEFORE" else: "AFTER") & " THE SHOT TIME"
 
 proc sliceProvenance*(source, logName: string; shots: int; startMs: float64;
-    encoding: TextEncoding): Provenance =
+    encoding: TextEncoding; sweepName = ""; listen = 0): Provenance =
   ## The lines that say a file was sliced by this program, from `source` (a file name, not
   ## a path) at the `shots` of the log `logName`, the records' first samples `startMs` after
-  ## the shot time. Plain ASCII; a longer line goes on in the
-  ## next card.
+  ## the shot time; with a `sweepName`, a line says the records are correlated with that sweep
+  ## and hold `listen` samples. Plain ASCII; a longer line goes on in the next card.
   var replaced = 0
   let fromName = plain(source, encoding, replaced)
   let logWords = if logName.len > 0: " " & plain(logName, encoding, replaced) else: ""
@@ -312,6 +312,10 @@ proc sliceProvenance*(source, logName: string; shots: int; startMs: float64;
   result.lines.add wrapped("SLICED BY viewSEG " & ViewSEGVersion & " FROM " & fromName, width)
   result.lines.add wrapped("SHOT LOG" & logWords & ", " & $shots & " " &
     (if shots == 1: "SHOT" else: "SHOTS") & ", " & startWords(startMs), width)
+  if sweepName.len > 0:
+    let named = plain(sweepName, encoding, replaced)
+    result.lines.add wrapped("CORRELATED WITH SWEEP " & named & ", LISTEN " & $listen &
+      " SAMPLES", width)
   result.replaced = replaced
 
 proc externalHeaderOf*(p: Provenance): seq[byte] =

@@ -135,6 +135,7 @@ opening keeps what you typed. From the top:
   (the tooltip says why) when the recording's headers code fewer than two components. When the
   headers code none, the traces stay in the recording's order and Messages says the components
   are not coded.
+- **Correlated with the project's reference:** a tick; see [Correlated](#correlated) below.
 - **Folder:** where the file goes, chosen with **Change folder...**. It is "not chosen" until
   you choose one.
 - **File name:** a name without a folder. It starts as the recording's name, then `_slice`, then
@@ -323,6 +324,40 @@ Messages reports what the slice found, after the file is written.
 - **Samples that cannot be read** are written as zeros too, and Messages counts them and
   the shots they are in. A file that is cut short, or a drive that fails, stops the slice
   instead.
+
+## Correlated
+
+A vibrator recording is usually correlated after it is cut: first this slice, then
+**File > Output...** with **Correlated** on the sliced file (see
+[Correlate](correlate.md#write-the-correlated-data-the-correlated-tick)). The tick **Correlated
+with the project's reference** does both in one step and writes one file: each shot's record is
+correlated with the sweep before it is written, and the file holds the listen time only.
+
+The tick is usable when the project's chosen reference (**Project > References**) is a **stored
+sweep**. It is dim, and its tooltip says why, when
+
+- no reference is chosen, or the reference file is missing or cannot be read;
+- the reference is a **pilot**: a recording has no pilot for each shot, so choose a stored sweep;
+- the record length is not longer than the sweep (the record must be the sweep plus the listen
+  time you want; the tooltip gives both lengths);
+- the sweep is sampled at another interval than the recording (the tooltip gives both).
+
+Ticked, the window says the listen time that will be written (the record length less the
+sweep's) and the sweep's name; the size estimate follows. The tick is remembered, and applies to
+a slice of one file and to a slice of a folder (a recording a folder run cannot correlate, for
+one of the reasons above, is refused with that sentence and the others go on).
+
+What is written is what the two steps write: the same 32-bit float samples bit for bit, the same
+sample count and interval, delay and times, record numbers and source fields, and in SEG-Y the
+trace header's correlated flag set to yes, as the Output window writes them. Gaps in the
+recording and the zero padding of a window past its end are correlated as they are (zeros) and
+counted as before. A dead trace is written as zeros and an auxiliary trace is cut to the listen
+time, not correlated, as Output does with a trace that is not marked. Two things differ from the
+two steps: the text header's provenance (SEG-Y card 4) or the SEG-D external header carries one
+line more, naming the sweep and the listen length, and a **SEG-D recording's own headers are
+not carried** when the tick is on (the records are not the length of the recording's), so the
+headers are built from the options and Messages says so. The Output window's marks of auxiliary
+traces for correlation are not applied here: a slice has only the recording's components.
 
 ## The file, and what is never replaced
 

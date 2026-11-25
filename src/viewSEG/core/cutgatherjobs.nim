@@ -41,9 +41,9 @@ import parseSEG/model/traceindex
 import processSEG
 import processSEG/continuous/slice
 import processSEG/core/[rows, workspace]
-import cutcarry, cutfile, cutfills, cutgather, cutheaders, cutpipe, filesystem, jobs,
-    outputbinary, outputjobs, outputtext, recordingkind, segmentclock, shotlog, threads,
-    vendormaps
+import cutcarry, cutcorrelate, cutfile, cutfills, cutgather, cutheaders, cutpipe,
+    correlatejobs, filesystem, jobs, outputbinary, outputjobs, outputtext, recordingkind,
+    references, segmentclock, shotlog, threads, vendormaps
 
 const
   NamedMax* = 5 ## how many overlaps and timing issues the result names
@@ -102,7 +102,11 @@ type
       ## its order
     orderUncoded*: bool
       ## a grouped order was asked for, but no component is coded: the recording's order
-    samples*: int ## samples per trace
+    samples*: int ## samples per trace written
+    correlatedWith*: string
+      ## the stored sweep every record was correlated with ("" when none); `samples` is then the
+      ## listen time
+    sweepSamples*: int ## the sweep's length, in samples
     samplesRead*: int ## source samples decoded, each once (not shots x window)
     overlapsCompared*, overlapsMatched*, overlapsMismatched*: int
     overlapsNotRead*: int
@@ -249,6 +253,18 @@ proc makeFetch(st: ref FetchState): FetchProc =
       st.fetched += count
       result = true
 
+proc readSweep(path, name: string; sweep: var seq[float32]; dtMs: var float64): string =
+  ## Reads the stored sweep at `path` on the worker, as the Output window does. "" when it is
+  ## read and usable, else the sentence that says why not.
+  try:
+    let read = readReferenceFile(path)
+    sweep = read.samples
+    dtMs = if read.intervalUs > 0 and read.intervalUs < Inf: read.intervalUs / 1000.0 else: 0.0
+    checkReference(sweep)
+  except CatchableError as e:
+    let why = e.msg.strip(chars = {'.'})
+    result = "The sweep '" & name & "' could not be used: " & why & "."
+
 func named(row: int): string =
   "source trace " & $(row + 1)
 
@@ -264,6 +280,10 @@ func cutLines(res: CutResult; opts: CutOptions): seq[string] =
   result.add "Sliced " & plural(res.shotsWritten, "shot", "shots") & " into " & standard &
     " records of " & plural(res.components, "trace", "traces") & ", " &
     plural(res.samples, "sample", "samples") & " each."
+  if res.correlatedWith.len > 0:
+    result.add "Each record was correlated with the sweep '" & res.correlatedWith &
+      "' (" & $res.sweepSamples & " samples) and holds the listen time only, as a write of " &
+      "the sliced file with Correlated does: 32-bit floats."
   if res.carried:
     result.add "The output was written in the source's revision (" & res.revision &
       ") with its headers carried: the extended header, the channel sets and each trace's " &
@@ -399,7 +419,7 @@ type
     ## over through a `CutPipe` (swapped, so each side reuses the buffers it gets back).
     shotUs, firstUs: int64 ## the shot's time, and its window's first sample
     shotFailed: bool
-    samples: seq[float32] ## the traces in the order written, `plan.samples` each
+    samples: seq[float32] ## the traces in the order written, `width` each (see `CutterJob`)
     keys: seq[TraceKeys] ## per trace, with the record number and channel set
     gaps, failed: seq[int] ## per trace: output samples in gaps, and of unread pieces
     facts: seq[Facts]
@@ -424,6 +444,9 @@ type
     vendors: ptr VendorRegistry
     report: ptr SliceReport
     carry, startField: bool
+    sweep: ptr seq[float32] ## correlate each record with this (nil: write as cut)
+    sweepDtMs, dtMs: float64
+    listen: int ## the samples of a correlated record's trace; 0 without a sweep
     fetched: int
 
 proc cutShots(c: ptr CutterJob) =
@@ -433,8 +456,21 @@ proc cutShots(c: ptr CutterJob) =
   template file: untyped = c.file[]
   let comps = plan.receiverCount
   let samples = plan.samples
+  let correlating = c.sweep != nil
+  let width = if correlating: c.listen else: samples ## samples of a trace of the record
   var ws = initWorkspace()
   ws.reserve(sliceWorkspace(float32, plan))
+  # The cutter is already a thread of its own: a record's few rows are correlated here, on
+  # its own workspace, with the call the Output window's unpooled path makes.
+  var corrPlans: seq[CorrelationPlan[float32]] = @[]
+  var corrWs = initWorkspace()
+  var raw: seq[float32] = @[] ## the cut traces of the record, before they are correlated
+  var dead: seq[bool] = @[]
+  if correlating:
+    corrPlans.add storedSweepPlan(c.sweep[], c.sweepDtMs, c.dtMs, samples)
+    corrWs.reserve(corrPlans[0].workspaceSize)
+    raw = newSeq[float32](comps * samples)
+    dead = newSeq[bool](comps)
   var buf = initSourceBuffer()
   var st = new FetchState
   st.file = c.file
@@ -455,7 +491,7 @@ proc cutShots(c: ptr CutterJob) =
         let firstUs = sh.timeUs + int64(round(c.opts[].startMs * 1000))
         rec.shotUs = sh.timeUs
         rec.firstUs = firstUs
-        rec.samples.setLen comps * samples
+        rec.samples.setLen comps * width
         rec.keys.setLen comps
         rec.gaps.setLen comps
         rec.failed.setLen comps
@@ -487,7 +523,8 @@ proc cutShots(c: ptr CutterJob) =
           for pc in plan.pieces(trace):
             if pc.row >= 0 and pc.row notin touched: touched.add pc.row
           let at = i * samples
-          if cutOne(plan, trace, buf, fetch, rec.samples.toOpenArray(at, at + samples - 1),
+          let cutInto = if correlating: addr raw else: addr rec.samples
+          if cutOne(plan, trace, buf, fetch, cutInto[].toOpenArray(at, at + samples - 1),
               c.report[], ws): shotFailed = true
           rec.gaps[i] = c.report[].gapSamples(trace)
           rec.failed[i] = c.report[].failedSamples(trace)
@@ -523,6 +560,16 @@ proc cutShots(c: ptr CutterJob) =
                 lastFacts[r] = (origin, sourceFacts(file, origin))
               rec.facts[i] = lastFacts[r].facts
           rec.keys[i] = k
+        if correlating:
+          # A dead trace comes out as zeros. An auxiliary trace is not correlated: its first
+          # `width` samples are kept, as the Output window keeps an unmarked one.
+          for i in 0 ..< comps:
+            dead[i] = rec.keys[i].status in {tsDead, tsAuxiliary}
+          corrPlans[0].correlateRows(raw, rec.samples, dead, samples, width, c.dtMs, corrWs)
+          for i in 0 ..< comps:
+            if rec.keys[i].status == tsAuxiliary:
+              copyMem(addr rec.samples[i * width], addr raw[i * samples],
+                width * sizeof(float32))
         rec.shotFailed = shotFailed
         if not c.pipe.place(s, rec): return
         discard settleShot(plan, buf, fetch, c.report[], touched, s)
@@ -579,6 +626,18 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       let dtMs = file[].sampleIntervalUs(0) / 1000
       let wrong = checkOptions(opts, dtMs)
       if wrong.len > 0: abort(sink, dest, part, false, wrong, false)
+      # The stored sweep, read here (this is a worker) and judged against the recording
+      # before anything is created.
+      var sweep: seq[float32] = @[]
+      var sweepDtMs = 0.0
+      var listen = 0
+      let correlating = opts.sweepPath.len > 0
+      if correlating:
+        let sweepWhy = readSweep(opts.sweepPath, opts.sweepName, sweep, sweepDtMs)
+        if sweepWhy.len > 0: abort(sink, dest, part, false, sweepWhy, false)
+        let mismatch = correlationWhy(sweep.len, sweepDtMs * 1000.0, opts.recordMs, dtMs)
+        if mismatch.len > 0: abort(sink, dest, part, false, mismatch, false)
+        listen = listenSamples(sweep.len, opts.recordMs, dtMs)
       readingSource:
         if not file[].hasKeys:
           if not file[].inMemory: fs.mappedRead(source, headers = true)
@@ -627,12 +686,14 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         let k = plan.receiverKeys(r)
         if not (k.rcvX.isNaN or k.rcvY.isNaN): anyReceiverXY = true
       let rows = carryRows(plan)
-      let candidate = opts.standard == csSegdRev3 and
+      let candidate = opts.standard == csSegdRev3 and not correlating and
         carryRefusal(file[], plan, rows).len == 0
+      let outSamples = if correlating: listen else: plan.samples
       # What the output says about itself (keys path only): text cards in SEG-Y's textual
       # header, which has them anyway; a SEG-D external header, which adds to each record.
       let provenance = sliceProvenance(source.extractFilename, opts.logName,
-        shots.shots.len, opts.startMs, if opts.standard == csSegy: teEbcdic else: teAscii)
+        shots.shots.len, opts.startMs, if opts.standard == csSegy: teEbcdic else: teAscii,
+        opts.sweepName, listen)
       let external = if opts.standard == csSegdRev3: externalHeaderOf(provenance) else: @[]
       # The project's text template and binary set, for a SEG-Y output (SEG-D has no use of
       # either): the template rendered for this file, else why not; the set's fields.
@@ -654,7 +715,7 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         if why.len > 0: headerNotes.add textNotUsed(textName, why)
         else:
           cardsProvenance = sliceProvenance(source.extractFilename, opts.logName,
-            shots.shots.len, opts.startMs, t.encoding)
+            shots.shots.len, opts.startMs, t.encoding, opts.sweepName, listen)
           noted = withNotes(cardsOf(t, values), cardsProvenance)
           cards = noted.cards
           cardsEncoding = t.encoding
@@ -668,7 +729,7 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           binUsable = true
           binOver = made.overrides
           binNotes = made.notes
-      let keysBytes = estimateBytes(opts, shots.shots.len, comps, plan.samples, anyStation,
+      let keysBytes = estimateBytes(opts, shots.shots.len, comps, outSamples, anyStation,
         anySourceXY, anyReceiverXY) + int64(shots.shots.len) * int64(external.len)
       var expected = if candidate: carryBytes(file[], plan, rows, shots.shots.len)
         else: keysBytes
@@ -679,7 +740,8 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         skips: facts.skips, missingSegments: facts.missingSegments,
         recordsFromFileNumbers: numbered.fromFileNumber,
         pointIndexOutOfRange: shots.pointIndexOutOfRange, components: comps,
-        samples: plan.samples, expectedBytes: expected,
+        samples: outSamples, expectedBytes: expected,
+        correlatedWith: (if correlating: opts.sweepName else: ""), sweepSamples: sweep.len,
         sourceKeysDropped: opts.standard == csSegy and anySourceKey)
       ctx.setPhase "slicing"
       if not tell(0, expected): abort(sink, dest, part, false, "Cancelled.", true)
@@ -696,7 +758,9 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       # header blocks (a vendor's own among them) are kept and the revision is its
       # own; everything else, and a source the writer cannot copy (multiplexed,
       # several records, extended recording mode), builds its headers from keys.
-      let why = if opts.standard == csSegdRev3: openCarry(part, file[], plan, rows, vendors, w)
+      let why =
+        if correlating: "correlated records are not the length of the recording's"
+        elif opts.standard == csSegdRev3: openCarry(part, file[], plan, rows, vendors, w)
         else: "the output is SEG-Y"
       let carry = why.len == 0
       var written = receiverOrder(plan, coAsSource).order
@@ -743,7 +807,7 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         case opts.standard
         of csSegdRev3:
           w = openSeismicWriter(part, SegdOutputOptions(sampleIntervalUs: intervalUs,
-            numSamples: plan.samples))
+            numSamples: outSamples))
         of csSegy:
           let opened = openKeysSegy(part, cards, cardsEncoding, provenance.lines, binOver)
           w = opened.w
@@ -784,17 +848,22 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var lastDetail = fs.now() - DetailEvery
       let total = shots.shots.len
       let perShot = expected div total
-      let samples = plan.samples
+      let samples = outSamples
       # The ring holds at most `ring` records, so the memory the hand-over takes is at most
       # (ring + 2) records (the cutter's and the writer's own beside the ring): about
       # 32 MiB of samples, whatever the number of shots (a record bigger than 16 MiB: 4).
       let recordBytes = comps * (samples * sizeof(float32) + 600)
       let ring = clamp((32 shl 20) div max(1, recordBytes), 2, 8)
       let pipe = newCutPipe[CutRecord](total, ring, total)
+      let correlatedOver = if correlating and opts.standard == csSegy:
+          @[headerOverride("trace.correlated", CorrelatedYes)]
+        else: @[]
       var cutter = CutterJob(pipe: pipe, file: file, source: source, plan: unsafeAddr plan,
         shots: unsafeAddr shots, opts: unsafeAddr opts, numbers: unsafeAddr numbered.numbers,
         rows: unsafeAddr rows, written: addr written, vendors: unsafeAddr vendors,
-        report: addr sliceReport, carry: carry, startField: clock.fromHeaders)
+        report: addr sliceReport, carry: carry, startField: clock.fromHeaders,
+        sweep: (if correlating: addr sweep else: nil), sweepDtMs: sweepDtMs, dtMs: dtMs,
+        listen: listen)
       var thread: Thread[ptr CutterJob]
       var started = false
       var cancelled = false
@@ -880,7 +949,7 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
                   k.time = toPosixSeconds(rec.shotUs)
                   k.noteRecordedTime(toRecordTimeZero, rec.shotUs)
                   w.writeTrace(k, rec.samples.toOpenArray(first, first + samples - 1),
-                    fill.overrides, channelType = sctSeismic)
+                    fill.overrides & correlatedOver, channelType = sctSeismic)
             pipe.written()
             if rec.shotFailed: inc res.shotsWithFailures
             if refusal.len > 0:

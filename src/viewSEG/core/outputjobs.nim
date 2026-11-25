@@ -654,9 +654,6 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var sweepLen = 0
       var ws = initWorkspace()
       var corrDst: seq[float32] = @[]
-      var corrKeys: seq[TraceKeys] = @[]
-      var corrCounts: seq[int] = @[]
-      var corrMeta: ChunkMeta
       var corrDtMs = 0.0
       let blocked = correlateInBlocks ## the pool, or the one-row call (tests)
       var pool: ProcessPool ## joined when this proc ends, on every path
@@ -713,14 +710,10 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         lags = appliedLags(file, marked, odd, ready.dtMs)
         if opts.format == ofSegd: outUs = wholeMicroseconds(ready.dtMs)
         planDt = sweepDt
-        corrPlans.add initCorrelationPlan(float32, initPilot(first, sweepDt), ready.dtMs,
-          recordSamples)
+        corrPlans.add storedSweepPlan(first, sweepDt, ready.dtMs, recordSamples)
         planRec = 0
         ws.reserve(corrPlans[^1].workspaceSize)
         corrDst = newSeq[float32](listen)
-        corrKeys = @[initTraceKeys()]
-        corrCounts = @[recordSamples]
-        corrMeta = initChunkMeta(rowsOf(corrKeys, corrCounts), ready.dtMs)
         if blocked:
           pool = newProcessPool(workerCount())
           blockSrc = newSeq[float32](TraceBlock * recordSamples)
@@ -1073,8 +1066,7 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             # Traces stay inside their record: only this record's plan is kept.
             corrPlans.setLen 0
             let got = loadSweep(file, source, pilotLoads[want].load)
-            corrPlans.add initCorrelationPlan(float32, initPilot(got.samples, planDt),
-              corrDtMs, recordSamples)
+            corrPlans.add storedSweepPlan(got.samples, planDt, corrDtMs, recordSamples)
             ws.reserve(corrPlans[0].workspaceSize)
             planRec = want
         template planFor(t: int): int = (if planOf.len > 0: planOf[t] else: 0)
@@ -1158,10 +1150,8 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
             ensurePlan(planFor(t))
             var dead, keeps = false
             prepareCorrelation(t, shifted, dead, keeps)
-            corrKeys[0].status = if dead: tsDead else: tsLive
-            corrPlans[0].correlateInto(
-              rowBlock(samples, 1, recordSamples),
-              rowBlock(corrDst, 1, listen), corrMeta, ws)
+            corrPlans[0].correlateRows(samples, corrDst, [dead], recordSamples, listen,
+              corrDtMs, ws)
             if not keeps:
               for j in 0 ..< listen: samples[j] = corrDst[j]
             # Edits below see the listen length, as a plain write of the

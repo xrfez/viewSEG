@@ -12,10 +12,11 @@ import std/[math, options, os, tables]
 import imguin/cimgui
 from parseSEG import skSegd
 import processSEG/continuous/slice
-import ../../core/[cutfolderjobs, cutgather, destwatch, geometry, jobs, outputbinary, outputtext,
+import ../../core/[cutcorrelate, cutfolderjobs, cutgather, destwatch, geometry, jobs, outputbinary,
+  outputtext,
   panels, recordingkind, shotlog, state, treatas]
 import ../../view/[cutfolderwords, cutwords, recordingwords, theme]
-import marks, style
+import chosensweep, marks, style
 
 const NameRoom = 256
 
@@ -27,6 +28,7 @@ type
     recordMs: cdouble
     align: SliceAlign
     standard: CutStandard
+    correlated: bool           ## the records are correlated with the project's stored sweep
     order: CutOrder
     skipText, skipBinary: bool ## the project's text template or binary set is not used
     folder: string
@@ -56,12 +58,13 @@ type
     askSourceFolder*: bool ## the Choose folder button was pressed: ask for the folder to slice
     askSourceAt*: string
 
-proc open*(ui: var CutUi; logId: int; recordMs = DefaultRecordMs) =
+proc open*(ui: var CutUi; logId: int; recordMs = DefaultRecordMs; correlated = false) =
   ## Shows the window. `logId` is the shot log the Shot log window shows; a
   ## later open keeps what was typed, and the log chosen. The first open takes
-  ## the record length from the settings, `recordMs`.
+  ## the record length and the tick from the settings, `recordMs` and `correlated`.
   if ui.recordMs == 0:
     ui.recordMs = recordMs
+    ui.correlated = correlated
     ui.align = saNearest
     ui.standard = csSegdRev3
     ui.logId = -1
@@ -119,8 +122,22 @@ proc chosenBinary(st: AppState): Option[OutputBinary] =
   if st.inProject: chosenBinary(st.project.doc.outputBinaries, st.project.doc.outputBinary)
   else: none(OutputBinary)
 
-proc options(ui: CutUi; st: AppState; groupable: bool): CutOptions =
+proc whyNotCorrelated(ui: CutUi; st: AppState; dtMs: float64): string =
+  ## Why the records cannot be correlated with the project's reference ("" when they can).
+  ## `dtMs` is the shown recording's interval, NaN while it is not known: the record length
+  ## and the interval are then judged by the job, each file by its own.
+  let sweep = chosenSweep(st)
+  if sweep.pilot.isSome: result = CorrelatedPilotWhy
+  elif sweep.why.len > 0: result = sweep.why
+  elif not dtMs.isNaN and usableRecordMs(ui.recordMs):
+    result = correlationWhy(sweep.samples, sweep.intervalUs, ui.recordMs, dtMs)
+
+proc options(ui: CutUi; st: AppState; groupable: bool; dtMs = NaN): CutOptions =
   result = initCutOptions(ui.recordMs, 0.0, ui.align, ui.standard) # a record begins at the shot
+  if ui.correlated and ui.whyNotCorrelated(st, dtMs).len == 0:
+    let sweep = chosenSweep(st)
+    result.sweepPath = sweep.path
+    result.sweepName = sweep.name
   if groupable: result.order = ui.order
   if ui.standard == csSegy:
     if not ui.skipText: result.headerText = chosenText(st)
@@ -216,6 +233,38 @@ proc drawHeaders(ui: var CutUi; st: AppState; marks: var Marks) =
       ui.skipBinary = not use
     marks.mark("cut.useBinary")
     tip(UseBinaryTip)
+
+proc drawCorrelated(ui: var CutUi; st: AppState; t: Theme; marks: var Marks;
+    dtMs: float64; wide: float32; sourceSegd: bool): seq[Command] =
+  ## The tick that correlates each record with the project's stored sweep. Dim with the
+  ## reason when the reference cannot be used; the tick is remembered in the settings.
+  let why = ui.whyNotCorrelated(st, dtMs)
+  igBeginDisabled(why.len > 0)
+  var on = ui.correlated and why.len == 0
+  if igCheckbox(OptCorrelated.cstring, addr on):
+    ui.correlated = on
+    var s = st.settings
+    s.cutGather.correlated = on
+    result.add Command(kind: ckSettings, settings: s)
+  igEndDisabled()
+  tip(if why.len > 0: why else: CorrelatedTip)
+  marks.mark(if why.len > 0: "cut.correlate.disabled" else: "cut.correlate")
+  if why.len > 0: marks.mark("cut.correlate.why " & why)
+  if on:
+    marks.mark("cut.correlate.on")
+    let sweep = chosenSweep(st)
+    if not dtMs.isNaN:
+      let words = listenWords(sweep.name, sweep.samples, ui.recordMs, dtMs)
+      wrapped(words, wide)
+      marks.mark("cut.correlate.says " & words)
+    else:
+      wrapped("Each record is correlated with the sweep '" & sweep.name &
+        "' and holds the listen time: the record less the sweep.", wide)
+    if ui.standard == csSegdRev3 and sourceSegd:
+      coloured(CorrelatedNoCarry, t.roles[rlTextDim], wide)
+      marks.mark("cut.correlate.noCarry")
+  elif why.len > 0 and ui.correlated:
+    coloured(why, t.roles[rlTextDim], wide)
 
 proc drawFormat(ui: var CutUi; marks: var Marks; sourceSegd, builtFromOptions: bool) =
   ## `sourceSegd`: the output SEG-D keeps the source's revision. `builtFromOptions`: the
@@ -435,7 +484,9 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
     marks.mark("cut.recordMs " & $ui.recordMs)
     igSetNextItemWidth(igGetFontSize() * 10)
     let groupable = facts.ready and facts.componentCodes >= 2
-    let opts = ui.options(st, groupable)
+    let dtMs = if facts.ready: facts.dtMs else: NaN
+    let opts = ui.options(st, groupable, dtMs)
+    let corr = opts.sweepPath.len > 0 ## the records are correlated: not the recording's own
     var problem = ""
     if shown >= 0 and facts.ready:
       problem = checkOptions(opts, facts.dtMs)
@@ -456,9 +507,11 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
     ui.drawAlign(marks)
     let segd = shown >= 0 and st.sessions[shown].facts.summary.standard == skSegd
     let uncarried = segd and facts.ready and facts.carryHeaderBytes == 0
-    ui.drawFormat(marks, segd and not uncarried, uncarried)
-    ui.drawOrder(marks, groupable, segd and not uncarried and ui.standard == csSegdRev3)
+    ui.drawFormat(marks, segd and not uncarried and not corr, uncarried)
+    ui.drawOrder(marks, groupable,
+      segd and not uncarried and not corr and ui.standard == csSegdRev3)
     ui.drawHeaders(st, marks)
+    result.commands.add ui.drawCorrelated(st, t, marks, dtMs, wide, segd)
     igSeparator()
     wrapped("Folder: " & (if ui.folder.len > 0: ui.folder else: "not chosen"), wide)
     marks.mark("cut.folder " & ui.folder)
@@ -481,8 +534,10 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
     igSeparator()
     var summary = ""
     if shown >= 0 and ui.haveShots and facts.ready and problem.len == 0:
-      let samples = int(round(opts.recordMs / facts.dtMs))
-      summary = summaryWords(ui.shots, facts.components, samples, opts, facts.carryHeaderBytes)
+      var samples = int(round(opts.recordMs / facts.dtMs))
+      if corr: samples = listenSamples(chosenSweep(st).samples, opts.recordMs, facts.dtMs)
+      summary = summaryWords(ui.shots, facts.components, samples, opts,
+        if corr: 0'i64 else: facts.carryHeaderBytes)
     if summary.len > 0:
       wrapped(summary, wide)
       marks.mark("cut.summary " & summary)
@@ -526,7 +581,7 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
           result.commands.add Command(kind: ckShowFile, panel: MainPanel,
             path: st.cutWritten, listFolder: true)
         marks.mark("cut.open")
-    let folderOpts = ui.options(st, false) # the grouped orders need a recording's headers
+    let folderOpts = ui.options(st, false, dtMs) # the grouped orders need a recording's headers
     ui.considerFolder(st, folderOpts)
     ui.drawFolder(st, t, marks, wide, folderOpts)
   igEnd()
