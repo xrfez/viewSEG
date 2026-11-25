@@ -25,7 +25,8 @@
 ## file is one check, whatever number of gathers (one for each shot slice) it
 ## is cut into, so a receiver side's `records` are receivers checked. A continuous receiver recording
 ## (`rkReceiverContinuous`) is not checked: it is in `notChecked`. When the
-## kind cannot be told (no sample interval or no live trace) a gather is a
+## kind cannot be told (no sample interval or no live trace, or one segment
+## for each receiver, which no continuity can be judged from) a gather is a
 ## receiver gather when its own kind is `gkReceiver`, as the record on show.
 ##
 ## `recordCompleteness` reads only the source domain, so a receiver gather
@@ -243,15 +244,19 @@ type Verdict = tuple[known: bool; receiver: bool; continuous: bool]
 
 proc verdictOf(s: Session; path: string; ctx: JobContext): Verdict =
   ## The recording kind of the open file, as the program shows it; not known
-  ## when the file has no sample interval or no live trace, or when the plan
-  ## cannot be made.
+  ## when the file has no sample interval or no live trace, when the plan
+  ## cannot be made, or when it reads as continuous only for want of a boundary
+  ## between segments to judge by.
   let dtMs = seismicDtMs(s.filePtr)
   if dtMs.isNaN or dtMs <= 0: return
   try:
     {.cast(gcsafe).}:
       let facts = describeRecording(planRecording(s.filePtr, path, dtMs, currentVendors(),
         proc () {.gcsafe.} = ctx.checkCancelled()))
-      if facts.ready:
+      # One segment for each receiver and no boundary between segments leaves nothing to
+      # judge continuity by (one live trace, or the components of one station at one
+      # start): the kind is not told, and the gather's own kind decides.
+      if facts.ready and not (facts.kind == rkReceiverContinuous and facts.boundaries == 0):
         result = (known: true, receiver: facts.kind == rkReceiverSliced,
           continuous: facts.kind == rkReceiverContinuous)
   except JobCancelledError, SegCancelledError:

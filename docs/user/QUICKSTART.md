@@ -323,7 +323,9 @@ traces are cut into, so for receivers the window counts receivers, not records.
 A record is never matched to the survey by its record (file) number alone: one whose trace
 headers hold no source station (no receiver station, for a receiver gather) is not checked
 and is listed under **Unmatched**.
-A continuous receiver recording is not checked, and the window says so.
+A continuous receiver recording is not checked, and the window says so; a file with one
+live trace, or the components of one station, has nothing to judge continuity by and is
+checked.
 
 A station is one line and point, however many components it has: a station with three
 or four components is one station, and it is present when any of its traces is in the

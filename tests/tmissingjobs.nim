@@ -528,6 +528,36 @@ proc main*() =
     doAssert t.records == 1 and t.inTemplate == 2 and t.found == 2 and t.missing == 0, $t
     doAssert t.expectedInRecords == 2 and t.missingInRecords == 0, $t
 
+  block single_station_files_are_checked:
+    ## One live trace, or the components of one station at one start, is no
+    ## continuous recording: the file is checked by the kind of its gather.
+    let survey = surveyOf(xRec(1, "1.00", "1.00", 1, 4, 10, 1, 4))
+    let one = dir / "one-trace.sgd"
+    plainFile(one, 1, 2 .. 2)
+    let got = run(dir, @[one], survey)
+    doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+    var r = got.sink.result
+    doAssert r.notChecked.len == 0, $r.notChecked
+    doAssert r.shot.stats.records == 1 and r.shot.stats.found == 3 - 2 and
+      r.shot.stats.missing == 3, $r.shot.stats
+    let comps = dir / "one-station-3c.sgd"
+    componentFile(comps, [(point: 2, comp: 1), (point: 2, comp: 2), (point: 2, comp: 3)], true)
+    let multi = multiSurvey([xRec(1, "1.00", "1.00", 1, 12, 10, 1, 4, 1, 3)])
+    r = run(dir, @[comps], multi).sink.result
+    doAssert r.notChecked.len == 0, $r.notChecked
+    doAssert r.shot.stats.records == 1 and r.shot.stats.found == 1 and
+      r.shot.stats.missing == 3, $r.shot.stats
+    let slice = dir / "one-slice.sgd"
+    slicedFile(slice, [(receiver: 7.0, sources: @[2.0])])
+    let rcv = surveyOf(
+      xRec(1, "1.00", "1.00", 1, 1, 10, 7, 7), xRec(2, "1.00", "2.00", 1, 1, 10, 7, 7),
+      xRec(3, "1.00", "3.00", 1, 1, 10, 7, 7))
+    r = run(dir, @[slice], rcv).sink.result
+    doAssert r.notChecked.len == 0, $r.notChecked
+    # one trace cannot say whether it is a shot or a receiver gather: it is checked
+    doAssert r.shot.stats.records + r.receiver.stats.records == 1 and
+      r.unmatched.len == 0, $r.shot.stats & $r.unmatched
+
   block cancel_leaves_the_sink:
     reads = 0
     lane = initJobs()
