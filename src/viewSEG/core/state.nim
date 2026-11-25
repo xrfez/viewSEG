@@ -141,6 +141,8 @@ const
   MaxTiles* = 4          ## tiles kept per panel, newest last
   FloatValues* = 32_768  ## values in view the Float gain takes its level from, at most
   MaxNotices* = 20       ## notices kept
+  MaxOwnPositions = 32
+    ## traces whose own header position is kept (`askOwnPosition`), at most
   MaxTraceReads* = 16
     ## traces read for agent control and not taken, kept at most
   MaxPanelValues* = 48 * 1024 * 1024
@@ -358,6 +360,12 @@ type
       ## keep these settings as the project's vibrator QC profile
     ckVibWeights = "vibrator weights"
       ## keep these as the project's vibrator QC job weights
+    ckStationMove = "station move"
+      ## say that a receiver station sits at another position (from a time on), or take that
+      ## move away; kept in the project, never written into a survey or seismic file
+    ckOwnPosition = "own position"
+      ## read the position a trace's own header gives its receiver, as the file has it on disk,
+      ## off the UI thread, for the station move's choice; changes nothing
     ckImportShotLog = "import shot log"
       ## read a shot log and keep it; stored in the project when one is open and writable
     ckRemoveShotLog = "remove shot log"
@@ -706,6 +714,30 @@ type
       treatGrouping*: string
         ## "none", "flag" or "component" forces the grouping of the traces; "automatic"; ""
       treatSubSort*: string ## "station" or "time" forces the sort inside it; "automatic"; ""
+    of ckStationMove:
+      moveLine*: float64 ## ckStationMove: the receiver station's line (rounded to 1/100)
+      movePoint*: float64 ## ckStationMove: its point (rounded to 1/100)
+      moveIndex*: int ## ckStationMove: its point index (0: any index of that line and point)
+      moveX*: float64 ## ckStationMove: the position the station sits at, in the survey's units
+      moveY*: float64 ## ckStationMove: its Y
+      moveElev*: float64 ## ckStationMove: its elevation, when `moveHasElev`
+      moveHasElev*: bool ## ckStationMove: the move gives an elevation
+      moveFrom*: float64
+        ## ckStationMove: the trace time (UTC POSIX seconds) from which the position holds,
+        ## when `moveHasFrom`
+      moveHasFrom*: bool ## ckStationMove: the move holds from `moveFrom` on, else for every trace
+      moveWasX*: float64
+        ## ckStationMove: the X the station had, when `moveHasWas`, for the message that says
+        ## how far it moved
+      moveWasY*: float64 ## ckStationMove: the Y it had, when `moveHasWas`
+      moveHasWas*: bool ## ckStationMove: `moveWasX` and `moveWasY` are given
+      moveNote*: string ## ckStationMove: why the station was moved
+      moveForget*: bool
+        ## ckStationMove: take away the move of this station (at `moveFrom` when `moveHasFrom`,
+        ## else the undated one); the position fields are then not used
+    of ckOwnPosition:
+      ownTrace*: int
+        ## ckOwnPosition: the survey-wide id of the trace whose own header position is read
     of ckFileAuxMark, ckProjectAuxMark:
       auxFile*: string ## ckFileAuxMark: the open file whose mark it is
       auxPosition*: int
@@ -1510,6 +1542,8 @@ type
     traceReads: seq[tuple[job: JobId; keys: TraceKeys; rows: seq[HeaderRow];
       vendor: VendorShown]]
       ## traces read for agent control (`readTraceHeaders`), oldest first, until taken
+    ownPositions: seq[tuple[session: SessionId; index: int; keys: TraceKeys]]
+      ## receiver positions traces' own headers give (`askOwnPosition`), oldest first
     mail: seq[Msg]
     indexCache: string ## the index cache folder; "" for none
     settings: Settings
@@ -11748,6 +11782,115 @@ proc projectAuxMark(state: var AppState; cmd: Command) =
     if not s.derived: state.askCorrelateAgain(s.diskPath)
 
 const
+  MinHeaderMoveMetres* = 1.0
+    ## a trace's own header position is offered as a station move when it is farther than
+    ## this from the position in force
+
+func stationMoveUnit*(state: AppState): SurveyUnit =
+  ## The unit the station moves are written in: the project's survey's when it is a length;
+  ## not given otherwise.
+  state.surveyLengthUnit
+
+func moveDistanceWords*(state: AppState; d: float64): string =
+  ## A distance `d` in survey units, in metres when the unit is a length ("41.8 m"), else
+  ## in the survey's own units.
+  let m = state.stationMoveUnit.metresPerUnit
+  if m == m: formatFloat(d * m, ffDecimal, 1) & " m"
+  else: formatFloat(d, ffDecimal, 1) & " units"
+
+func headerMoveOffered*(state: AppState; d: float64): bool =
+  ## Whether a header position `d` survey units from the one in force is far enough
+  ## (`MinHeaderMoveMetres`) to be offered as a station move.
+  let m = state.stationMoveUnit.metresPerUnit
+  d == d and d * (if m == m: m else: 1.0) > MinHeaderMoveMetres
+
+func stationWords*(k: StationKey): string =
+  ## "12/1007", or "12/1007 index 2" for a station with an index above 1.
+  func num(x: float64): string =
+    if x == round(x) and abs(x) < 1e15: $int64(x) else: formatFloat(x, ffDecimal, 2)
+  num(k.line) & "/" & num(k.point) & (if k.index > 1: " index " & $k.index else: "")
+
+proc utcWords*(t: float64): string =
+  ## A POSIX time as "2026-03-01 12:00:00 UTC".
+  fromUnix(int64(floor(t))).utc.format("yyyy-MM-dd HH:mm:ss") & " UTC"
+
+proc ownPositionOf*(state: AppState; trace: int): Option[tuple[x, y, z: float64]] =
+  ## The receiver position the header of survey-wide trace `trace` gives, read from the file
+  ## on disk by `ckOwnPosition`; none until it is read, and when the header gives none (NaN
+  ## or (0, 0)).
+  result = none(tuple[x, y, z: float64])
+  let i = state.findTrace(trace)
+  if i < 0: return
+  let local = trace - state.sessions[i].base
+  for o in state.ownPositions:
+    if o.session == state.sessions[i].id and o.index == local and o.keys.rcvX == o.keys.rcvX and
+        o.keys.rcvY == o.keys.rcvY and
+        (o.keys.rcvX != 0 or o.keys.rcvY != 0): # (0, 0): the header gives no position
+      return some((x: o.keys.rcvX, y: o.keys.rcvY, z: o.keys.rcvZ))
+
+proc askOwnPosition(state: var AppState; cmd: Command) =
+  ## `ckOwnPosition`: has a job read the position trace `ownTrace`'s own header gives, unless
+  ## it is known; a file in memory or a derived view has no header of its own to read.
+  let i = state.findTrace(cmd.ownTrace)
+  if i < 0: return
+  let s = state.sessions[i]
+  if s.derived or s.isSignature or s.noSeismic or s.file.inMemory: return
+  if not state.ownPositionOf(cmd.ownTrace).isNone: return
+  let local = cmd.ownTrace - s.base
+  discard state.jobs.submit(JobSpec(title: "Read the header position of a trace of " & s.name,
+    lane: jlInteractive, reads: @[s.path]), ownPositionWork(s.filePtr, s.path, s.id, local,
+    state.inbox.poster))
+
+proc stationMove(state: var AppState; cmd: Command) =
+  ## `ckStationMove`: a receiver station sits at another position (from a time on), or its
+  ## move is taken away. Kept in the project, or for this run when none is open or it is
+  ## read-only, and said so; the open files take it at once (`setStationMoves`).
+  func finite(x: float64): bool = x == x and abs(x) < Inf
+  if not (finite(cmd.moveLine) and finite(cmd.movePoint)) or cmd.moveIndex notin 0 .. 32767:
+    state.ignore(cmd, "a receiver station is a line, a point and an index from 0")
+    return
+  if cmd.moveHasFrom and not finite(cmd.moveFrom):
+    state.ignore(cmd, "the time a move holds from is not a number")
+    return
+  if not cmd.moveForget and not (finite(cmd.moveX) and finite(cmd.moveY) and
+      (not cmd.moveHasElev or finite(cmd.moveElev))):
+    state.ignore(cmd, "the position of a station is a number for x and y, and for the " &
+      "elevation when given")
+    return
+  let key = stationKey(cmd.moveLine, cmd.movePoint, int16(cmd.moveIndex))
+  let whenFrom = if cmd.moveHasFrom: some(cmd.moveFrom) else: none(float64)
+  var moves = state.project.doc.stationMoves
+  let station = "receiver " & stationWords(key)
+  let fromWords = if cmd.moveHasFrom: " from " & utcWords(cmd.moveFrom) & " on" else: ""
+  if cmd.moveForget:
+    if not moves.remove(key, whenFrom):
+      state.ignore(cmd, "no move of " & station & fromWords & " is kept")
+      return
+  else:
+    moves.add StationMove(station: key, fromTime: whenFrom, x: cmd.moveX, y: cmd.moveY,
+      elev: (if cmd.moveHasElev: some(cmd.moveElev) else: none(float64)), note: cmd.moveNote)
+  let keptIn =
+    if not state.inProject: "for this run only (no project is open)"
+    elif state.project.readOnly: "for this run only (the project is read-only)"
+    else: "in the project"
+  state.setStationMoves(moves)
+  if cmd.moveForget:
+    state.log.add(sevInfo, "project", "The move of " & station & fromWords & " is removed " &
+      keptIn & ": its position comes from the survey or the headers again.")
+  else:
+    let target = "(" & formatFloat(cmd.moveX, ffDecimal, 2) & ", " &
+      formatFloat(cmd.moveY, ffDecimal, 2) & ")"
+    let how =
+      if cmd.moveHasWas:
+        let d = hypot(cmd.moveX - cmd.moveWasX, cmd.moveY - cmd.moveWasY)
+        " is moved " & state.moveDistanceWords(d) & ": (" &
+          formatFloat(cmd.moveWasX, ffDecimal, 2) & ", " &
+          formatFloat(cmd.moveWasY, ffDecimal, 2) & ") → " & target
+      else: " is moved to " & target
+    state.log.add(sevInfo, "project", station.capitalizeAscii & how & fromWords & ", " &
+      keptIn & ".")
+
+const
   NeedProjectBinaries* = "Open or make a project to keep binary header sets."
     ## said when a binary header set is saved, deleted or chosen with no project open
 
@@ -13622,6 +13765,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckTreatAs: state.treatAs(cmd)
   of ckFileAuxMark: state.fileAuxMark(cmd)
   of ckProjectAuxMark: state.projectAuxMark(cmd)
+  of ckStationMove: state.stationMove(cmd)
+  of ckOwnPosition: state.askOwnPosition(cmd)
   of ckVibProfile: state.storeVibProfile(cmd.origin, cmd.vibProfile)
   of ckVibWeights: state.storeVibWeights(cmd.origin, cmd.vibWeights)
   of ckImportShotLog: state.importShotLogCmd(cmd)
@@ -13837,6 +13982,10 @@ proc drainInbox*(state: var AppState): bool =
     of mkTraceRead:
       state.traceReads.add (m.job, m.readKeys, move m.headerRows, move m.readVendor)
       if state.traceReads.len > MaxTraceReads: state.traceReads.delete(0) # never taken
+    of mkOwnPosition:
+      state.ownPositions.keepItIf(it.session != m.ownSession or it.index != m.ownIndex)
+      state.ownPositions.add (m.ownSession, m.ownIndex, m.ownKeys)
+      if state.ownPositions.len > MaxOwnPositions: state.ownPositions.delete(0)
     of mkTile:
       let k = state.findPanel(m.tile.panel)
       # The newest request's tile; or, while the filters change frame after

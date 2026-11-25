@@ -264,6 +264,27 @@ proc traceHeadersWork*(file: ptr SeismicFile; path: string; size: int64; index: 
     to.post Msg(job: ctx.id, kind: mkTraceRead, readKeys: keys, headerRows: move rows,
       readVendor: vendor)
 
+proc ownPositionWork*(file: ptr SeismicFile; path: string; session: SessionId; index: int;
+    to: Poster): JobWork =
+  ## The work of a job that reads the receiver position trace `index` of open file `file` (at
+  ## `path`) has in its own headers, from the file on disk and not from the keys in memory,
+  ## which a survey join or a station move may have replaced (`mkOwnPosition`). It opens the
+  ## file again without reading every trace's keys and reads the one trace. Never writes the
+  ## file. A trace that cannot be read posts a NaN position.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.setPhase "reading a trace's own position"
+    var own: array[1, TraceKeys]
+    own[0].rcvX = NaN
+    own[0].rcvY = NaN
+    {.cast(gcsafe).}:
+      if not file[].inMemory and index in 0 ..< file[].len:
+        fs.mappedRead(path, headers = true)
+        let disk = openSeismic(path, keys = false, opts = OpenOptions(vendors: currentVendors()))
+        if index < disk.len: disk.traceKeysInto([index], own)
+    clearCycleRoots()
+    to.post Msg(job: ctx.id, kind: mkOwnPosition, ownSession: session, ownIndex: index,
+      ownKeys: own[0])
+
 proc closeWork*(): JobWork =
   ## The work of a close job: none. Submitted with the file in `exclusive`,
   ## the job starts only once no job reads it, and when it has finished
