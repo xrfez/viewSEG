@@ -342,6 +342,11 @@ sweep**. It is dim, and its tooltip says why, when
   time you want; the tooltip gives both lengths);
 - the sweep is sampled at another interval than the recording (the tooltip gives both).
 
+A tick that stays on while one of these causes holds is not honoured silently: **Slice** and
+**Slice the folder** are dim with the sentence, nothing is written, and the tick can be cleared to
+slice without correlating. The window start of a correlated slice is zero: the record begins at
+the shot.
+
 Ticked, the window says the listen time that will be written (the record length less the
 sweep's) and the sweep's name; the size estimate follows. The tick is remembered, and applies to
 a slice of one file and to a slice of a folder (a recording a folder run cannot correlate, for
@@ -351,8 +356,8 @@ What is written is what the two steps write: the same 32-bit float samples bit f
 sample count and interval, delay and times, record numbers and source fields, and in SEG-Y the
 trace header's correlated flag set to yes, as the Output window writes them. Gaps in the
 recording and the zero padding of a window past its end are correlated as they are (zeros) and
-counted as before. A dead trace is written as zeros and an auxiliary trace is cut to the listen
-time, not correlated, as Output does with a trace that is not marked. Two things differ from the
+counted as before. A dead trace is written as zeros. The auxiliary channels of the recording are not
+sliced, so none is written. Two things differ from the
 two steps: the text header's provenance (SEG-Y card 4) or the SEG-D external header carries one
 line more, naming the sweep and the listen length, and a **SEG-D recording's own headers are
 not carried** when the tick is on (the records are not the length of the recording's), so the

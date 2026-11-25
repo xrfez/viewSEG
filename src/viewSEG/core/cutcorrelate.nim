@@ -14,6 +14,9 @@ func sweepWords*(sweepSamples: int; sweepIntervalUs: float64): string =
   ## "8000 ms" style length of a sweep.
   msText(float64(sweepSamples) * sweepIntervalUs / 1000.0) & " ms"
 
+const CorrelatedStartWhy* = "A correlated slice must begin at the shot: the window start " &
+  "must be zero, or time zero would not be the shot."
+
 func correlationWhy*(sweepSamples: int; sweepIntervalUs, recordMs, dtMs: float64): string =
   ## "" when records of `recordMs` of a recording sampled every `dtMs` ms can be correlated
   ## with a sweep of `sweepSamples` samples at `sweepIntervalUs`, else the sentence saying

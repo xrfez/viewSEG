@@ -368,6 +368,38 @@ proc main*() =
       doAssert wrote.st == jsDone, wrote.error
       same(toDir / (name & "_slice.sgy"), two, true, 15, Listen, "folder " & name)
 
+  # Broken to see it fail: the folder check ignoring the sweep (the file listed as
+  # sliceable, then failing in the run), and cutGather accepting a start other than 0.
+  block folder_check_says_why_a_file_cannot_be_correlated:
+    let inDir = dir / "check-in"
+    createDir(inDir)
+    makeRecording(inDir / "a.sgy", sweep)
+    var short = options(csSegy, true)
+    short.recordMs = float64(SweepLen) * 2.0 # the record is the sweep: no listen time
+    var flight = jobs.startFolder(FolderPlan(folder: inDir, rows: view.rows, opts: short,
+      cacheDir: dir / "cache"), KnownFacts())
+    doAssert waitUntil(flight.over(jobs)), "the check did not end"
+    let (res, _) = flight.take()
+    doAssert res.files.len == 1 and res.countSliceable == 0, outcomeWords(res)
+    doAssert "the record must be the sweep plus the listen time" in res.files[0].skip,
+      res.files[0].skip
+    # the tick off: the same folder is sliceable
+    var plain = short
+    plain.sweepPath = ""
+    flight = jobs.startFolder(FolderPlan(folder: inDir, rows: view.rows, opts: plain,
+      cacheDir: dir / "cache"), KnownFacts())
+    doAssert waitUntil(flight.over(jobs)), "the check did not end"
+    let (res2, _) = flight.take()
+    doAssert res2.countSliceable == 1, outcomeWords(res2)
+
+  block a_start_other_than_zero_is_refused:
+    var o = options(csSegy, true)
+    o.startMs = 10.0
+    let got = runCut(jobs, src, recPath, outDir / "start.sgy", shots, o)
+    doAssert got.st == jsFailed and CorrelatedStartWhy in got.error & got.res.reason,
+      got.error & " / " & got.res.reason
+    doAssert not fileExists(outDir / "start.sgy")
+
   echo "tcutgathercorr ok"
 
 when isMainModule:

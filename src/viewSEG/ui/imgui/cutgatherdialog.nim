@@ -237,10 +237,12 @@ proc drawHeaders(ui: var CutUi; st: AppState; marks: var Marks) =
 proc drawCorrelated(ui: var CutUi; st: AppState; t: Theme; marks: var Marks;
     dtMs: float64; wide: float32; sourceSegd: bool): seq[Command] =
   ## The tick that correlates each record with the project's stored sweep. Dim with the
-  ## reason when the reference cannot be used; the tick is remembered in the settings.
+  ## reason when the reference cannot be used and the tick is off; a tick that cannot be
+  ## honoured stays clearable, and the window refuses the slice meanwhile. The tick is
+  ## remembered in the settings.
   let why = ui.whyNotCorrelated(st, dtMs)
-  igBeginDisabled(why.len > 0)
-  var on = ui.correlated and why.len == 0
+  igBeginDisabled(why.len > 0 and not ui.correlated) # a tick whose cause stays can be cleared
+  var on = ui.correlated
   if igCheckbox(OptCorrelated.cstring, addr on):
     ui.correlated = on
     var s = st.settings
@@ -248,9 +250,10 @@ proc drawCorrelated(ui: var CutUi; st: AppState; t: Theme; marks: var Marks;
     result.add Command(kind: ckSettings, settings: s)
   igEndDisabled()
   tip(if why.len > 0: why else: CorrelatedTip)
-  marks.mark(if why.len > 0: "cut.correlate.disabled" else: "cut.correlate")
+  marks.mark("cut.correlate")
+  if why.len > 0 and not ui.correlated: marks.mark("cut.correlate.disabled")
   if why.len > 0: marks.mark("cut.correlate.why " & why)
-  if on:
+  if on and why.len == 0: # no listen time is told for a record the sweep outlasts
     marks.mark("cut.correlate.on")
     let sweep = chosenSweep(st)
     if not dtMs.isNaN:
@@ -263,8 +266,6 @@ proc drawCorrelated(ui: var CutUi; st: AppState; t: Theme; marks: var Marks;
     if ui.standard == csSegdRev3 and sourceSegd:
       coloured(CorrelatedNoCarry, t.roles[rlTextDim], wide)
       marks.mark("cut.correlate.noCarry")
-  elif why.len > 0 and ui.correlated:
-    coloured(why, t.roles[rlTextDim], wide)
 
 proc drawFormat(ui: var CutUi; marks: var Marks; sourceSegd, builtFromOptions: bool) =
   ## `sourceSegd`: the output SEG-D keeps the source's revision. `builtFromOptions`: the
@@ -351,7 +352,8 @@ proc considerFolder(ui: var CutUi; st: AppState; opts: CutOptions) =
   for path, kind in st.forcedKinds: treated.add path & ':' & $ord(kind) & ';'
   let key = if ui.srcFolder.len > 0 and li >= 0 and ui.haveShots and usableRecordMs(ui.recordMs):
       ui.srcFolder & '\0' & $ui.shotsKey & '\0' & $ui.recordMs & '\0' & $ord(ui.standard) &
-        '\0' & $ord(ui.align) & '\0' & ui.folder & '\0' & treated & '\0' & $st.vendorGen
+        '\0' & $ord(ui.align) & '\0' & ui.folder & '\0' & treated & '\0' & $st.vendorGen &
+        '\0' & $ui.correlated & '\0' & opts.sweepPath
     else: ""
   if key == ui.checkKey: return
   ui.stopCheck(st)
@@ -380,13 +382,18 @@ proc drawFolder(ui: var CutUi; st: AppState; t: Theme; marks: var Marks; wide: f
   elif li < 0: why = "Load a shot log first."
   elif not usableRecordMs(ui.recordMs): why = "The record length is not usable."
   elif ui.folder.len == 0: why = NeedFolder
+  elif ui.correlated and ui.whyNotCorrelated(st, NaN).len > 0:
+    why = ui.whyNotCorrelated(st, NaN)
   elif ui.check.job != NoJob or ui.checkKey.len == 0 or ui.lengthActive: why = FolderBeingRead
   elif ui.checked.reason.len > 0: why = ui.checked.reason
   elif ui.checked.refused.len > 0: why = ui.checked.refused
   elif ui.checked.countSliceable == 0: why = "No recording of the folder can be sliced."
   elif st.cutRunning: why = CutRunning
   if ui.srcFolder.len > 0:
-    if ui.check.job != NoJob:
+    if ui.correlated and ui.whyNotCorrelated(st, NaN).len > 0:
+      coloured(why, t.roles[rlWarning], wide)
+      marks.mark("cut.folderRefused")
+    elif ui.check.job != NoJob:
       wrapped(FolderBeingRead, wide)
       marks.mark("cut.folderReading")
     elif ui.checked.reason.len > 0:
@@ -498,6 +505,8 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
     if problem.len == 0 and refusal.len > 0: problem = refusal
     if problem.len == 0 and ui.haveShots and ui.shots.shots.len == 0:
       problem = "The shot log has no shot with a time."
+    if problem.len == 0 and ui.correlated:
+      problem = ui.whyNotCorrelated(st, dtMs) # never an uncorrelated file while the tick is on
     if problem.len > 0:
       coloured(problem, t.roles[rlWarning], wide)
       marks.mark("cut.why " & problem)
@@ -581,7 +590,7 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
           result.commands.add Command(kind: ckShowFile, panel: MainPanel,
             path: st.cutWritten, listFolder: true)
         marks.mark("cut.open")
-    let folderOpts = ui.options(st, false, dtMs) # the grouped orders need a recording's headers
+    let folderOpts = ui.options(st, false, NaN) # the grouped orders need a recording's headers
     ui.considerFolder(st, folderOpts)
     ui.drawFolder(st, t, marks, wide, folderOpts)
   igEnd()

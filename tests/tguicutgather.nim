@@ -265,6 +265,39 @@ proc main*() =
         doAssert f.savePng(dir / "slicecorr.png"), "cannot save the dialog"
       corrShot = true
     step("the picture of the tick", corrPicture, proc (f: FrameInfo): bool = true)
+    # The tick on and a record no longer than the sweep (10 samples of 16): the tick cannot
+    # be honoured, so Slice is dim with the sentence and nothing is written; the tick can be
+    # cleared, and Slice is usable again. Broken to see it fail: `problem` not set from
+    # `whyNotCorrelated` (Slice then cut an uncorrelated file) and the box disabled.
+    const ShortWhy = "the record must be the sweep plus the listen time"
+    step("a record no longer than the sweep", clickLength, proc (f: FrameInfo): bool =
+      inc clicks
+      if clicks == 4: f.typeText("20")
+      clicks > 8 and ShortWhy in f.why)
+    var refusedShot = false
+    proc refusedPicture(f: FrameInfo) =
+      let dir = getEnv("VIEWSEG_SCREENSHOTS")
+      if dir.len > 0 and not refusedShot:
+        createDir(dir)
+        doAssert f.savePng(dir / "slicecorr-refused.png"), "cannot save the dialog"
+      refusedShot = true
+      clicks = 0
+      f.click(f.markOf("cut.run").centre)
+    step("Slice is dim with the sentence", refusedPicture, proc (f: FrameInfo): bool =
+      inc clicks
+      doAssert f.core.settings.cutGather.correlated and ShortWhy in f.why
+      doAssert not f.core.cutRunning and not fileExists(dest), "a file was written"
+      clicks >= 6)
+    step("the tick is cleared", proc (f: FrameInfo) = f.click(f.markOf("cut.correlate").centre),
+      proc (f: FrameInfo): bool =
+      not f.core.settings.cutGather.correlated and f.why.len == 0 and f.summary.len > 0)
+    step("the length restored", clickLength, proc (f: FrameInfo): bool =
+      inc clicks
+      if clicks == 4: f.typeText("1000")
+      clicks > 8 and f.why.len == 0 and f.summary.len > 0)
+    step("the tick, usable again", proc (f: FrameInfo) = f.click(f.markOf("cut.correlate").centre),
+      proc (f: FrameInfo): bool =
+      f.core.settings.cutGather.correlated and f.hasMark("cut.correlate.on"))
     step("Cut", proc (f: FrameInfo) = f.click(f.markOf("cut.run").centre),
       proc (f: FrameInfo): bool = f.hasMark("cut.open") and fileExists(dest))
     step("the cut file holds the listen time", proc (f: FrameInfo) = discard,
@@ -323,6 +356,10 @@ proc main*() =
       proc (f: FrameInfo): bool = f.hasMark("cut.format SEG-Y"))
     step("SEG-Y", proc (f: FrameInfo) = f.click(f.markOf("cut.format SEG-Y").centre),
       proc (f: FrameInfo): bool = not f.hasMark("cut.format SEG-Y") and f.hasMark("cut.order"))
+    # a new project has no reference: the tick still on would refuse every slice, so it is cleared
+    step("the tick is cleared for the plain slices",
+      proc (f: FrameInfo) = f.click(f.markOf("cut.correlate").centre),
+      proc (f: FrameInfo): bool = not f.core.settings.cutGather.correlated)
     step("no project, no boxes", proc (f: FrameInfo) =
       f.apply(Command(kind: ckNewProject, projectPath: fx.dir / "job",
         dataFolders: @[fx.dir / "in"])),

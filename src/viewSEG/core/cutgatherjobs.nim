@@ -253,7 +253,7 @@ proc makeFetch(st: ref FetchState): FetchProc =
       st.fetched += count
       result = true
 
-proc readSweep(path, name: string; sweep: var seq[float32]; dtMs: var float64): string =
+proc readSweep*(path, name: string; sweep: var seq[float32]; dtMs: var float64): string =
   ## Reads the stored sweep at `path` on the worker, as the Output window does. "" when it is
   ## read and usable, else the sentence that says why not.
   try:
@@ -561,15 +561,9 @@ proc cutShots(c: ptr CutterJob) =
               rec.facts[i] = lastFacts[r].facts
           rec.keys[i] = k
         if correlating:
-          # A dead trace comes out as zeros. An auxiliary trace is not correlated: its first
-          # `width` samples are kept, as the Output window keeps an unmarked one.
-          for i in 0 ..< comps:
-            dead[i] = rec.keys[i].status in {tsDead, tsAuxiliary}
+          # A dead trace comes out as zeros; the slice holds no auxiliary trace.
+          for i in 0 ..< comps: dead[i] = rec.keys[i].status == tsDead
           corrPlans[0].correlateRows(raw, rec.samples, dead, samples, width, c.dtMs, corrWs)
-          for i in 0 ..< comps:
-            if rec.keys[i].status == tsAuxiliary:
-              copyMem(addr rec.samples[i * width], addr raw[i * samples],
-                width * sizeof(float32))
         rec.shotFailed = shotFailed
         if not c.pipe.place(s, rec): return
         discard settleShot(plan, buf, fetch, c.report[], touched, s)
@@ -632,6 +626,8 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var sweepDtMs = 0.0
       var listen = 0
       let correlating = opts.sweepPath.len > 0
+      if correlating and opts.startMs != 0:
+        abort(sink, dest, part, false, CorrelatedStartWhy, false)
       if correlating:
         let sweepWhy = readSweep(opts.sweepPath, opts.sweepName, sweep, sweepDtMs)
         if sweepWhy.len > 0: abort(sink, dest, part, false, sweepWhy, false)
