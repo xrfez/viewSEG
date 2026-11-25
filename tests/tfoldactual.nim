@@ -592,6 +592,40 @@ proc main*() =
         "a count cancelled by the user is followed by another: " & $t.status
       removeFile rec / "shot7.sgy"
       removeFile rec / "shot9.sgy"
+      # a file listed twice (a link to it comes first) is never kept as an empty part: once the
+      # link is gone the file is read, and the count equals one from nothing
+      let linked = fx.dir / "linked"
+      createDir linked
+      for s in 1 .. 5: shotFile(linked / ("shot" & $s & ".sgy"), s, coordinates = false)
+      createSymlink(linked / "shot1.sgy", linked / "a1.sgy")
+      doAssert r.folder(linked)
+      var lt: FoldTracker
+      proc lwant(): FoldWant =
+        FoldWant(kind: fkActual, on: true, actual: actualInputs(r), stamp: actualStamp(r),
+          scope: linked)
+      proc lsettled(): bool =
+        waitUntil((lt.follow(r.jobs, r.survey, lwant(), NaN, NaN); lt.status != fmComputing))
+      doAssert lsettled() and lt.status == fmReady and lt.shown.duplicates == 1
+      removeFile linked / "a1.sgy"
+      doAssert r.folder(linked)
+      doAssert lsettled() and lt.status == fmReady
+      let afterLink = whole()
+      doAssert lt.shown.files == 5 and afterLink.result.files == 5 and
+        lt.shown.binned == afterLink.result.binned and
+        lt.shown.counts == afterLink.result.counts,
+        "a file once listed twice is counted: " & $lt.shown.binned & " against " &
+        $afterLink.result.binned
+      doAssert r.folder(rec)
+      # the vendor header maps changing, and two kill lists of one length
+      let (before, stamp, gen) = (actualInputs(r), actualStamp(r), r.vendorGen)
+      let maps = fx.dir / "maps"
+      createDir maps
+      r.setVendorFolders(@[VendorFolder(dir: maps, origin: voProgram)])
+      doAssert r.settle(r.vendorGen > gen)
+      doAssert actualInputs(r).join != before.join and actualStamp(r) != stamp and
+        actualInputs(r).key != before.key, "a changed vendor load is another key"
+      doAssert killsId([3, 5]) != killsId([3, 6]) and killsId([1]) != killsId([1, 2])
+      doAssert killsId(toSeq(0 .. 100)) != killsId(toSeq(0 .. 99)), "long lists: count and hash"
       # past the bytes the parts may take they go (the newest map stays), and are read again
       foldCacheBytes = 1
       shotFile(rec / "shot7.sgy", 1, coordinates = false)

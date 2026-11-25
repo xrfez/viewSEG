@@ -229,6 +229,9 @@ proc countActual*(ctx: JobContext; inp: ptr ActualInputs; known: openArray[ptr A
   var sizes = newSeq[int64](reads)
   for k, i in args.order: sizes[k] = max(0'i64, inp.files[i].size)
   var got = newSeq[ActualPart](total)
+  # a file listed twice is never read: its part says so, so no count keeps it as a part
+  for i in 0 ..< total:
+    if twice[i]: got[i] = ActualPart(skip: "listed twice")
   proc take(k: int; outcome: sink ItemOutcome[ActualPart]) {.closure, gcsafe.} =
     ctx.checkCancelled()
     let i = args.order[k]
@@ -299,9 +302,19 @@ proc actualStamp*(st: AppState): int =
   var h: Hash = 0
   h = h !& hash(st.fileList.entriesRev) !& hash(st.fileList.gen) !& hash(st.fileList.recursive) !&
     hash(st.fileList.scanning) !& hash(st.fileList.entries.len) !& hash(st.editsRevision) !&
-    hash(st.survey.revision) !& hash(st.inProject) !& hash(st.project.revision)
+    hash(st.survey.revision) !& hash(st.inProject) !& hash(st.project.revision) !&
+    hash(st.vendorGen)
   if not st.inProject: h = h !& hash($st.settings.join)
   !$h
+
+func killsId*(kills: openArray[int]): string =
+  ## Names a sorted list of kills in a file's `id`: the indices themselves when there are at most
+  ## 64 (two lists never share a name), else their count and a hash.
+  if kills.len <= 64:
+    result = "k"
+    for k in kills: result.add "," & $k
+  else:
+    result = $kills.len & "," & $hash(@kills)
 
 proc actualInputs*(st: AppState): ref ActualInputs =
   ## What the count needs from `st`: every seismic file of the Files window's list (its
@@ -320,9 +333,10 @@ proc actualInputs*(st: AppState): ref ActualInputs =
     f.kills = edits.shown.lists[teKilled]
     f.kills.sort()
     f.id = e.path & "|" & $e.size & "|" & $e.modified.toUnix & "." & $e.modified.nanosecond &
-      "|" & $f.kills.len & "," & $hash(f.kills)
+      "|" & killsId(f.kills)
     key.add f.id & ";"
     result.files.add f
-  result.join = "options:" & $result.options & ";moves:" & result.moves.movesKey
+  result.join = "options:" & $result.options & ";moves:" & result.moves.movesKey &
+    ";vendors:" & $st.vendorGen
   key.add result.join & ";other:" & $result.otherSurvey
   result.key = key
