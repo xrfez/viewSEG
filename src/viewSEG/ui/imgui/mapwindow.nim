@@ -858,9 +858,20 @@ const filterTips: array[MapFilter, string] = [
   "Traces outside the exclusion area far louder than those either side of them on their own" &
     " line (a station that is loud against its neighbours, not noisy against the record)",
   "Traces whose noise was not judged: inside the exclusion area, whose sensor or station is" &
-    " not known, or of a node with a component missing. They are not shown as good"]
+    " not known, or of a node with a component missing. They are not shown as good",
+  "Traces whose header offset is not the distance between their source and receiver positions" &
+    " (coordinates and offsets in one unit; a trace with no offset or no position is not judged)",
+  "Traces whose header midpoint is not halfway between their source and receiver positions" &
+    " (a processed file's midpoint is often its bin's centre: expect some)"]
 
 const NoiseWrapEm = 30'f32 ## the words' lines wrap at this many font sizes
+
+func geometryLines(st: AppState): seq[string] =
+  ## The line the geometry check's words take under "Filters": why the record is not judged,
+  ## or the traces it did not judge (none while neither geometry filter is on).
+  if st.settings.map.filters * {mfOffsetOff, mfMidpointOff} != {}:
+    let line = st.recordQc.geometry.geometryWords
+    if line.len > 0: result.add line
 
 func noiseLines(st: AppState): seq[string] =
   ## The lines the noisy-trace test's words take under "Filters" (none while no
@@ -872,7 +883,8 @@ func noiseLines(st: AppState): seq[string] =
 
 const FilterOrder = [mfDead, mfUndecodable, mfKilled, mfNoisy, mfLouder, mfWeak, mfNotJudged,
   mfClipped, mfSpiky, mfConstant, mfDcOffset, mfAllZero, mfNotANumber, mfMissing, mfUnlisted,
-  mfDuplicate, mfAuxiliary, mfNoPosition, mfReversed, mfSpreadDiffers]
+  mfDuplicate, mfAuxiliary, mfNoPosition, mfReversed, mfSpreadDiffers, mfOffsetOff,
+  mfMidpointOff]
   ## the order the filters are listed in: the noisy-trace test's findings together
 static: doAssert FilterOrder.len == ord(high(MapFilter)) + 1, "a filter is not listed"
 
@@ -920,6 +932,16 @@ proc drawFilters(st: AppState; hits: array[MapFilter, FilterHits]; t: Theme; mar
       marks.mark("map.filter select " & $f)
       tip("Select these " & $h.traces.len & " traces in the plot")
     igPopID()
+  let geometry = geometryLines(st)
+  if geometry.len > 0:
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+    igPushTextWrapPos(igGetCursorPosX() + NoiseWrapEm * igGetFontSize())
+    for line in geometry: igTextUnformatted(line.cstring, nil)
+    igPopTextWrapPos()
+    igPopStyleColor(1)
+    marks.mark("map.geometry")
+    tip("The header offset and midpoint are compared with the source and receiver positions. " &
+      "A trace with no offset, or no position, cannot be compared.")
 
 proc drawLayers(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
     res: var MapOutput; hits: array[MapFilter, FilterHits]; t: Theme) =

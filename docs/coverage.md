@@ -41,9 +41,9 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.22.0: capabilities | names | processSEG 0.14.1: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 68 (27 in part) | 237 | 49 (29 in part) | 271 |
+| `built` | 68 (27 in part) | 237 | 50 (30 in part) | 276 |
 | `internal` | 22 | 68 | 10 | 92 |
-| `planned` | 32 | 211 | 37 | 338 |
+| `planned` | 32 | 211 | 36 | 333 |
 | `to plan` | 2 | 9 | 1 | 5 |
 | `not applicable` | 22 | 344 | 7 | 71 |
 | all | 146 | 869 | 104 | 777 |
@@ -369,7 +369,7 @@ name, so these are building blocks for code that works on raw headers.
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Geometry flags from the keys | `checkGeometry`, `checkGeometryInto`, `flaggedRows`, `GeometryQc`, `badGeometry`, `GeometryCheck`, `GeometryFlag`, `GeometryFlags` | Survey QC issue list, flags in table and map | planned |
+| Geometry flags from the keys | `checkGeometry`, `checkGeometryInto`, `flaggedRows`, `GeometryQc`, `badGeometry`, `GeometryCheck`, `GeometryFlag`, `GeometryFlags` | Map > Layers > Filters: "offset disagrees with the positions" and "midpoint disagrees with the positions" on the record shown (from the keys, after a join or a station move; not judged where the coordinates are angles or the units differ); the trace table's Distance and Offset error columns | built (the map's filters and the table's columns); planned (an issue list of every record's flags) |
 | First-break picking with confidence | `initFirstBreakPlan`, `pickInto` (also on the pool), `FirstBreakParams`, `FirstBreakPick`, `checkPick`, `FirstBreakPlan` (`params`, `pick`), `PickMethod`, `noPick` | Analysis → First-break overlay, and the button on the Seismic window's strip: a bar across each trace where the first break was picked (processSEG's defaults, then a second pass guided by the model, on a job, record by record; a pick not compared with the model is drawn faint), and the pick in the status bar under the pointer; colouring by confidence beyond that is planned | built (`initFirstBreakPlan`, `pickInto`, `FirstBreakParams` (the guided search window of the second pass), `FirstBreakPick`, `FirstBreakPlan`); planned (the picker's other options, `checkPick`, `PickMethod`, `noPick`) |
 | The recorded part of a trace | `liveSpan` | internal: the guided picking tells a pick on the edge of its search from one inside it over the trace's recorded samples only | internal |
 | Refraction fit per shot (swapped receivers, misplaced source) | `fitShot`, `ShotFitParams`, `ShotFit` (`suspect`, `asymmetryMs`, `v1`, `v2`), `RefractionModel` | Analysis → First-break overlay: a bar across each trace at the time the model fitted to the confident picks expects the first break (`ShotFit.modelMs`, at the offsets the survey or the file gives), a line to the pick where they differ, and both times in the status bar; the suspect traces and the survey QC issue list are planned | built (`fitShot`, `ShotFitParams`, `ShotFit`: the model's times); planned (the issue list, `RefractionModel`) |

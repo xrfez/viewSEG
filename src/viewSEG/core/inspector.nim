@@ -137,6 +137,9 @@ type
     joins*: int
       ## the geometry joins ended so far: a column of keys read before
       ## another ended is read again
+    lengths*: bool = true
+      ## the file's offsets and coordinates are lengths of one unit: the distance and the
+      ## offset error are empty otherwise (`core/geometryqc`)
 
   CachedColumn = object
     ## A column of the trace table read for every row of its scope.
@@ -329,27 +332,27 @@ const MaxCachedColumns = 8
 const MaxTableRows* = 2048 ## rows of the trace table read in one answer, at most
 
 proc readRows(f: ptr SeismicFile; name: string; traces: openArray[int];
-    dst: var openArray[float64]) =
+    dst: var openArray[float64]; lengths = true) =
   ## Column `name` of `traces` into `dst`. Raises `ValueError` for a field
   ## the file's traces do not have.
   if name.isKey:
     let keyed = f[].index.keys.len == f[].len
     for k, t in traces:
       dst[k] = keyValue(if keyed: f[].index.keys[t] else: f[].traceKeys(t), name,
-        f[].channelSetNumberOf(t))
+        f[].channelSetNumberOf(t), lengths)
   else:
     let column = f[].traceFieldColumn(name, traces) # (the rows on screen: a few hundred)
     for k in 0 ..< column.len: dst[k] = column[k]
 
 proc readRange(f: ptr SeismicFile; name: string; traces: Slice[int];
-    dst: var openArray[float64]) =
+    dst: var openArray[float64]; lengths = true) =
   ## Column `name` of the traces `traces` (a range) into `dst`.
   if name.isKey:
     let keyed = f[].index.keys.len == f[].len
     for k in 0 ..< traces.len:
       let t = traces.a + k
       dst[k] = keyValue(if keyed: f[].index.keys[t] else: f[].traceKeys(t), name,
-        f[].channelSetNumberOf(t))
+        f[].channelSetNumberOf(t), lengths)
   else:
     f[].traceFieldColumnInto(name, traces, dst)
 
@@ -357,7 +360,7 @@ proc columnKey(f: InspectFile; ask: TableAsk; name: string): string =
   ## The key of column `name` read whole for the table's scope. The keys'
   ## revision is in it: a station move must not reuse a column read before it.
   f.path & "\t" & $int(f.session) & "\t" & $ask.traces & "\t" & $ask.joins & "\t" &
-    $f.file[].keysRevision & "\t" & name
+    $f.file[].keysRevision & "\t" & $ask.lengths & "\t" & name
 
 proc indexOf(cache: TableCache; key: string): int =
   ## The index in the cache of the column `key`; -1 for none.
@@ -393,7 +396,8 @@ proc wholeColumn(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; key, name: 
     try:
       if not f.file[].inMemory: fs.mappedRead(f.path, headers = true)
       if not f.file[].inMemory: fs.unmappedFail(f.path)
-      readRange(f.file, name, part, c.values.toOpenArray(c.filled, c.filled + step - 1))
+      readRange(f.file, name, part, c.values.toOpenArray(c.filled, c.filled + step - 1),
+        ask.lengths)
       c.filled += step
     except CatchableError as e:
       problem = readProblem(e)
@@ -488,7 +492,7 @@ proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
       try:
         if not f.file[].inMemory: fs.mappedRead(f.path, headers = true)
         if not f.file[].inMemory: fs.unmappedFail(f.path)
-        readRows(f.file, name, answer.rowTraces, buf)
+        readRows(f.file, name, answer.rowTraces, buf, ask.lengths)
         for k in 0 ..< buf.len: answer.values[k][c] = buf[k]
       except CatchableError as e:
         answer.problems.add name & ": " & readProblem(e)

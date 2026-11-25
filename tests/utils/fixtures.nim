@@ -842,7 +842,7 @@ func mapWave(offset: float64; i: int): float32 =
   sample(offset, float64(i) * DtMs / 1000)
 
 proc mapTrace(w: var SeismicWriter; record: int64; channel: int; sl, sk, rl, rk: int;
-    ensemble = 0.0; status = tsLive; scale = 1.0) =
+    ensemble = 0.0; status = tsLive; scale = 1.0; offsetOver = 0.0) =
   ## One trace of field record `record` from `mapSps`'s source `sk` of source
   ## line `sl` to receiver `rk` of receiver line `rl` (0-based), with
   ## coordinates (and stations, which SEG-Y does not keep) in its keys.
@@ -857,6 +857,7 @@ proc mapTrace(w: var SeismicWriter; record: int64; channel: int; sl, sk, rl, rk:
   (k.t0Ms, k.intervalUs, k.status) = (0.0, DtMs * 1000, status)
   var buf = newSeq[float32](Samples)
   for i in 0 ..< Samples: buf[i] = float32(scale * float64(mapWave(k.offset, i)))
+  k.offset += offsetOver # (the samples are of the true offset)
   w.writeTrace(k, buf)
 
 const MapFfid* = 1000
@@ -864,7 +865,8 @@ const MapFfid* = 1000
   ## record is found by the source's station, as a recorder numbers its
   ## files its own way
 
-proc mapShotSegy*(fx: Fixtures; line, k: int; name = ""; measurementSystem = 1'i16): string =
+proc mapShotSegy*(fx: Fixtures; line, k: int; name = ""; measurementSystem = 1'i16;
+    badOffset = -1): string =
   ## The shot record of `mapSps`'s source `k` of source line `line` (0-based;
   ## FFID `MapFfid + mapRecord`): a trace for each of its 63 receivers, line
   ## by line, with coordinates in the headers (SEG-Y keeps no stations
@@ -877,7 +879,9 @@ proc mapShotSegy*(fx: Fixtures; line, k: int; name = ""; measurementSystem = 1'i
     text: @["C01 viewSEG test fixture: a shot of the map's spread"]))
   for rl in 0 ..< MapRcvLines.len:
     for rk in 0 ..< MapRcvPoints:
-      w.mapTrace(MapFfid + mapRecord(line, k), rl * MapRcvPoints + rk + 1, line, k, rl, rk)
+      let n = rl * MapRcvPoints + rk
+      w.mapTrace(MapFfid + mapRecord(line, k), n + 1, line, k, rl, rk,
+        offsetOver = (if n == badOffset: 50.0 else: 0.0))
   w.checkClose()
 
 proc mapReceiverSegy*(fx: Fixtures; line, k: int): string =

@@ -91,13 +91,17 @@ type
       ## traces outside the exclusion area far above those either side of them on their line
     mfNotJudged = "not judged for noise"
       ## traces inside the exclusion area, or whose sensor or station is unknown
+    mfOffsetOff = "offset disagrees with the positions"
+      ## traces whose header offset is not the distance between their source and receiver
+    mfMidpointOff = "midpoint disagrees with the positions"
+      ## traces whose header midpoint is not halfway between their source and receiver
 
   FlagFamily* = enum
     ## What kind of finding a filter's mark says, in its colour.
     ffFailed = "failed traces" ## dead, not decodable, all zero, not a number
     ffAmplitude = "amplitude"  ## noisy, clipped, spiky, constant, weak, DC offset
     ffEdited = "your edits"    ## killed, reversed
-    ffSpread = "the spread"    ## missing, not in the template, twice, ... spread differs
+    ffSpread = "the spread"    ## missing, not in the template, twice, ... spread differs, geometry
 
   FlagShape* = enum
     ## The outline of a kind of finding's marks, round its station: one a
@@ -148,7 +152,8 @@ const
     (ffAmplitude, syUpright), (ffAmplitude, syRing), (ffAmplitude, syCross),
     (ffAmplitude, syPlus), (ffFailed, syRing), (ffFailed, syCross), (ffSpread, syNone),
     (ffSpread, syPlus), (ffSpread, syRing), (ffSpread, syBar), (ffSpread, syUpright),
-    (ffEdited, syNone), (ffSpread, syCross), (ffAmplitude, syDot), (ffAmplitude, syDash)]
+    (ffEdited, syNone), (ffSpread, syCross), (ffAmplitude, syDot), (ffAmplitude, syDash),
+    (ffSpread, syDot), (ffSpread, syDash)]
     ## each filter's mark, in `MapFilter`'s order: no two alike, and the
     ## filters most used plain outlines (dead a square, noisy a circle,
     ## missing from the template a triangle, reversed a diamond; killed an X
@@ -156,7 +161,7 @@ const
     ## position are counted, not marked
   TraceFilters* = {mfDead, mfUndecodable, mfNoisy, mfClipped, mfSpiky, mfConstant, mfWeak,
     mfDcOffset, mfAllZero, mfNotANumber, mfMissing, mfUnlisted, mfDuplicate, mfAuxiliary,
-    mfLouder, mfNotJudged}
+    mfLouder, mfNotJudged, mfOffsetOff, mfMidpointOff}
     ## the filters found by reading the record shown on a job (`core/recordqc`)
   NoiseFilters* = {mfNoisy, mfWeak, mfLouder, mfNotJudged}
     ## those that come from the noisy-trace test (`core/noisearea`): they run it, and the

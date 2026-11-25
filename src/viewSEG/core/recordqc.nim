@@ -37,6 +37,9 @@
 ##   station with its index, index 0 any; one component counted once), so
 ##   that the map can place them. Without stations in the headers (traces
 ##   matched by channel) the counts are given and the traces not placed.
+## - **The geometry** of the keys (`core/geometryqc`): the traces whose header offset
+##   or midpoint disagrees with their positions, from the keys alone, so a join or a station
+##   move changes them; not judged where the coordinates are not lengths of the offsets' unit.
 ##
 ## The job reads the file (it is in its `reads`) and the relation records in
 ## place: the caller keeps them alive and unchanged until it ends.
@@ -50,9 +53,9 @@ import processSEG/core/[rows, types, workspace]
 import processSEG/pipeline
 import processSEG/qc/[amplitude, exclusion, record]
 import components, correlateread, edits, filesystem, firstbreakjobs, firstbreaks, inbox, jobs,
-  mapkinds, noisearea, processing, relationcheck, session, threads
+  geometryqc, mapkinds, noisearea, processing, relationcheck, session, threads
 
-export mapkinds, relationcheck.placeTraces
+export geometryqc, mapkinds, relationcheck.placeTraces
 
 const QcChunk* = 512 ## traces read and measured at a time
 
@@ -67,7 +70,8 @@ type
     job*: JobId = NoJob                 ## the job reading it; `NoJob` for none
     key*: tuple[file: SessionId; gather, keys: int; relations: pointer; domain: RelationDomain;
         traceMatch: TraceMatch; placed: Placed; samples: bool;
-        own: string; noise: NoiseSettings; breaks: BreakKey; share: int]
+        own: string; noise: NoiseSettings; breaks: BreakKey; share: int;
+        geometry: GeometryUnits]
       ## what the job, or `hits`, were made from (`noise`, `breaks` and `share` only when the
       ## noisy-trace test runs: `share` 0 finds the first breaks itself, 1 waits for the
       ## overlay's job to end, 2 takes the overlay's result)
@@ -83,6 +87,9 @@ type
       ## the traces are matched to the record's stations (not by channel): the traces the
       ## template does not list (`hits[mfUnlisted]`) are known
     noise*: NoiseSummary ## what the noisy-trace test found in the record (`ready` once it has)
+    geometry*: GeometrySummary
+      ## what the geometry check found in the record (`ready` once it has): the traces it
+      ## could not judge, or why none was
     picks*: bool
       ## the job finds the record's first breaks itself, and posts them (`pickKey`): the
       ## overlay waits for them instead of starting a second job
@@ -361,7 +368,8 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
     traces: Slice[int]; domain: RelationDomain; relations: ptr SurveyGeometry;
     against: string; traceMatch: TraceMatch; placed: Placed;
     samples: bool; own: seq[FilterEntry]; reversed: seq[int]; shifts: seq[ShiftEntry];
-    noise: NoiseWork; to: Poster; view: ref CorrelateView = nil): JobWork =
+    noise: NoiseWork; to: Poster; view: ref CorrelateView = nil;
+    geometry = GeometryUnits()): JobWork =
   ## The work of a job that reads gather `gather` (`traces`) of open file
   ## `session` (`file`, at `path`; its trace 0 is survey-wide `base`) and
   ## posts what the filters in `TraceFilters` find in it (`mkRecordQc`):
@@ -379,7 +387,9 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
   ## holds none, on those it finds itself and posts with the result. Submitted
   ## with the file in `reads`; `relations` is read in place, never copied.
   ## When `view` is set, the samples are that view's listen time, not the raw
-  ## record, and `path` (the virtual path) is not mapped.
+  ## record, and `path` (the virtual path) is not mapped. `geometry` says whether the
+  ## record's offsets and coordinates can be compared (`core/geometryqc`), for the two
+  ## geometry filters, which are found from the keys alone.
   result = proc (ctx: JobContext) {.gcsafe.} =
     var hits: array[MapFilter, FilterHits]
     for m in TraceFilters: hits[m].state = fsDone
@@ -389,6 +399,7 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
     var onStations = false
     var outside: seq[bool] = @[]
     var summary = NoiseSummary()
+    var geometrySummary = GeometrySummary()
     var found = FirstBreaks()
     var picked = false
     var noiseError = ""
@@ -514,6 +525,7 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
       for m in TraceFilters - {mfMissing, mfUnlisted, mfDuplicate}:
         hits[m].count = hits[m].traces.len
         hits[m].note = "traces"
+      geometrySummary = checkGeometryOf(f, traces, base, geometry, hits)
       if noiseError.len > 0:
         for m in NoiseFilters: (hits[m].state, hits[m].note) = (fsNotChecked, noiseError)
       if summary.ready:
@@ -529,4 +541,5 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
           qcRecords: records,
       qcByPlace: byPlace,
       qcOnStations: onStations,
-      qcNoise: move summary, qcBreaks: move found, qcPicked: picked)
+      qcNoise: move summary, qcGeometry: move geometrySummary, qcBreaks: move found,
+          qcPicked: picked)

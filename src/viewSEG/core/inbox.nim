@@ -11,9 +11,9 @@
 
 import std/[locks, times]
 import parseSEG
-import analysis, compare, edits, filelist, filememory, firstbreaks, identity, join, jobs, layouts,
-  log, mapkinds, nif, noisearea, panels, project, references, session, shotfiles, sigtypes,
-  spectra, stationmoves, survey, tiles, vendorfieldlist, vendormaps
+import analysis, compare, edits, filelist, filememory, firstbreaks, geometryqc, identity, join,
+  jobs, layouts, log, mapkinds, nif, noisearea, panels, project, references, session, shotfiles,
+  sigtypes, spectra, stationmoves, survey, tiles, vendorfieldlist, vendormaps
 
 type
   MsgKind* = enum
@@ -262,6 +262,8 @@ type
         ## template lists is known
       qcNoise*: NoiseSummary
         ## what the noisy-trace test found (not `ready` when it did not run)
+      qcGeometry*: GeometrySummary
+        ## what the geometry check found
       qcBreaks*: FirstBreaks
         ## the record's first breaks, when the job found them itself (`qcPicked`)
       qcPicked*: bool

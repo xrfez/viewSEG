@@ -67,7 +67,7 @@ proc everyFieldSet(): Settings =
       inlineHalf: 2500.5, crosslineHalf: 750), folderShots: false, foldLayer: true,
       foldActual: true, foldDifference: true, foldAlong: 25.5, foldAcross: 12.25,
       foldOffsets: "0, 1000, 2000.5", foldOffsetClass: 2, foldSectors: 8, foldSector: 3,
-      filters: {mfNoisy, mfClipped, mfMissing, mfSpreadDiffers}),
+      filters: {mfNoisy, mfClipped, mfMissing, mfSpreadDiffers, mfOffsetOff, mfMidpointOff}),
     join: JoinOptions(trailingDigits: true, multiComponent: true, coordinates: hcReplace,
       traceMatch: tmChannel, lineNames: @[LineName(name: "CLT4960",
       line: 4960), LineName(name: "A line", line: 12.5)]),

@@ -119,7 +119,7 @@ const
   MapFilterNames: array[MapFilter, string] = ["dead", "undecodable", "killed", "noisy",
     "clipped", "spiky", "constant", "weak", "dcOffset", "allZero", "notANumber", "missing",
     "unlisted", "duplicate", "auxiliary", "noPosition", "reversed", "spreadDiffers", "louder",
-    "notJudged"]
+    "notJudged", "offsetOff", "midpointOff"]
   CoordinateNames: array[HeaderCoordinates, string] = ["fill", "replace"]
   TraceMatchNames: array[TraceMatch, string] = ["auto", "station", "channel"]
   MaxLineNames = 1000  ## line names mapped to numbers, kept

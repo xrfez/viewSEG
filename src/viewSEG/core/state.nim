@@ -2976,6 +2976,16 @@ func joinedOf*(state: AppState; session: SessionId): int =
     if state.joins[i].session == session: return i
   -1
 
+func geometryUnitsOf(state: AppState; i: int): GeometryUnits =
+  ## Whether the offsets and the coordinates of open file `sessions[i]` are lengths of one
+  ## unit, so its geometry can be checked (`core/geometryqc`): the units its join confirmed,
+  ## else those its headers give (as an analysis reads them).
+  let s = state.sessions[i]
+  let joined = state.joinedOf(s.id)
+  if joined >= 0 and state.joins[joined].units.file != suNotGiven:
+    geometryUnits(state.joins[joined].units.file, state.joins[joined].units.file)
+  else: geometryUnits(headerUnitOf(s.crs), offsetUnitOf(s.crs))
+
 func spreads*(state: AppState): lent Spreads {.inline.} =
   ## The relation records made for the map's planned spreads, and what was
   ## made in words (`core/spread`).
@@ -4741,7 +4751,8 @@ proc followInspect(state: var AppState) =
     req.flowAux = layer.flowReachesAux(state.gatherKind(layer))
   if want.tableOf[0] != NoSession:
     req.table = TableAsk(at: state.fileOf(req, held, state.findSession(want.tableOf[0])),
-      traces: want.tableOf[1], view: want.table, joins: want.joins)
+      traces: want.tableOf[1], view: want.table, joins: want.joins,
+      lengths: state.geometryUnitsOf(state.findSession(want.tableOf[0])).judged)
   for n, t in want.traces:
     let i = state.findTrace(t)
     if i >= 0:
@@ -9882,7 +9893,8 @@ proc followRecordQc(state: var AppState) =
           share = 2 # failed or stopped: a result too, the job does not ask again
   let key = (s.id, g.gather, s.keysRevision, (if rel.isNil: nil else: cast[pointer](rel)),
     domain, state.settings.join.traceMatch, placed, samples,
-    ownKeyOf(state.editsAt(s.path), gatherTraces), work.settings, work.key, share)
+    ownKeyOf(state.editsAt(s.path), gatherTraces), work.settings, work.key, share,
+    state.geometryUnitsOf(i))
   if key == q.key: return
   if q.job != NoJob:
     discard state.jobs.cancel(q.job)
@@ -9892,6 +9904,7 @@ proc followRecordQc(state: var AppState) =
   (q.record, q.byPlace, q.onStations) = (-1'i64, false, false)
   q.records = @[]
   q.noise = NoiseSummary()
+  q.geometry = GeometrySummary()
   q.picks = work.on and share == 0
   q.pickKey = work.key
   q.job = NoJob
@@ -9901,7 +9914,8 @@ proc followRecordQc(state: var AppState) =
     lane: jlBackground, auto: true, reads: @[s.path]), recordQcWork(s.filePtr, s.path, s.id, s.base,
     g.gather, s.gathers[g.gather].traces, domain, (if rel.isNil: nil else: addr rel[]), against,
     state.settings.join.traceMatch, placed, samples,
-    own, reversed, shifts, work, state.inbox.poster, s.correlatedView))
+    own, reversed, shifts, work, state.inbox.poster, s.correlatedView,
+    state.geometryUnitsOf(i)))
   if not rel.isNil: state.qcHeld.add (q.job, rel)
 
 proc nextBreakRevision(state: var AppState): int =
@@ -9936,6 +9950,7 @@ proc takeRecordQc(state: var AppState; m: sink Msg) =
     (q.record, q.byPlace, q.onStations) = (m.qcRecord, m.qcByPlace, m.qcOnStations)
     q.records = move m.qcRecords
     q.noise = move m.qcNoise
+    q.geometry = move m.qcGeometry
     q.picks = false
     inc q.revision
     if m.qcPicked:

@@ -18,6 +18,7 @@
 
 import std/[algorithm, math, strutils]
 import parseSEG
+import processSEG/qc/geometry
 import components
 
 type
@@ -69,7 +70,7 @@ const
   MaxGraphBuckets* = 2048 ## the graph's points along the rows, at most
   MaxTableColumns* = 32   ## the columns a table shows, at most
   ColumnStep* = 65_536    ## traces a whole column is read by, between looks for a newer request
-  KeyColumns*: array[25, tuple[name, label: string]] = [
+  KeyColumns*: array[27, tuple[name, label: string]] = [
     ("keys.record", "FFID"), ("keys.channel", "Channel"),
     ("keys.channelSet", "Channel set (SEG-D, from 1)"),
     ("keys.traceCode", "Trace ID code (SEG-Y)"),
@@ -82,8 +83,11 @@ const
     ("keys.rcvZ", "Receiver elevation"), ("keys.cmpX", "Midpoint X"),
     ("keys.cmpY", "Midpoint Y"), ("keys.status", "Status (1 live, 2 dead, 3 auxiliary)"),
     ("keys.time", "Time (UTC, POSIX seconds)"), ("keys.t0Ms", "First sample (ms)"),
-    ("keys.intervalUs", "Sample interval (µs)")]
-    ## the columns of the file's keys, in the column chooser's order
+    ("keys.intervalUs", "Sample interval (µs)"),
+    ("keys.distance", "Distance, source to receiver"),
+    ("keys.offsetError", "Offset error (offset less distance)")]
+    ## the columns of the file's keys, in the column chooser's order; the last two are
+    ## computed from the positions (`keyValue`)
   DefaultTableFields* = ["keys.record", "keys.channel", "keys.srcLine", "keys.srcPoint",
     "keys.rcvLine", "keys.rcvPoint", "keys.offset", "keys.ensemble"]
     ## the columns of a first table
@@ -95,9 +99,12 @@ func keyLabel*(name: string): string =
   for (n, label) in KeyColumns:
     if n == name: return label
 
-func keyValue*(k: TraceKeys; name: string; channelSet = 0): float64 =
+func keyValue*(k: TraceKeys; name: string; channelSet = 0; lengths = true): float64 =
   ## Key column `name` of a trace's keys and channel set number `channelSet` (0
-  ## for none); NaN for a name of no key, and for a value the trace lacks.
+  ## for none); NaN for a name of no key, and for a value the trace lacks. The distance
+  ## and the offset error (the offset's size less the distance, in the coordinates' unit)
+  ## are NaN unless `lengths`: the file's offsets and coordinates are lengths of one unit
+  ## (`core/geometryqc`'s `geometryUnits`).
   case name
   of "keys.channelSet": (if channelSet <= 0: NaN else: float64(channelSet))
   of "keys.traceCode": (if k.traceCode == 0: NaN else: float64(k.traceCode))
@@ -124,6 +131,8 @@ func keyValue*(k: TraceKeys; name: string; channelSet = 0): float64 =
   of "keys.time": k.time
   of "keys.t0Ms": k.t0Ms
   of "keys.intervalUs": k.intervalUs
+  of "keys.distance": (if lengths: checkGeometry(k).distance else: NaN)
+  of "keys.offsetError": (if lengths: checkGeometry(k).offsetError else: NaN)
   else: NaN
 
 type

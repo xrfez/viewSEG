@@ -1345,8 +1345,17 @@ for noise** (below), **clipped**, spiky, constant, DC offset, all zero, not a nu
 (processSEG's amplitude checks, default thresholds); stations **missing from
 the template** (planned in the X file, no trace in the record), traces **not in the
 template**, stations **recorded twice**; auxiliary traces, traces **without a position**,
-**reversed** ones; and the shots whose X record stands out from its template (**spread not
-the template**). Hover a filter for what it counts; **Select** selects its traces in the
+**reversed** ones; the shots whose X record stands out from its template (**spread not
+the template**); and traces whose header **offset** is not the distance between their
+source and receiver positions, or whose header **midpoint** is not halfway between them
+(more than 1 unit or 1% of the distance off, the larger, in the survey's unit; a processed
+file's midpoint is often its bin's centre, so expect some). That check reads the headers
+only, as they are after a survey import or a station move. A trace with no offset, or
+whose positions are not known, cannot be compared: the list says how many ("N traces give
+no offset; M give no positions: not judged"), and does not mark them. Where the
+coordinates are degrees or arc seconds, or the offsets are in another unit than the
+coordinates, no trace is judged and the list says why, instead of marking every one.
+Hover a filter for what it counts; **Select** selects its traces in the
 plot; point at a ringed receiver and its description says which filters mark it.
 
 **Noisy traces and the area left out.** With a relation file, **noisy** and **weak** are
@@ -2101,7 +2110,9 @@ holds, read-only, in four tabs:
   and the map: point at a row and its trace lights up in both, click to select it
   (Ctrl+click adds or takes away, Shift+click selects a range), double-click to show its
   record; selected rows are marked, and so is the row of the trace under the plot's
-  pointer. Right-click a row to copy it or every row read. Only the rows on screen are
+  pointer. Two columns are worked out from the positions: **Distance, source to receiver**
+  and **Offset error** (the offset's size less that distance; empty where the units
+  differ or a position is not known). Right-click a row to copy it or every row read. Only the rows on screen are
   read; a column you sort, find or graph by is read whole once, in the background (a
   million traces scroll at frame rate).
 
