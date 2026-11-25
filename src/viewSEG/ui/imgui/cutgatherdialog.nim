@@ -2,14 +2,19 @@
 ## the times of a loaded shot log into one record per shot and written to a new
 ## file. A floating window. It posts the command that starts the cut; it reads
 ## no file, and what it sums up comes from the session and the log.
+##
+## The window also slices every recording of a folder in one run (`cutfolderjobs`):
+## a job checks the folder when it is chosen (and again when the log, the length, the
+## format or the destination change), and a second job writes. Both are the window's
+## own, as the Trace quality window's scans are; the window never reads a file itself.
 
 import std/[math, options, os]
 import imguin/cimgui
 from parseSEG import skSegd
 import processSEG/continuous/slice
-import ../../core/[cutgather, destwatch, geometry, outputbinary, outputtext, panels, recordingkind,
-  shotlog, state, treatas]
-import ../../view/[cutwords, recordingwords, theme]
+import ../../core/[cutfolderjobs, cutgather, destwatch, geometry, jobs, outputbinary, outputtext,
+  panels, recordingkind, shotlog, state, treatas]
+import ../../view/[cutfolderwords, cutwords, recordingwords, theme]
 import marks, style
 
 const NameRoom = 256
@@ -31,12 +36,23 @@ type
     shotsKey: tuple[id, revision: int]
     haveShots: bool
     dest: DestWatch            ## whether a file or folder of the chosen name is already there
+    srcFolder: string          ## the folder whose recordings are all sliced
+    checkJob: JobId = NoJob
+    checkSink: FolderSink
+    checkKey: string           ## what the check in flight, or the last one, was made for
+    checked: FolderResult      ## what the last check found
+    runJob: JobId = NoJob
+    runSink: FolderSink
+    ran: FolderResult          ## what the last run did
+    haveRan: bool
 
   CutDraw* = object
     commands*: seq[Command]
-    askFolder*: bool ## the Change folder button was pressed: ask for one
+    askFolder*: bool       ## the Change folder button was pressed: ask for one
     askAt*: string
-    askFile*: bool   ## the Choose file button was pressed: ask for the recording to slice
+    askFile*: bool         ## the Choose file button was pressed: ask for the recording to slice
+    askSourceFolder*: bool ## the Choose folder button was pressed: ask for the folder to slice
+    askSourceAt*: string
 
 proc open*(ui: var CutUi; logId: int; recordMs = DefaultRecordMs) =
   ## Shows the window. `logId` is the shot log the Shot log window shows; a
@@ -58,6 +74,13 @@ func recordLengthMs*(ui: CutUi): float64 {.inline.} =
 proc setFolder*(ui: var CutUi; folder: string) =
   ## The folder dialog's answer.
   ui.folder = folder
+
+proc setSourceFolder*(ui: var CutUi; folder: string) =
+  ## The answer of the dialog that chooses the folder whose recordings are sliced.
+  ui.srcFolder = folder
+  ui.checkKey = ""
+  ui.checked = FolderResult()
+  ui.haveRan = false
 
 proc nameText(ui: CutUi): string =
   $cast[cstring](unsafeAddr ui.nameBuf[0])
@@ -205,6 +228,130 @@ proc drawFormat(ui: var CutUi; marks: var Marks; sourceSegd, builtFromOptions: b
   if builtFromOptions: tip(NoCarry)
   marks.mark("cut.format " & standardWords(ui.standard, sourceSegd) & ".on")
 
+proc folderPlan(ui: CutUi; st: AppState; opts: CutOptions; write: bool): FolderPlan =
+  ## What the folder jobs are given: a copy of the log's rows, the options, the open files.
+  let li = st.findShotLog(ui.logId)
+  result = FolderPlan(folder: ui.srcFolder, destFolder: ui.folder, rows: st.shotView(li).rows,
+    opts: opts, cacheDir: st.indexCache, write: write)
+  result.opts.logName = extractFilename(st.shotLogSource(li))
+  if result.opts.logName.len == 0: result.opts.logName = st.shotLogName(li)
+  for x in st.sessions: result.others.add x.diskPath
+
+proc stopCheck(ui: var CutUi; st: AppState) =
+  if ui.checkJob != NoJob: discard st.jobs.cancel(ui.checkJob)
+  ui.checkJob = NoJob
+  ui.checkSink = nil
+
+proc ended(st: AppState; job: JobId; state: var JobState; error: var string): bool =
+  ## Whether `job` is over (or gone), with how it ended.
+  let info = st.jobs.info(job)
+  if info.isNone:
+    state = jsFailed
+    error = "the job is gone"
+    return true
+  if info.get.state in {jsQueued, jsRunning}: return false
+  state = info.get.state
+  error = info.get.error
+  true
+
+proc pollFolder(ui: var CutUi; st: AppState) =
+  ## Takes what the folder jobs made once they are over.
+  var state = jsQueued
+  var error = ""
+  if ui.checkJob != NoJob and st.ended(ui.checkJob, state, error):
+    if ui.checkSink != nil: ui.checked = ui.checkSink.result
+    if state == jsFailed and ui.checked.reason.len == 0: ui.checked.reason = error
+    ui.checkJob = NoJob
+    ui.checkSink = nil
+  if ui.runJob != NoJob and st.ended(ui.runJob, state, error):
+    if ui.runSink != nil: ui.ran = ui.runSink.result
+    if state == jsFailed and ui.ran.reason.len == 0: ui.ran.reason = error
+    elif state == jsCancelled: ui.ran.reason = "The run was cancelled."
+    ui.haveRan = true
+    ui.runJob = NoJob
+    ui.runSink = nil
+    ui.checkKey = "" # the folder is looked at again: its slices are there now
+
+proc considerFolder(ui: var CutUi; st: AppState; opts: CutOptions) =
+  ## Starts the check of the chosen folder when what it depends on changed. Nothing is
+  ## read until a folder is chosen, and nothing is checked while a run writes.
+  ui.pollFolder(st)
+  if ui.runJob != NoJob: return
+  let li = st.findShotLog(ui.logId)
+  let key = if ui.srcFolder.len > 0 and li >= 0 and ui.haveShots and usableRecordMs(ui.recordMs):
+      ui.srcFolder & '\0' & $ui.shotsKey & '\0' & $ui.recordMs & '\0' & $ord(ui.standard) &
+        '\0' & $ord(ui.align) & '\0' & ui.folder
+    else: ""
+  if key == ui.checkKey: return
+  ui.stopCheck(st)
+  ui.checkKey = key
+  ui.checked = FolderResult()
+  if key.len == 0: return
+  ui.checkSink = FolderSink()
+  ui.checkJob = st.jobs.submit(cutFolderSpec(ui.srcFolder, false),
+    cutFolderWork(ui.folderPlan(st, opts, false), ui.checkSink))
+
+proc startFolder(ui: var CutUi; st: AppState; opts: CutOptions) =
+  ui.stopCheck(st)
+  ui.haveRan = false
+  ui.runSink = FolderSink()
+  ui.runJob = st.jobs.submit(cutFolderSpec(ui.srcFolder, true),
+    cutFolderWork(ui.folderPlan(st, opts, true), ui.runSink))
+
+proc drawFolder(ui: var CutUi; st: AppState; t: Theme; marks: var Marks; wide: float32;
+    opts: CutOptions) =
+  ## The part of the window that slices a whole folder.
+  igSeparator()
+  wrapped("Folder of recordings: " & (if ui.srcFolder.len > 0: ui.srcFolder else: "not chosen"),
+    wide)
+  marks.mark("cut.srcFolder " & ui.srcFolder)
+  let li = st.findShotLog(ui.logId)
+  var why = ""
+  if ui.srcFolder.len == 0: why = NeedSourceFolder
+  elif li < 0: why = "Load a shot log first."
+  elif not usableRecordMs(ui.recordMs): why = "The record length is not usable."
+  elif ui.folder.len == 0: why = NeedFolder
+  elif ui.checkJob != NoJob or ui.checkKey.len == 0: why = FolderBeingRead
+  elif ui.checked.reason.len > 0: why = ui.checked.reason
+  elif ui.checked.countSliceable == 0: why = "No recording of the folder can be sliced."
+  elif st.cutRunning: why = CutRunning
+  if ui.srcFolder.len > 0:
+    if ui.checkJob != NoJob:
+      wrapped(FolderBeingRead, wide)
+      marks.mark("cut.folderReading")
+    elif ui.checked.reason.len > 0:
+      coloured(ui.checked.reason, t.roles[rlWarning], wide)
+    elif ui.checked.listed:
+      let words = checkWords(ui.checked)
+      wrapped(words, wide)
+      marks.mark("cut.folderCheck " & words)
+      for line in skipLines(ui.checked):
+        coloured(line, t.roles[rlTextDim], wide)
+        marks.mark("cut.folderSkip " & line)
+      let lost = unplacedWords(ui.checked)
+      if lost.len > 0:
+        coloured(lost, t.roles[rlWarning], wide)
+        marks.mark("cut.folderUnplaced")
+  let running = ui.runJob != NoJob
+  igBeginDisabled(why.len > 0 or running)
+  if igButton("Slice the folder##cut".cstring, ImVec2_c(x: 0, y: 0)): ui.startFolder(st, opts)
+  igEndDisabled()
+  marks.mark("cut.runFolder")
+  tip(if running: "The folder is being sliced; the Jobs window shows its progress"
+      elif why.len > 0: why
+      else: "Slice every recording of the folder and write a file for each in the folder " &
+        "above; nothing is replaced")
+  if running:
+    wrapped("Slicing the folder: the Jobs window shows how far it has come.", wide)
+    marks.mark("cut.folderRunning")
+  elif ui.haveRan:
+    let words = if ui.ran.reason.len > 0: ui.ran.reason else: outcomeWords(ui.ran)
+    coloured(words, if ui.ran.countWritten > 0: t.roles[rlText] else: t.roles[rlWarning], wide)
+    marks.mark("cut.folderOutcome " & words)
+    for line in outcomeLines(ui.ran):
+      wrapped(line, wide)
+      marks.mark("cut.folderLine " & line)
+
 proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw =
   ## The window, while it is open. Cut posts the command when the options can
   ## be used; the outcome of the last cut is under the buttons.
@@ -215,7 +362,7 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
   let vp = igGetMainViewport()
   igSetNextWindowPos(ImVec2_c(x: vp.WorkPos.x + igGetFontSize() * 4,
     y: vp.WorkPos.y + igGetFontSize() * 2), ImGui_Cond_FirstUseEver.cint, ImVec2_c(x: 0, y: 0))
-  igSetNextWindowSize(ImVec2_c(x: igGetFontSize() * 40, y: igGetFontSize() * 38),
+  igSetNextWindowSize(ImVec2_c(x: igGetFontSize() * 40, y: igGetFontSize() * 50),
     ImGui_Cond_FirstUseEver.cint)
   let wide = igGetFontSize() * 34
   var open = true
@@ -235,6 +382,12 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
       result.askFile = true
     marks.mark("cut.chooseFile")
     tip(ChooseFileTip)
+    igSameLine(0, -1)
+    if igButton("Choose folder...##cut".cstring, ImVec2_c(x: 0, y: 0)):
+      result.askSourceFolder = true
+      result.askSourceAt = ui.srcFolder
+    marks.mark("cut.chooseFolder")
+    tip(ChooseFolderTip)
     let why = st.cutProblem()
     if shown < 0 and st.shotLogCount > 0:
       coloured(NeedSource, t.roles[rlWarning], wide)
@@ -317,7 +470,7 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
         marks.mark("cut.numbering")
     let canCut = why.len == 0 and problem.len == 0 and ui.folder.len > 0 and
       nameWhy.len == 0 and not ui.dest.exists and not ui.dest.pending and
-      summary.len > 0
+      summary.len > 0 and ui.runJob == NoJob
     igBeginDisabled(not canCut)
     if igButton("Slice##cut".cstring, ImVec2_c(x: 0, y: 0)):
       result.commands.add Command(kind: ckCutGather, cutLog: st.findShotLog(ui.logId),
@@ -347,5 +500,8 @@ proc drawCut*(ui: var CutUi; st: AppState; t: Theme; marks: var Marks): CutDraw 
           result.commands.add Command(kind: ckShowFile, panel: MainPanel,
             path: st.cutWritten, listFolder: true)
         marks.mark("cut.open")
+    let folderOpts = ui.options(st, false) # the grouped orders need a recording's headers
+    ui.considerFolder(st, folderOpts)
+    ui.drawFolder(st, t, marks, wide, folderOpts)
   igEnd()
   if not open: ui.shown = false

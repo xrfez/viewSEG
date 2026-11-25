@@ -16,13 +16,19 @@
 ## a bad length, "Cut started a job on a bad length". With the open button not
 ## drawn after a cut, "the cut did not finish: Cut".
 ##
+## A whole folder: Choose folder, the window counts the files that can be sliced and names the
+## others, and Slice the folder writes a file for the one that holds the shots and nothing for
+## the rest. Seen to fail with the Slice the folder button doing nothing ("the cut did not
+## finish: Slice the folder").
+##
 ## Needs a display: run under
 ## `env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1920x1080x24"`.
 
 import std/[monotimes, options, os, strutils]
 import parseSEG
-import viewSEG/core/[geometry, outputbinary, outputtext, shotlog, state]
-import viewSEG/ui/imgui/[app, cutgatherdialog]
+import viewSEG/core/[cutfolderjobs, geometry, outputbinary, outputtext, shotlog, state]
+import viewSEG/ui/imgui/[app, cutgatherdialog, shell]
+
 import utils/[faultyfs, fixtures, waiting]
 
 const
@@ -58,8 +64,9 @@ block the_first_open_takes_the_remembered_length:
   again.open(-1, 2000.0)
   doAssert again.recordLengthMs == 4000.5, "a later open dropped the length"
 
-proc makeRecording(path: string) =
-  ## Two components, two source traces each of 3000 samples at 2 ms.
+proc makeRecording(path: string; offsetS = 0) =
+  ## Two components, two source traces each of 3000 samples at 2 ms, from `offsetS` seconds
+  ## after BaseUs.
   var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
   for seg in 0 .. 1:
     for comp in 0 .. 1:
@@ -71,7 +78,7 @@ proc makeRecording(path: string) =
       k.channel = float64(comp + 11)
       k.intervalUs = 2000
       k.t0Ms = 0
-      k.time = float64(BaseUs div 1_000_000) + float64(seg * SegLen) * 0.002
+      k.time = float64(BaseUs div 1_000_000 + offsetS) + float64(seg * SegLen) * 0.002
       k.rcvLine = 1
       k.rcvPoint = 7
       w.writeTrace(k, samples)
@@ -101,9 +108,17 @@ proc main*() =
     let logPath = fx.dir / "shots.csv"
     let map = writeLog(logPath)
     let dest = fx.dir / "out" / "rec_slice.sgd"
+    # a folder of recordings: one holds the shots, one is a day later, one is not a recording
+    let many = fx.dir / "folder"
+    createDir(many)
+    makeRecording(many / "a.sgy")
+    makeRecording(many / "b.sgy", 86_400)
+    writeFile(many / "notes.txt", "not a recording\n")
+    let before = readFile(many / "a.sgy")
     install()
     let hook = proc (kind: DialogKind; location: string): seq[string] =
       if kind == dkCutDest: @[fx.dir / "out"]
+      elif kind == dkCutSourceFolder: @[many]
       elif kind == dkOpenFile: @[rec]
       else: @[]
     let opts = RunOptions(windowSize: (1920, 1080), theme: forceDark, persist: true,
@@ -282,6 +297,42 @@ proc main*() =
         doAssert f.savePng(dir / "cut-dialog-headers.png"), "cannot save the dialog"
       boxesShot = true
     step("the picture of the boxes", boxesPicture, proc (f: FrameInfo): bool = true)
+    # A whole folder: the folder is chosen, the window says how many of its files can be
+    # sliced and why the others cannot, and a run writes a file for the one that holds the shots.
+    # a slice is not written into the folder of an open file: the sliced file is closed
+    proc closeAll(f: FrameInfo) =
+      for s in f.core.sessions: f.apply Command(kind: ckClose, file: s.id)
+    step("the sliced file is closed", closeAll,
+      proc (f: FrameInfo): bool = f.core.sessions.len == 0)
+    step("the log again (making the project closed it)", logOnly, proc (f: FrameInfo): bool =
+      f.core.shotLogCount == 1 and f.core.jobs.active.len == 0)
+    step("Choose folder", proc (f: FrameInfo) = f.click(f.markOf("cut.chooseFolder").centre),
+      proc (f: FrameInfo): bool = f.hasMark("cut.srcFolder " & many))
+    proc checked(f: FrameInfo): bool =
+      let names = f.markNames("cut.folderCheck ")
+      if names.len == 0: return false
+      doAssert names[0].endsWith("1 recording of 3 files can be sliced (3 shots)."), names[0]
+      doAssert f.hasMark("cut.folderSkip b.sgy: " & NoShotHeld), "b.sgy is not said to hold no shot"
+      doAssert f.markNames("cut.folderSkip notes.txt: ").len == 1, "notes.txt is not skipped"
+      true
+    step("the folder is checked", proc (f: FrameInfo) = discard, checked)
+    var folderShot = false
+    proc folderPicture(f: FrameInfo) =
+      let dir = getEnv("VIEWSEG_SCREENSHOTS")
+      if dir.len > 0 and not folderShot:
+        createDir(dir)
+        doAssert f.savePng(dir / "slicefolder.png"), "cannot save the dialog"
+      folderShot = true
+    step("the picture of the folder", folderPicture, proc (f: FrameInfo): bool = true)
+    step("Slice the folder", proc (f: FrameInfo) = f.click(f.markOf("cut.runFolder").centre),
+      proc (f: FrameInfo): bool =
+      f.markNames("cut.folderOutcome Sliced 1 file").len == 1 and
+        fileExists(fx.dir / "out" / "a_slice.sgy"))
+    step("nothing else was written and the source is as it was", proc (f: FrameInfo) = discard,
+      proc (f: FrameInfo): bool =
+      doAssert not fileExists(fx.dir / "out" / "b_slice.sgy"), "a file without a shot was sliced"
+      doAssert readFile(many / "a.sgy") == before, "the source changed"
+      true)
     var at = 0
     var started = false
     var failed = ""

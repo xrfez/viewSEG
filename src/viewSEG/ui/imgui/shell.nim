@@ -63,6 +63,7 @@ type
     dkOutputDest = "Output destination",       ## the folder those files are written into
     dkShotLog = "Shot log",                    ## one shot log to import: CSV, text or TSV
     dkCutDest = "Slice destination"            ## the folder a slice by shot log is written into
+    dkCutSourceFolder = "Slice source folder"  ## the folder whose recordings a slice by shot log cuts
     dkMissingFolder = "Missing traces folder"  ## the folder whose files the Missing traces window checks
     dkQualityFolder = "Trace quality folder"   ## the folder whose files the Trace quality window measures
     dkExportShotSps = "Export SPS"             ## an SPS file to write (a save dialog)
@@ -98,6 +99,7 @@ func pickerName*(kind: DialogKind): string =
   of dkOutputDest: "outputDest"
   of dkShotLog: "shotLog"
   of dkCutDest: "cutDest"
+  of dkCutSourceFolder: "cutSourceFolder"
   of dkMissingFolder: "missingFolder"
   of dkExportShotSps: "exportShotSps"
   of dkOutputLog: "outputLog"
@@ -110,8 +112,8 @@ func pickerName*(kind: DialogKind): string =
 func isFolderDialog*(kind: DialogKind): bool =
   ## Whether the dialog chooses a folder (its answer is the place to remember).
   kind in {dkOpenFolder, dkOpenProject, dkProjectPlace, dkProjectData, dkLocateFolder,
-    dkOutputSource, dkOutputDest, dkCutDest, dkMissingFolder, dkQualityFolder,
-    dkVibFolder}
+    dkOutputSource, dkOutputDest, dkCutDest, dkCutSourceFolder, dkMissingFolder,
+    dkQualityFolder, dkVibFolder}
 
 func isSaveDialog*(kind: DialogKind): bool =
   ## Whether the dialog names a file to write.
@@ -371,7 +373,8 @@ proc showDialog*(kind: DialogKind; parentWindowId = 0'u32; location = "") =
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr seismicFilters[0],
       seismicFilters.len.cint, at, kind == dkOpenFiles)
   of dkOpenFolder, dkOpenProject, dkProjectPlace, dkProjectData, dkLocateFolder,
-      dkOutputSource, dkOutputDest, dkCutDest, dkMissingFolder, dkQualityFolder, dkVibFolder:
+      dkOutputSource, dkOutputDest, dkCutDest, dkCutSourceFolder, dkMissingFolder,
+      dkQualityFolder, dkVibFolder:
     SDL_ShowOpenFolderDialog(onDialogResult, userdata, parent, at, false)
   of dkImportSettings, dkImportLayout:
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr nifFilters[0],

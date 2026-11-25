@@ -67,6 +67,17 @@ func initCutOptions*(recordMs: float64, startMs = 0.0, align = saNearest,
   ## Options for a record of `recordMs`.
   CutOptions(recordMs: recordMs, startMs: startMs, align: align, standard: standard)
 
+func standardExt*(s: CutStandard): string =
+  ## The extension of a file of that format.
+  if s == csSegy: ".sgy" else: ".sgd"
+
+func defaultName*(source: string; s: CutStandard): string =
+  ## The source's stem, "_slice", and the format's extension; "slice" with no source.
+  var stem = source
+  let dot = stem.rfind('.')
+  if dot > 0: stem.setLen dot
+  (if stem.len == 0: "slice" else: stem & "_slice") & standardExt(s)
+
 func sliceShotOf*(shot: Shot): SliceShot =
   ## The planner's shot for a log row. The time is UTC, so it goes through
   ## `initSliceShot` and the exact microseconds are set on top; the GPS
