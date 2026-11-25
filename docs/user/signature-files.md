@@ -137,7 +137,11 @@ carries a warning sign.
   looking at. The force scale is the one in the settings now, and the reference is the project's
   chosen one. Only the settings you change in a window are written into the profile, so a
   second window cannot wipe what the first one set; a window opened on a file starts from the
-  profile, and Messages says once what changed. Nothing read from the file is copied. A change made by an agent, or with no
+  profile, and Messages says once what changed. Nothing read from the file is copied. The
+  folder QC judges each file as a window opened on that file would: with the profile, the
+  ground force polarity chosen for the file's layout, the top frequency typed for its layout
+  (against the recorded reference) and the options the file opens with (Reopen with options,
+  for one file or for every file of its kind in the listing). A change made by an agent, or with no
   project open, is for that run only and is not kept. **Reports > Vibrator QC of a folder** reads
   this configuration; until a window has set it, that window says that vibrator signature QC is
   not configured.
@@ -213,7 +217,7 @@ better (a mean phase more than 20° lower), a line says so and nothing is swappe
 does not prove the order is right: when the two channels are nearly in phase with each other,
 both orders give much the same phase and the check cannot tell them apart. The folder QC judges a converter's file on the roles the window takes for its layout, a swap
 included, and its row carries the same word when the other order fits the reference clearly
-better (the polarity stays as recorded there).
+better.
 
 For a `.dat` and a `.vib` a line under the choice says that both choices give the same ground
 force. When a file cannot follow the choice (no mass or baseplate trace, masses not typed, a `.vib`
@@ -266,8 +270,9 @@ share one value (same unit, same curve).
   place to reverse a polarity; M's choice carries B with it): it affects the analysis only (the
   samples and the file stay as recorded), is remembered for
   this file layout (in the project when one is open, else in your settings), and is said in the
-  roles' notes ("GF reversed for the analysis: your choice") and in the polarity line. **as
-  recorded** takes it back. Automatic polarity is not offered for a signature file. For a `.dat`
+  roles' notes ("GF reversed for the analysis: your choice") and in the polarity line. The
+  folder QC judges every file of that layout the same way, and its row's polarity line says so
+  too. **as recorded** takes it back. Automatic polarity is not offered for a signature file. For a `.dat`
   that stores the controller's own correlation, the line also says where its peak at lag 0 lies
   and, when the ground force is opposite and that peak is negative, that the controller counts the
   same relation as in phase.

@@ -462,6 +462,11 @@ func layoutKey*(codes: openArray[int16]; count = -1): string =
     if i > 0: result.add '.'
     result.add $c
 
+func recordedTopKey*(codes: openArray[int16]; count = -1): string =
+  ## What a top frequency typed against the recorded reference is kept under: `RecordedKey`
+  ## and the file layout (`layoutKey`), so a file of another layout never takes it.
+  RecordedKey & " " & layoutKey(codes, count)
+
 type ChosenPolarity* = object
   ## What a hand choice keeps with its roles: the polarity of GF and of M and B, and the
   ## ground force the verdict judges

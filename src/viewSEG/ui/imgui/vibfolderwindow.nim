@@ -255,7 +255,7 @@ proc submitQc(ui: var VibFolderUi; st: AppState) =
   ui.status = Judging
   ui.qcJob = st.jobs.submit(folderQcSpec(files, config.reference.path),
     folderQcWork(config.ask, config.weights, files, ui.sink,
-    reference = config.reference))
+    reference = config.reference, choices = folderChoices(st, files)))
 
 proc refreshShots(ui: var VibFolderUi; st: AppState): string =
   ## Matches the rows with the loaded shot logs again when the logs changed, whichever

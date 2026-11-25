@@ -5,7 +5,7 @@
 ## run is not configured.
 
 import std/[os, sequtils]
-import analysis, project, settings, state, vibfolderqc, vibprofile
+import analysis, openchoice, project, references, settings, state, vibfolderqc, vibprofile
 
 const
   NotConfigured* = "Vibrator signature QC is not configured."
@@ -65,7 +65,7 @@ func referenceChoice*(loaded: bool; index: ReferenceIndex; home, id: string): tu
       elif not (e.file.len == 0 or home.len == 0):
         result.state = rfStored
         result.reference = FolderReference(path: home / e.file, name: e.name,
-          startMs: e.timeStart)
+          startMs: e.timeStart, exactTopHz: generatedTopHz(e))
       return
 
 func vibQcConfig*(st: AppState): VibQcConfig =
@@ -85,6 +85,7 @@ func vibQcConfig*(st: AppState): VibQcConfig =
   result.profile.forceScale = st.settings.forceScale
   result.ask = applied(result.profile, archiveIds(st))
   result.ask.layouts = st.vibRoleChoices
+  result.ask.tops = st.project.doc.vibTops
   result.weights = st.project.doc.vibJobWeights
   let found = referenceChoice(st.referencesLoaded, st.references, st.referencesHome,
     result.profile.referenceId)
@@ -95,6 +96,13 @@ func vibQcConfig*(st: AppState): VibQcConfig =
     of rfLoading: ReferencesLoading
     of rfMissing: ReferenceMissing
     else: ""
+
+proc folderChoices*(st: AppState; files: openArray[FolderListed]): seq[SignatureChoice] =
+  ## The options each of `files` is decoded with, as a window opens it now
+  ## (`openChoiceOf`): those it was reopened with, else those given for every file of its
+  ## kind in the listing, else the defaults. In memory: no file is read.
+  result = newSeq[SignatureChoice](files.len)
+  for i, f in files: result[i] = st.openChoiceOf(canonical(f.path)).signature
 
 func sameShot(a, b: FolderShot): bool =
   a.ffid == b.ffid and a.line == b.line and a.point == b.point

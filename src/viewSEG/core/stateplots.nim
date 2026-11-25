@@ -280,7 +280,7 @@ func vibTopKey*(state: AppState; pw: AnalysisWindow): string =
       let s = state.sessions[i]
       let g = s.gatherOf(pw.traces[0] - s.base)
       if g in 0 ..< s.gathers.len:
-        result = RecordedKey & " " & layoutKey(s.recordCodes(g), s.gathers[g].traces.len)
+        result = recordedTopKey(s.recordCodes(g), s.gathers[g].traces.len)
   if pw.params.projectReference and state.chosenRef.len > 0 and
       state.refsLoaded:
     let at = state.refs.findId(state.chosenRef)
@@ -459,7 +459,7 @@ proc askPlot(state: var AppState; w: int): bool =
         a.archiveName = e.name
         a.archiveIntervalUs = e.intervalUs
         a.archiveStartMs = e.timeStart
-        if e.origin.generated: a.exactTopHz = max(e.origin.f1Hz, e.origin.f2Hz)
+        a.exactTopHz = generatedTopHz(e)
     a.refName = a.archiveName & " (archive)"
     pw.reference = a.refName
   if pw.view == avVibrator:

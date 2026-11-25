@@ -96,7 +96,12 @@ type
     layouts*: seq[string]
       ## the roles chosen by hand per file layout (`choiceText`), the ones the Vibrator window
       ## uses: a file of a layout with a choice is judged on its places (Swap mass and
-      ## baseplate among them); not part of the profile
+      ## baseplate among them) and its polarities (a signature file: the ground force's);
+      ## not part of the profile
+    tops*: seq[string]
+      ## the top frequencies typed in the project (`topTexts`): a file measured against its
+      ## recorded reference takes the one typed for its layout (`recordedTopKey`), as a window
+      ## does; not part of the profile
     problems*: seq[string]
 
 const ForceNotJudged* = "No 100 % force: the force limits are not judged."
