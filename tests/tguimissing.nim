@@ -6,14 +6,18 @@
 ## column); the Folder tab starts nothing until Run, takes the folder from the
 ## dialog, honours Include subfolders (off by default; changing it drops the
 ## answer), exports the list, the File tab follows the file shown, and the
-## window closes by its tab's button and returns from the View menu.
+## window closes by its tab's button and returns from the View menu. A file of
+## one shot slice is checked as its receiver, and the File tab says the other
+## shots of that receiver are in other files.
 ##
 ## Seen to fail: with the Folder tab's job started as soon as a folder is chosen,
 ## "Folder... chooses the folder" found a folder job before Run; with the
 ## subfolders tick ignored by the walk, "Run: the folder without its subfolders"
 ## did not happen (3 files, not 2); "a reloaded survey is checked again" guards the survey
 ## key (a reload that reuses an address is not reproducible here); with the export taking every row whatever the filter,
-## "Export CSV... writes the rows the filter shows" read both stations back.
+## "Export CSV... writes the rows the filter shows" read both stations back; with
+## the note left out of the File tab, "a file of one shot slice is a receiver, and
+## the File tab says so" did not happen.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -60,6 +64,24 @@ proc xRec(record: int; srcPoint: string; toCh, fromR, toR: int): string =
   put(result, 70, align($toR & ".00", 10))
   put(result, 80, "1")
 
+proc sliceFile(path: string) =
+  ## One trace: receiver 10 / 2 of the shot at source 1.00 / 1.00, one shot slice.
+  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000,
+    numSamples: 1, time: 1_700_000_000.0))
+  var k = initTraceKeys()
+  k.record = 1
+  k.channel = 1
+  k.srcLine = 1
+  k.srcPoint = 1
+  k.srcIndex = 1
+  k.rcvLine = 10
+  k.rcvPoint = 2
+  k.rcvIndex = 1
+  k.intervalUs = 2000
+  k.status = tsLive
+  w.writeTrace(k, @[0'f32])
+  doAssert w.close().len == 0, "slice file was not written: " & path
+
 proc shotFile(path: string; receivers: Slice[int]) =
   ## One shot record (field record 1, source 1.00 / 1.00) with a trace at each receiver.
   var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000,
@@ -92,6 +114,8 @@ proc main*() =
     shotFile(folder / "two.sgd", 1 .. 3)
     shotFile(folder / "sub" / "three.sgd", 1 .. 4)
     writeFile(folder / "notes.txt", "not seismic\n")
+    createDir(fx.dir / "slice")
+    sliceFile(fx.dir / "slice" / "slice.sgd")
     let plan = fx.dir / "plan.x"
     writeFile(plan, "H00 SPS format version number   SPS 2.1;\n" & xRec(1, "1.00", 4, 1, 4) & "\n")
     let outCsv = fx.dir / "out" / "missing.csv"
@@ -296,6 +320,27 @@ proc main*() =
           f.has("missing.stat Receiver stations missing: 1"),
           "a killed trace changed the figures: " & $f.markNames("missing.stat ")
     step("a killed trace counts as present and the window says so", killOne, killedNote)
+
+    proc showSlice(f: FrameInfo) =
+      doAssert not f.has("missing.message " & SingleSliceNote), "the slice note for a shot"
+      f.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.dir / "slice" / "slice.sgd",
+        listFolder: false)
+    proc sliceNote(f: FrameInfo): bool =
+      result = f.has("missing.message " & SingleSliceNote)
+      if result:
+        doAssert f.has("missing.stat Source stations expected by the O records derived " &
+          "from the X records."), $f.markNames("missing.stat ")
+        doAssert f.has("missing.counts 1 receiver"), $f.markNames("missing.counts ")
+    step("a file of one shot slice is a receiver, and the File tab says so", showSlice,
+      sliceNote)
+    proc backToTwo(f: FrameInfo) =
+      f.apply Command(kind: ckShowFile, panel: MainPanel, path: folder / "two.sgd",
+        listFolder: false)
+    proc twoAgain(f: FrameInfo): bool =
+      result = f.has("missing.ready") and
+        f.has("missing.stat Receiver stations found in the file: 3")
+      if result: doAssert not f.has("missing.message " & SingleSliceNote)
+    step("a shot file again: no slice note", backToTwo, twoAgain)
 
     var scans = 0
     proc scansOfTwo(f: FrameInfo): int =

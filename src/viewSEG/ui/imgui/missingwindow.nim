@@ -499,6 +499,11 @@ proc drawScan(ui: var MissingUi; st: AppState; folderTab: bool; marks: var Marks
       igTextUnformatted(line.cstring, nil)
       marks.mark("missing.stat " & line)
       tip(FiguresTip)
+    if not folderTab and r.singleSlice:
+      igPushTextWrapPos(0)
+      igTextUnformatted(SingleSliceNote.cstring, nil)
+      igPopTextWrapPos()
+      marks.mark("missing.message " & SingleSliceNote)
     if not folderTab and st.shownHasKilled:
       igTextUnformatted(KilledNote.cstring, nil)
       marks.mark("missing.message " & KilledNote)

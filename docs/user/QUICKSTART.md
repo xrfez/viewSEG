@@ -315,13 +315,27 @@ so records compare one after the other.
 **Reports > Missing traces...** lists the stations the survey's relation records call
 for that a file does not hold. It needs relation records (X records) imported; without
 them the window says so in one sentence and shows no table. A shot gather is checked
-against the X record of its shot (the receiver stations expected). A receiver gather
-that is cut into records is checked against the O record of its receiver (the source
-stations expected); when no O records are loaded they are worked out from the X records.
-Each receiver is checked once in a file, however many records (one for each shot slice) its
-traces are cut into, so for receivers the window counts receivers, not records. A
-receiver with two O records is checked against the sources of both at once: the record
-number does not choose between them.
+against the X record of its shot (the receiver stations expected). A receiver gather is
+checked against the O record of its receiver (the source stations expected); when no O
+records are loaded they are worked out from the X records.
+
+Which of the two a file is: a file whose traces hold one receiver station is always
+receiver data, a single shot slice or many, so a file of one receiver is never taken
+for a shot that lacks every other receiver. Otherwise the recording kind the program
+shows for the file decides (shot gather, sliced receiver gather, continuous receiver
+recording). When the kind cannot be told, the stations in the trace headers decide: one
+source station and several receivers is a shot; several sources and several receivers is
+neither, and is listed under **Unmatched** with the reason.
+
+A receiver is checked once, over all its traces: in a file, however many records (one
+for each shot slice) its traces are cut into, and on the Folder tab across every file of
+the folder, so a folder of one file for each slice, of one file for each receiver, or a
+mix of the two, gives the same answer. For receivers the window counts receivers, not
+records, and **Missing** for a source is the number of receivers that lack it. A receiver
+with two O records is checked against the sources of both at once: the record number
+does not choose between them. Traces of one receiver point with index 0 and index 1 are
+one receiver; the index makes two receivers only where the survey has the point at two
+indices.
 A record is never matched to the survey by its record (file) number alone: one whose trace
 headers hold no source station (no receiver station, for a receiver gather) is not checked
 and is listed under **Unmatched**.
@@ -346,13 +360,16 @@ keeps the place you last gave it. It has two tabs.
   expected, present, missing, percent). The table has the columns **Line**, **Point** and
   **Missing**: how many records of the file call for that station and do not have it. The
   file is read from disk, so killed traces and other edits of the session count as
-  present; the tab says so when the file has killed traces.
+  present; the tab says so when the file has killed traces. A file that holds one shot
+  slice of one receiver is checked as that receiver, so the receiver's other shots show
+  as missing; the tab says that they are in other files and that the Folder tab checks
+  the receiver as a whole.
 - **Folder** checks the files of a folder you choose, and does nothing until you press
   **Run**. **Folder...** opens the folder dialog and the chosen path is shown and kept for
   next time. **Include subfolders** is off until you tick it; changing the folder or the
   tick drops the answer on screen. The figures are the same, added over the files, and
-  **Missing** goes up by one for every file (for a file of several records, every record)
-  that lacks the station.
+  **Missing** goes up by one for every shot record (for receivers, every receiver) that
+  lacks the station.
 
 While a check runs, a progress bar and **Stop** show; the Jobs window lists it too.
 **Skipped** lists files that were not seismic or could not be read, **Unmatched**
