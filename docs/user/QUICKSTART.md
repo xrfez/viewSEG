@@ -1962,7 +1962,10 @@ What you see, top down:
      no sensor sensitivities). Take it from the vibrator's own QC, or press **Set from this
      sweep** on a sweep where the vibrator held its target force: the box becomes this
      sweep's average force divided by the target's share. It is kept like a typed value,
-     per signal judged. Left empty, the two force rows of the table say so and the other
+     per signal judged, and it is **one for the project**: it applies to every vibrator, in
+     every window and in the folder QC, whichever vibrator's sweep it was set on (the note
+     beside the box says which). A project with different vibrators needs it set again, or
+     another project. Left empty, the two force rows of the table say so and the other
      four limits still give the verdict.
    - **Target force (%).** The drive level the sweep was set to, as a percent of 100 %
      force (60 for a sweep run at 60 % drive). The average force is judged as a percent of

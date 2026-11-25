@@ -283,7 +283,7 @@ proc main*() =
       doAssert kept.limits.avgPhaseDeg == 3 and kept.harmonics == 7 and kept.fromFile == "a.sgy",
         $kept
       doAssert kept.forceHundredPct.isNaN and kept.targetPct.isNaN and
-        kept.hundredByVibrator.len == 0, "a SEG-Y window's own 100 % force or drive level"
+        kept.olderHundreds.len == 0, "a SEG-Y window's own 100 % force or drive level"
       # once there is a profile, a converter's window writes only the made signal's settings
       p = st.plots[w].params
       p.qc.avgPhaseDeg = 4.0
@@ -316,36 +316,10 @@ proc main*() =
       doAssert st.plots[w2].params.reactionMassKg == 3000 and
         st.plots[w2].params.baseplateMassKg == 1500, "the window does not show the pair kept"
       st.shutdown()
-    # the window's lines
-    let two = @[VibHundred(vibrator: 11, pct: 1.0), VibHundred(vibrator: 12, pct: 2.0)]
-    doAssert weightsNotes(two, joWeighted) == @[OneSetOfWeights, OneWeightsSet]
-    # (the switch a converter's window sets is the one the folder applies to every file)
+    # the window's line: the weights and the ground force choice are one for the project, and
+    # so is the 100 % force
     doAssert "Ground force choice" in OneSetOfWeights and ".dat and .vib files included" in
-      OneSetOfWeights, OneSetOfWeights
-    doAssert weightsNotes(two, joRecorded) == @[OneSetOfWeights]
-    doAssert weightsNotes(two[0 .. 0], joWeighted) == @[OneSetOfWeights]
-    # the folder run: once, when a SEG-Y file was judged on the one set
-    block folderRun:
-      withFixtures fx:
-        let c = converterOf()
-        var files: seq[FolderListed] = @[]
-        for name in ["a.sgy", "b.sgy"]:
-          writeVibSegy(fx.dir / name, [c.reference, c.mass, c.plate, c.record], 1.0,
-            [21'i16, 19, 18, 20])
-          files.add listed(fx.dir / name)
-        let dat = listed(datFile(fx.dir, "a.dat"))
-        var prof = profile(joWeighted, Wm, Wb, 1000.0)
-        prof.hundredByVibrator = two
-        var count = 0
-        for x in runJob(files & dat, applied(prof, [])).problems:
-          if x == OneWeightsSet: inc count
-        doAssert count == 1, $count
-        doAssert OneWeightsSet notin runJob(@[dat], applied(prof, [])).problems
-        prof.hundredByVibrator = two[0 .. 0]
-        doAssert OneWeightsSet notin runJob(files, applied(prof, [])).problems
-        prof.hundredByVibrator = two
-        prof.judge = joRecorded
-        doAssert OneWeightsSet notin runJob(files, applied(prof, [])).problems
+      OneSetOfWeights and "used for every vibrator" in OneSetOfWeights, OneSetOfWeights
 
 when isMainModule:
   main()

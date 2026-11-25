@@ -228,19 +228,22 @@ which. The fundamental says whether the drive level is at target; a raw peak wel
 at distortion or decoupling. The fundamental's peak decides nothing.
 
 **Where the 100 % force comes from.** Beside its box a note says whether it was typed, or set
-from a sweep (on which file, at which target force), or taken from the project's QC profile, and
-for which vibrator. Set it once on a high-force sweep and every later sweep of that vibrator is
-read against it, so a low-force sweep simply reads low. It is kept **per vibrator** in the
-project's QC profile: a vibrator with no value says so and is not judged on force (it never takes
-another vibrator's); a project saved before keeps its one value as the default for every
-vibrator until a vibrator gets its own. Each vibrator's value keeps the unit (and, for
-pound-counts, the accelerometer set) it was given in, so one set in counts before the force scale
-was given is converted exactly with the scale for the window and the folder QC, and one set in
-newtons is not read as counts when the scale is taken away (that vibrator is not judged on force,
-and says to set it again). A value kept by a version that had one unit for every vibrator has no
-known unit: set it again. With no project open, each vibrator's value is kept the same way for
-the run only (never saved): a window moved to another vibrator's sweep has none until you set
-it, says so, and is not judged on force; moved back, it has the first vibrator's again. If the file carries the controller's own average force
+from a sweep (on which file, which vibrator's sweep, at which target force: "set on a.dat
+(vibrator 12) at target 60 %"), or taken from the project's QC profile. Set it once on a
+high-force sweep and every later sweep is read against it, so a low-force sweep simply reads low.
+There is **one 100 % force for the project**, kept in its QC profile and used for every vibrator,
+in every window and in the folder QC: "Set from this sweep" sets it for all of them, whichever
+vibrator's sweep is shown. A project with different vibrators needs it set again for each, or
+another project for each; the program does not keep a value per vibrator. The value keeps the
+unit (and, for pound-counts, the accelerometer set) it was given in, so one set in counts before
+the force scale was given is converted exactly with the scale for the window and the folder QC,
+and one set in newtons is not read as counts when the scale is taken away (the force is then not
+judged, and says to set it again). A project saved by a version that kept a value per vibrator
+reads as one value when it kept one, or when all of its values agree; when they differ the
+project has none, Messages and the window say "This project kept different 100 % forces for
+vibrators 11 and 12; it now keeps one: set it again from a sweep.", and the force is not judged
+until you set it (the old values stay in the project's document until then). With no project
+open, the one value is kept for the run only (never saved). If the file carries the controller's own average force
 and it differs from the target you typed by more than 10 percentage points when you press Set from
 this sweep, the value is set all the same and a line under the box (and Messages) says what a
 sweep at the target would then read. The force in pounds (the force scale) is under **Advanced:

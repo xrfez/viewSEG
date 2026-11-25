@@ -1489,8 +1489,8 @@ type
       ## the vibrator signature's roles chosen by hand, per file layout, in force (the
       ## project's, else the settings'; `choiceText`)
     sessionHundreds: VibQcProfile
-      ## without a project: the 100 % force given for each vibrator in this run, kept as a
-      ## project's profile keeps them (only `hundredByVibrator` is used); never saved
+      ## without a project: the one 100 % force given in this run, kept as a project's profile
+      ## keeps it (only its 100 % force fields are used); never saved
     refsLoaded: bool
     mainRefsLoaded: bool
     refsRev: int ## bumps when the archive or the choice changes, so a plot asks again
@@ -8896,6 +8896,8 @@ proc takeOpened(state: var AppState; m: sink Msg) =
     inc state.layoutRev # the windows as they are, the project's own from now on
     state.layoutAt = getMonoTime()
   state.logProblems("project", news.problems)
+  if p.doc.hasVibProfile and p.doc.vibProfile.hundredConflict.len > 0:
+    state.log.add(sevWarning, "project", p.doc.vibProfile.hundredConflict)
   state.vendor.choice = p.doc.vendorChoice
   state.reloadVendorMaps()
   state.log.add(sevInfo, "project", (if news.created: "Made the project " else:

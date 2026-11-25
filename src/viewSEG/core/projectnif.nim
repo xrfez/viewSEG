@@ -219,12 +219,19 @@ proc writeVibProfile(w: var NifWriter; p: VibQcProfile) =
     if finite(p.forceScale.vibAccMvPerCount):
       w.value("vibAccMvPerCount", p.forceScale.vibAccMvPerCount)
     w.close
-  if finite(p.forceHundredPct): w.value("forceHundredPct", p.forceHundredPct)
-  if p.forceHundredUnit.len > 0: w.value("forceHundredUnit", p.forceHundredUnit)
-  if p.forceHundredSetKnown: w.choice("forceHundredSet", $p.forceHundredSet)
-  if p.hundredHow == hhSweep: w.choice("hundredHow", "sweep")
-  if finite(p.hundredAtPct): w.value("hundredAtPct", p.hundredAtPct)
-  for e in p.hundredByVibrator:
+  # the project's one 100 % force (what an older document kept per vibrator and that differs
+  # stays as it was read, with the one beside it, until a value is set)
+  let one = if finite(p.forceHundredPct) or not finite(p.olderSingle.pct): p.hundredOf
+    else: p.olderSingle
+  if finite(one.pct): w.value("forceHundredPct", one.pct)
+  if one.unit.len > 0: w.value("forceHundredUnit", one.unit)
+  if one.setKnown: w.choice("forceHundredSet", $one.accelSet)
+  if one.how == hhSweep: w.choice("hundredHow", "sweep")
+  if finite(one.atPct): w.value("hundredAtPct", one.atPct)
+  if one.how == hhSweep and finite(one.pct):
+    if one.file.len > 0: w.value("hundredFile", one.file)
+    if one.vibrator > 0: w.value("hundredVibrator", int64(one.vibrator))
+  for e in p.olderHundreds:
     # (a tag of its own: a reader that took one unit for every vibrator's value keeps these
     # as fields it does not know, and judges no vibrator on another's unit)
     w.open "vibratorHundred"
@@ -815,6 +822,8 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
           d.vibProfile.hundredHow = hhSweep
         else: r.problem(c, "(hundredHow) needs sweep")
       of "hundredAtPct": r.number(c, TargetPctRange, d.vibProfile.hundredAtPct)
+      of "hundredFile": r.text(c, d.vibProfile.hundredFile)
+      of "hundredVibrator": r.whole(c, 1, 1_000_000, d.vibProfile.hundredVibrator)
       of "vibratorHundred", "hundredFor":
         # `hundredFor` was written with one unit for every vibrator's value: its unit is not
         # known, so it is not applied until it is set again, and it stands over a value of the
@@ -834,7 +843,7 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
         if c.tag == "hundredFor": (e.unit, e.setKnown) = ("", false)
         if e.vibrator > 0 and not e.pct.isNaN:
           if c.tag == "hundredFor": r.addHundred(c, unitless, e)
-          else: r.addHundred(c, d.vibProfile.hundredByVibrator, e)
+          else: r.addHundred(c, d.vibProfile.olderHundreds, e)
       of "judge":
         if c.kids.len == 1 and c.kids[0].kind == nkIdent and c.kids[0].text == "made":
           d.vibProfile.judge = joWeighted
@@ -850,8 +859,9 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
       of "fromFile": r.text(c, d.vibProfile.fromFile)
       else: d.vibProfile.later.add c
   for e in unitless:
-    d.vibProfile.hundredByVibrator.keepItIf(it.vibrator != e.vibrator)
-    d.vibProfile.hundredByVibrator.add e
+    d.vibProfile.olderHundreds.keepItIf(it.vibrator != e.vibrator)
+    d.vibProfile.olderHundreds.add e
+  d.vibProfile.takeOlder
 
 proc readShotMap(r: var Reading; n: NifNode; s: var StoredShotLog; bad, tooMany: var bool;
     leftOut: string) =

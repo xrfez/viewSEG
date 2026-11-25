@@ -1,30 +1,29 @@
-## Where the 100 % force came from, who it belongs to, and the word when "Set from this sweep" is
-## pressed on a sweep the controller reports another force for:
+## Where the 100 % force came from, and the word when "Set from this sweep" is pressed on a
+## sweep the controller reports another force for:
 ##
-## - `hundredSource` says "typed", "set on a.dat at target 60 %", "from the project's QC profile,
-##   set on a.dat at target 60 %", each "for vibrator 12";
+## - `hundredSource` says "typed", "set on a.dat at target 60 %", "from the project's QC
+##   profile, set on a.dat (vibrator 12) at target 60 %": the vibrator of the sweep it was set
+##   on is information only;
 ## - `hundredGuard`: the controller reports about 30 % and the target typed is 60 %: a line with
 ##   both numbers and what a 60 % sweep would read (about 120 %), also in Messages when the
 ##   value is set; 60 against 60, or a file with no controller record: nothing; the value is
 ##   set all the same;
-## - the 100 % force is kept per vibrator in the project's QC profile: setting it on a sweep of
-##   vibrator 12 does not give it to vibrator 13 (which then says it has none and is not judged on
-##   force), an older project's one value is every vibrator's default, and a project written
-##   with per-vibrator values reads back;
-## - each vibrator's value keeps the unit it was given in: vibrator 11 set in counts before the
-##   force scale was given and vibrator 12 in newtons after it; vibrator 11 is then converted
-##   exactly with the scale, and with the scale taken away vibrator 12 is not judged on force;
-##   a value kept under the older tag (one unit for all) reads with no unit, to be set again;
-## - a folder run judges each file with its own vibrator's value, in its own unit;
-## - without a project each vibrator's value is kept for the run alone: a window moved to another
-##   vibrator's sweep has none (and says so), back on the first vibrator's it has it again.
+## - the 100 % force is one for the project: set on a sweep of vibrator 11, a window on vibrator
+##   12's sweep and the folder QC use it, and setting it again on 12's sweep replaces it for
+##   11 too; without a project it is one value for the run;
+## - the value keeps the unit it was given in: counts set before the force scale was given are
+##   converted exactly with it, newtons are never read as counts;
+## - a project written by a version that kept one per vibrator: one value, or values that
+##   agree, are the project's; values that differ give none (said once in Messages, in the
+##   window and the folder QC; not judged on force) and stay in the document until a value is
+##   set from a sweep.
 ##
-## Seen to fail: with the guard's threshold removed the 60 against 60 file warned; with the
-## value written to the project's one slot, vibrator 13 had vibrator 12's; with the window given
-## the project's one unit, vibrator 11 opened in "" instead of counts; with the folder run given
-## that one unit, vibrator 12's row was not judged on force; with the run's values not taken when
-## the window moves (as before), the window moved to vibrator 12 kept vibrator 11's; with them
-## not kept, vibrator 12's window did not say it had none.
+## Seen to fail: with the value written for the vibrator of the sweep alone, vibrator 12's
+## window had none; with a second Set not replacing the value kept for the first vibrator,
+## vibrator 11 kept its own; with the run's value kept per vibrator, a window moved to vibrator
+## 12's sweep had none; with differing older values taken as the first one, the project had a
+## value and no sentence; with the entries dropped on reading, they were not in the document
+## until a value was set.
 
 import std/[math, os, strutils]
 import viewSEG/core/[analysis, jobs, log, project, projectnif, settings, signatures, sigtypes,
@@ -72,15 +71,17 @@ proc listed(path: string): FolderListed =
 proc main*() =
   block words:
     var p = AnalysisParams(forceHundredPct: 1000)
-    doAssert hundredSource(AnalysisParams(), 0) == ""
-    doAssert hundredSource(p, 0) == "typed"
+    doAssert hundredSource(AnalysisParams()) == ""
+    doAssert hundredSource(p) == "typed"
     p.forceHundredHow = hhSweep
     (p.forceHundredFile, p.forceHundredAtPct) = ("a.dat", 60.0)
-    doAssert hundredSource(p, 12) == "set on a.dat at target 60 % for vibrator 12",
-      hundredSource(p, 12)
+    doAssert hundredSource(p) == "set on a.dat at target 60 %", hundredSource(p)
+    p.forceHundredVibrator = 12
+    doAssert hundredSource(p) == "set on a.dat (vibrator 12) at target 60 %", hundredSource(p)
     p.forceHundredFromProfile = true
-    doAssert hundredSource(p, 0) ==
-      "from the project's QC profile, set on a.dat at target 60 %", hundredSource(p, 0)
+    doAssert hundredSource(p) ==
+      "from the project's QC profile, set on a.dat (vibrator 12) at target 60 %",
+      hundredSource(p)
     let g = hundredGuard(30, 60)
     doAssert "about 30 % average force" in g and "target typed is 60 %" in g and
       "read about 120 %" in g, g
@@ -113,7 +114,7 @@ proc main*() =
       discard before
       st.shutdown()
 
-  block perVibrator:
+  block oneForAll:
     withFixtures fx:
       let dir = fx.dir / "config"
       createDir(dir)
@@ -121,56 +122,69 @@ proc main*() =
       st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
       st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job", projectName: "Job")
       doAssert st.settle(st.inProject)
-      let a = datFile(fx.dir, "v12.dat", SynthDat(samples: 12000, vibrator: 12))
-      let b = datFile(fx.dir, "v13.dat", SynthDat(samples: 12000, vibrator: 13))
-      let w12 = st.window(a)
-      st.setFromSweep(w12, 1000, 60)
+      let a = datFile(fx.dir, "v11.dat", SynthDat(samples: 12000, vibrator: 11))
+      let b = datFile(fx.dir, "v12.dat", SynthDat(samples: 12000, vibrator: 12))
+      let w11 = st.window(a)
+      st.setFromSweep(w11, 1000, 60)
       let prof = st.project.doc.vibProfile
-      doAssert prof.hundredByVibrator.len == 1 and prof.hundredByVibrator[0].vibrator == 12 and
-        prof.hundredByVibrator[0].pct == 1000 and prof.hundredByVibrator[0].how == hhSweep and
-        prof.hundredByVibrator[0].atPct == 60 and prof.hundredByVibrator[0].file == "v12.dat",
-        $prof.hundredByVibrator
-      doAssert prof.forceHundredPct.isNaN, "the project's one slot was written"
-      # another vibrator has none, says so, and does not borrow
-      let w13 = st.window(b)
-      doAssert st.plots[w13].params.forceHundredPct.isNaN, "vibrator 13 took vibrator 12's"
-      # the same vibrator again: the stored value, said to come from the profile
-      let again = st.window(datFile(fx.dir, "v12b.dat",
-        SynthDat(samples: 12000, vibrator: 12)))
-      let q = st.plots[again].params
+      doAssert prof.forceHundredPct == 1000 and prof.forceHundredUnit == "counts" and
+        prof.hundredHow == hhSweep and prof.hundredAtPct == 60 and
+        prof.hundredFile == "v11.dat" and prof.hundredVibrator == 11 and
+        prof.olderHundreds.len == 0, $prof.hundredOf
+      doAssert hundredSource(st.plots[w11].params) == "set on v11.dat (vibrator 11) at target 60 %",
+        hundredSource(st.plots[w11].params)
+      # a window on another vibrator's sweep uses it, and says it was set on vibrator 11's
+      let w12 = st.window(b)
+      let q = st.plots[w12].params
       doAssert q.forceHundredPct == 1000 and q.forceHundredFromProfile, $q.forceHundredPct
-      doAssert hundredSource(q, 12) ==
-        "from the project's QC profile, set on v12.dat at target 60 % for vibrator 12",
-        hundredSource(q, 12)
-      # saved and read back
-      var problems: seq[string]
-      let back = readProject(projectDocument(st.project.doc), "project.nif", problems)
-      doAssert problems.len == 0, $problems
-      doAssert back.vibProfile == prof and back.vibProfile.hundredByVibrator.len == 1
-      # the folder run: vibrator 12 judged on force, 13 says it has none
-      let ask = applied(prof, [])
+      doAssert hundredSource(q) ==
+        "from the project's QC profile, set on v11.dat (vibrator 11) at target 60 %",
+        hundredSource(q)
+      doAssert st.hundredConflictNote(st.plots[w12]) == ""
+      # the folder run judges both vibrators on it
       let jobs = initJobs()
-      let sink = FolderQcSink()
       let files = @[listed(a), listed(b)]
-      let id = jobs.submit(folderQcSpec(files), folderQcWork(ask, VibJobWeights(), files, sink))
-      doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled})
-      var forceJudged: array[2, bool]
-      var why: array[2, string]
-      for row in sink.result.rows:
-        let k = if row.path == a: 0 else: 1
-        why[k] = row.forceWhy
-        for m in row.measures:
-          if m.limit in {qlAvgForce, qlPeakForce} and m.status != qsNotJudged:
-            forceJudged[k] = true
-      doAssert forceJudged[0] and not forceJudged[1], $(forceJudged, why)
-      doAssert "no 100 % force is set for vibrator 13" in why[1], why[1]
+      proc judged(ask: VibQcAsk): array[2, bool] =
+        let sink = FolderQcSink()
+        let id = jobs.submit(folderQcSpec(files),
+          folderQcWork(ask, VibJobWeights(), files, sink))
+        doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled})
+        for row in sink.result.rows:
+          let k = if row.path == a: 0 else: 1
+          for m in row.measures:
+            if m.limit in {qlAvgForce, qlPeakForce} and m.status != qsNotJudged:
+              result[k] = true
+      doAssert judged(applied(prof, [])) == [true, true]
+      # set again on vibrator 12's sweep: it replaces the value for vibrator 11 too
+      st.setFromSweep(w12, 2000, 50)
+      let next = st.project.doc.vibProfile
+      doAssert next.forceHundredPct == 2000 and next.hundredVibrator == 12 and
+        next.hundredFile == "v12.dat" and next.hundredAtPct == 50, $next.hundredOf
+      doAssert hundredSource(st.plots[w12].params) == "set on v12.dat (vibrator 12) at target 50 %"
+      let again = st.window(datFile(fx.dir, "v11b.dat", SynthDat(samples: 12000, vibrator: 11)))
+      doAssert st.plots[again].params.forceHundredPct == 2000
+      doAssert judged(applied(next, [])) == [true, true]
+      # a window moved to another sweep takes what was set since it opened
+      let before = st.plots[w11].result.gen
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: b)
+      doAssert st.settle(st.plots[w11].file == "v12.dat" and
+        st.plots[w11].result.gen > before and not st.plots[w11].waiting)
+      doAssert st.plots[w11].params.forceHundredPct == 2000
+      # saved and read back, in the one-value form
+      var problems: seq[string]
+      let text = projectDocument(st.project.doc)
+      doAssert "vibratorHundred" notin text and "(hundredVibrator 12)" in text and
+        "(forceHundredPct 2000.0)" in text, text
+      let back = readProject(text, "project.nif", problems)
+      doAssert problems.len == 0, $problems
+      doAssert back.vibProfile == next
       st.shutdown()
 
-  block unitPerVibrator:
-    # each vibrator's 100 % force keeps the unit it was given in: vibrator 11 set in counts with
-    # no force scale, then the scale given and vibrator 12 set in newtons; vibrator 11 is still in
-    # counts (converted exactly with the scale), and with the scale taken away vibrator 12's
-    # newtons are not read as counts (not judged on force, and said)
+  block unitRule:
+    # the one value keeps the unit it was given in: set in counts before the force scale was
+    # given, it is converted exactly with the scale, for every vibrator; set in newtons after
+    # the scale was given, it is not read as counts once the scale is taken away (not judged on
+    # force, said, for every vibrator)
     withFixtures fx:
       let dir = fx.dir / "config"
       createDir(dir)
@@ -186,96 +200,166 @@ proc main*() =
       settings.forceScale = ForceScale(datCountsPerLbf: 8.0)
       st.apply Command(kind: ckSettings, settings: settings)
       let w12 = st.window(b)
-      var p = st.plots[w12].params
-      (p.forceHundredPct, p.forceHundredUnit) = (417000.0, "N")
-      st.change(w12, p)
-      let prof = st.project.doc.vibProfile
-      doAssert prof.hundredOf(11).unit == "counts" and prof.hundredOf(12).unit == "N",
-        $prof.hundredByVibrator
-      doAssert prof.forceHundredUnit == "", "the project's one unit was written"
-      # vibrator 11 again, with the scale on: its counts, applied in newtons with the scale
-      let again = st.window(datFile(fx.dir, "v11b.dat", SynthDat(samples: 12000, vibrator: 11)))
-      let r11 = st.plots[again].result
-      doAssert st.plots[again].params.forceHundredUnit == "counts"
-      doAssert r11.hundredProblem == "" and
-        abs(r11.qc.hundredPct - 750000.0 * NPerLbf / 8.0) < 1e-6, $r11.qc.hundredPct
-      # saved and read back: each with its unit, never under the older tag
-      var problems: seq[string]
-      let text = projectDocument(st.project.doc)
-      doAssert "hundredFor" notin text and "(unit \"counts\")" in text and
-        "(unit \"N\")" in text, text
-      let back = readProject(text, "project.nif", problems)
-      doAssert problems.len == 0, $problems
-      doAssert back.vibProfile == prof
-      # the folder run with the scale on: both judged on force, each on its own value
+      doAssert st.plots[w12].params.forceHundredUnit == "counts"
+      let r12 = st.plots[w12].result
+      doAssert r12.hundredProblem == "" and
+        abs(r12.qc.hundredPct - 750000.0 * NPerLbf / 8.0) < 1e-6, $r12.qc.hundredPct
+      var prof = st.project.doc.vibProfile
+      doAssert prof.forceHundredUnit == "counts"
       var ask = applied(prof, [])
       ask.forceScale = settings.forceScale
       let jobs = initJobs()
-      var sink = FolderQcSink()
       let files = @[listed(a), listed(b)]
-      var id = jobs.submit(folderQcSpec(files), folderQcWork(ask, VibJobWeights(), files, sink))
-      doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled})
-      for row in sink.result.rows:
+      proc run(ask: VibQcAsk): FolderQcSink =
+        result = FolderQcSink()
+        let id = jobs.submit(folderQcSpec(files),
+          folderQcWork(ask, VibJobWeights(), files, result))
+        doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled})
+      for row in run(ask).result.rows:
         doAssert row.forceWhy == "", row.path & ": " & row.forceWhy
-      # the scale taken away: vibrator 12's newtons are not counts
+      # typed in newtons on vibrator 12's window: the new value, in newtons, for both
+      var p = st.plots[w12].params
+      (p.forceHundredPct, p.forceHundredUnit) = (417000.0, "N")
+      p.forceHundredHow = hhTyped
+      st.change(w12, p)
+      prof = st.project.doc.vibProfile
+      doAssert prof.forceHundredUnit == "N" and prof.forceHundredPct == 417000, $prof.hundredOf
       settings.forceScale = ForceScale()
       st.apply Command(kind: ckSettings, settings: settings)
-      let off = st.window(datFile(fx.dir, "v12b.dat", SynthDat(samples: 12000, vibrator: 12)))
-      let r12 = st.plots[off].result
-      doAssert "typed in N" in r12.hundredProblem and r12.qc.hundredPct.isNaN,
-        r12.hundredProblem & " " & $r12.qc.hundredPct
-      ask.forceScale = ForceScale()
-      sink = FolderQcSink()
-      id = jobs.submit(folderQcSpec(files), folderQcWork(ask, VibJobWeights(), files, sink))
-      doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled})
-      for row in sink.result.rows:
-        if row.path == b:
-          doAssert "does not apply (typed in N" in row.forceWhy, row.forceWhy
-        else: doAssert row.forceWhy == "", row.forceWhy
+      let off = st.window(datFile(fx.dir, "v11b.dat", SynthDat(samples: 12000, vibrator: 11)))
+      doAssert "typed in N" in st.plots[off].result.hundredProblem and
+        st.plots[off].result.qc.hundredPct.isNaN, st.plots[off].result.hundredProblem
+      ask = applied(prof, [])
+      for row in run(ask).result.rows:
+        doAssert "does not apply (typed in N" in row.forceWhy, row.forceWhy
       st.shutdown()
 
-  block unitlessValues:
-    # a value kept under the older tag, which had one unit for every vibrator, is read with no
-    # unit (set it again), and stands over the same vibrator's value written before it; a
-    # vibrator given twice keeps the last; a force out of range is said as a force, not a mass
-    let text = "(project (name \"Old\") (vibProfile (harmonics 5) (accelSet B) " &
-      "(forceHundredUnit \"N\") " &
+  block olderForms:
+    # what a version that kept a 100 % force per vibrator wrote: one value, or values that all
+    # agree, are the project's value; values that differ are taken as none (and said), kept as
+    # read until one is set; a value kept under the older tag (one unit for all) reads with no
+    # unit; a vibrator given twice keeps the last; a force out of range is said as a force
+    proc read(body: string; problems: var seq[string]): VibQcProfile =
+      readProject("(project (version " & $ProjectVersion &
+        ") (name \"Old\") (vibProfile (harmonics 5) (accelSet B) " & body &
+        "))", "project.nif", problems).vibProfile
+    var problems: seq[string]
+    let same = read("(vibratorHundred (vibrator 11) (pct 1000.0) (unit \"counts\") (set B) " &
+      "(how sweep) (atPct 60.0) (file \"v11.dat\")) " &
+      "(vibratorHundred (vibrator 12) (pct 1000.0) (unit \"counts\") (set B))", problems)
+    doAssert problems.len == 0, $problems
+    doAssert same.forceHundredPct == 1000 and same.forceHundredUnit == "counts" and
+      same.olderHundreds.len == 0 and same.hundredConflict == "" and
+      same.hundredVibrator == 11 and same.hundredFile == "v11.dat" and
+      same.hundredHow == hhSweep, $same.hundredOf
+    let one = read("(vibratorHundred (vibrator 12) (pct 7.0) (unit \"N\"))", problems)
+    doAssert one.forceHundredPct == 7 and one.forceHundredUnit == "N" and
+      one.olderHundreds.len == 0
+    let single = read("(forceHundredPct 5.0) (forceHundredUnit \"N\") " &
+      "(vibratorHundred (vibrator 12) (pct 5.0) (unit \"N\"))", problems)
+    doAssert single.forceHundredPct == 5 and single.olderHundreds.len == 0
+    let differ = read("(vibratorHundred (vibrator 11) (pct 750000.0) (unit \"counts\") (set B)) " &
+      "(vibratorHundred (vibrator 12) (pct 5.0) (unit \"N\"))", problems)
+    doAssert differ.forceHundredPct.isNaN and differ.olderHundreds.len == 2
+    doAssert differ.hundredConflict == "This project kept different 100 % forces for " &
+      "vibrators 11 and 12; it now keeps one: set it again from a sweep.", differ.hundredConflict
+    let withOne = read("(forceHundredPct 9.0) (forceHundredUnit \"N\") " &
+      "(vibratorHundred (vibrator 11) (pct 1.0) (unit \"N\"))", problems)
+    doAssert withOne.forceHundredPct.isNaN and withOne.olderSingle.pct == 9 and
+      "vibrator 11 and the others" in withOne.hundredConflict, withOne.hundredConflict
+    # the entries are kept in the document, and read back the same
+    var d = ProjectDoc(name: "Old", hasVibProfile: true, vibProfile: differ)
+    let text = projectDocument(d)
+    doAssert text.count("(vibratorHundred ") == 2 and "(forceHundredPct" notin text, text
+    doAssert readProject(text, "project.nif", problems).vibProfile == differ
+    d.vibProfile = withOne
+    let text2 = projectDocument(d)
+    doAssert "(forceHundredPct 9.0)" in text2 and text2.count("(vibratorHundred ") == 1, text2
+    doAssert readProject(text2, "project.nif", problems).vibProfile == withOne
+    # a folder run has no force to judge with, and says why
+    let ask = applied(differ, [])
+    doAssert ask.options.forceHundredPct.isNaN and ask.hundredConflict == differ.hundredConflict
+    doAssert differ.hundredConflict in profileLines(differ)[0], profileLines(differ)[0]
+    # (what an older reader does with the form written now: the value is in the one slot it
+    # always had; the vibrator and file are tags it keeps as fields it does not know)
+    var set = ProjectDoc(name: "New", hasVibProfile: true)
+    set.vibProfile.setHundred(VibHundred(vibrator: 12, pct: 5.0, unit: "N", how: hhSweep,
+      file: "v12.dat"))
+    let newText = projectDocument(set)
+    doAssert "(forceHundredPct 5.0)" in newText and "vibratorHundred" notin newText, newText
+    # older tags and hostile values
+    problems = @[]
+    let p = read("(forceHundredUnit \"N\") " &
       "(vibratorHundred (vibrator 11) (pct 750000.0) (unit \"counts\") (set B)) " &
       "(vibratorHundred (vibrator 13) (pct 9.0) (unit \"kg\")) " &
       "(hundredFor (vibrator 11) (pct 417000.0)) (hundredFor (vibrator 12) (pct 5.0)) " &
       "(vibratorHundred (vibrator 14) (pct 1.0) (unit \"N\")) " &
       "(vibratorHundred (vibrator 14) (pct 2.0) (unit \"N\")) " &
-      "(vibratorHundred (vibrator 15) (pct 20000000000.0) (unit \"N\"))))"
-    var problems: seq[string]
-    let back = readProject(text, "project.nif", problems)
-    let p = back.vibProfile
-    doAssert p.hundredOf(11).pct == 417000 and p.hundredOf(11).unit == "" and
-      not p.hundredOf(11).setKnown, $p.hundredByVibrator
-    doAssert p.hundredOf(12).unit == "" and p.hundredOf(12).pct == 5
-    var unitProblems = 0
+      "(vibratorHundred (vibrator 15) (pct 20000000000.0) (unit \"N\")) " &
+      "(hundredVibrator 0) (hundredFile \"x\")", problems)
+    var byVibrator: seq[VibHundred] = @[]
+    for e in p.olderHundreds: byVibrator.add e
+    doAssert p.forceHundredPct.isNaN and byVibrator.len == 4, $byVibrator
+    for e in byVibrator:
+      if e.vibrator == 11: doAssert e.pct == 417000 and e.unit == "" and not e.setKnown
+      if e.vibrator == 12: doAssert e.unit == "" and e.pct == 5
+      if e.vibrator == 14: doAssert e.pct == 2
+      if e.vibrator == 13: doAssert e.unit == ""
+      doAssert e.vibrator != 15
+    var unitProblems, twice, said = 0
     for x in problems:
       if "(unit) needs one of counts, pound-counts and N" in x: inc unitProblems
-    doAssert p.hundredOf(13).unit == "" and unitProblems == 1, $problems
-    # one value per vibrator: a second is said, and the last is kept
-    var twice = 0
-    for e in p.hundredByVibrator:
-      if e.vibrator == 14: inc twice
-    doAssert twice == 1 and p.hundredOf(14).pct == 2, $p.hundredByVibrator
-    var said: seq[string] = @[]
-    for x in problems:
-      if "vibrator 14" in x or "(pct)" in x: said.add x
-    doAssert said.len == 2, $said
-    doAssert said[0].endsWith(
-      "(vibratorHundred) of vibrator 14 is given more than once: the last is kept"), said[0]
-    doAssert said[1].endsWith("(pct) needs a number above 0 and at most 1000000000 in its unit") and
-      "kg" notin said[1], said[1]
-    doAssert p.hundredOf(15).pct.isNaN
-    doAssert "unit not known: set it again" in profileLines(p)[0], profileLines(p)[0]
+      if "(vibratorHundred) of vibrator 14 is given more than once: the last is kept" in x:
+        inc twice
+      if "(pct) needs a number above 0 and at most 1000000000 in its unit" in x and
+          "kg" notin x: inc said
+    doAssert unitProblems == 1 and twice == 1 and said == 1, $problems
+    doAssert p.hundredConflict.len > 0
+
+  block conflictInWindow:
+    # a project whose document kept different forces for vibrators: Messages say so once, a
+    # window has none and says so, the force is not judged and the entries stay in the document
+    # until a value is set from a sweep, which writes the one-value form only
+    withFixtures fx:
+      let dir = fx.dir / "config"
+      createDir(dir)
+      let job = fx.dir / "job"
+      createDir(job)
+      var d = ProjectDoc(name: "Old", hasVibProfile: true)
+      d.vibProfile.olderHundreds = @[VibHundred(vibrator: 11, pct: 1000, unit: "counts"),
+        VibHundred(vibrator: 12, pct: 5, unit: "N")]
+      writeFile(job / ProjectFileName, projectDocument(d))
+      var st = initAppState()
+      st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      st.apply Command(kind: ckOpenProject, projectPath: job)
+      doAssert st.settle(st.inProject)
+      let sentence = "This project kept different 100 % forces for vibrators 11 and 12; it " &
+        "now keeps one: set it again from a sweep."
+      var count = 0
+      for e in st.log:
+        if e.text == sentence: inc count
+      doAssert count == 1, $count
+      let w = st.window(datFile(fx.dir, "v12.dat", SynthDat(samples: 12000, vibrator: 12)))
+      doAssert st.plots[w].params.forceHundredPct.isNaN
+      doAssert st.hundredConflictNote(st.plots[w]) == sentence
+      for q in st.plots[w].result.qc.rows:
+        if q.limit in {qlAvgForce, qlPeakForce}: doAssert q.status == qsNotJudged, $q.limit
+      doAssert st.project.doc.vibProfile.olderHundreds.len == 2
+      # a change that is no 100 % force keeps them
+      var p = st.plots[w].params
+      p.qc.avgPhaseDeg = 7
+      st.change(w, p)
+      doAssert st.project.doc.vibProfile.olderHundreds.len == 2
+      st.setFromSweep(w, 1000, 60)
+      let prof = st.project.doc.vibProfile
+      doAssert prof.forceHundredPct == 1000 and prof.olderHundreds.len == 0 and
+        prof.hundredConflict == "" and st.hundredConflictNote(st.plots[w]) == ""
+      doAssert "vibratorHundred" notin projectDocument(st.project.doc)
+      st.shutdown()
 
   block noProject:
-    # without a project each vibrator's 100 % force is kept for the run: a window moved to
-    # another vibrator's sweep has none (says so, not judged on force) and back on the first
-    # vibrator's it has that one's again; nothing is saved
+    # without a project the one 100 % force is kept for the run alone: set on vibrator 11's
+    # sweep, a window moved to vibrator 12's sweep has it; nothing is saved
     withFixtures fx:
       let dir = fx.dir / "config"
       createDir(dir)
@@ -283,9 +367,8 @@ proc main*() =
       st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
       let a = datFile(fx.dir, "v11.dat", SynthDat(samples: 12000, vibrator: 11))
       let b = datFile(fx.dir, "v12.dat", SynthDat(samples: 12000, vibrator: 12))
-      let c = datFile(fx.dir, "v11b.dat", SynthDat(samples: 12000, vibrator: 11))
       let w = st.window(a)
-      doAssert st.missingHundred(st.plots[w]) == "", "a note with no value kept"
+      doAssert st.hundredConflictNote(st.plots[w]) == "", "a note with no value kept"
       st.setFromSweep(w, 1000, 60)
       proc follow(st: var AppState; path: string) =
         let before = st.plots[w].result.gen
@@ -294,25 +377,20 @@ proc main*() =
           st.plots[w].result.gen > before and not st.plots[w].waiting and
           st.plots[w].result.plots.len > 0), st.plots[w].file
       st.follow(b)
-      doAssert st.plots[w].params.forceHundredPct.isNaN, "vibrator 12 kept vibrator 11's"
-      doAssert st.missingHundred(st.plots[w]) ==
-        "no 100 % force for vibrator 12 set in this run: not judged on force",
-        st.missingHundred(st.plots[w])
-      for q in st.plots[w].result.qc.rows:
-        if q.limit in {qlAvgForce, qlPeakForce}: doAssert q.status == qsNotJudged, $q.limit
-      st.follow(c)
       doAssert st.plots[w].params.forceHundredPct == 1000 and
-        st.plots[w].params.forceHundredUnit == "counts" and
-        st.missingHundred(st.plots[w]) == "", $st.plots[w].params.forceHundredPct
-      let q = st.plots[w].params
-      doAssert not q.forceHundredFromProfile and
-        hundredSource(q, 11) == "set on v11.dat at target 60 % for vibrator 11",
-        hundredSource(q, 11)
+        st.plots[w].params.forceHundredUnit == "counts", "vibrator 12 did not take the value"
+      doAssert hundredSource(st.plots[w].params) ==
+        "set on v11.dat (vibrator 11) at target 60 %", hundredSource(st.plots[w].params)
+      # set again on vibrator 12's sweep: it is the run's one value
+      st.setFromSweep(w, 2000, 50)
+      st.follow(a)
+      doAssert st.plots[w].params.forceHundredPct == 2000 and
+        st.plots[w].params.forceHundredVibrator == 12
       # a new window still opens with none typed (a typed value is not carried into it)
       let w11 = st.window(a)
       doAssert st.plots[w11].params.forceHundredPct.isNaN
       st.shutdown()
-      # a new run of the program has none: a window moved from vibrator 12 to 11 finds nothing
+      # a new run of the program has none
       var again = initAppState()
       again.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
       let fresh = again.window(b)
@@ -324,17 +402,14 @@ proc main*() =
       again.shutdown()
 
   block olderProject:
-    # a project that kept one 100 % force: it is every vibrator's default
+    # a project that kept one 100 % force: it is the project's, for every vibrator
     var d = ProjectDoc(name: "Old", hasVibProfile: true)
     d.vibProfile.forceHundredPct = 5000
     var problems: seq[string]
     let text = projectDocument(d)
     doAssert "hundredFor" notin text
     let back = readProject(text, "project.nif", problems)
-    doAssert back.vibProfile.hundredOf(12).pct == 5000 and back.vibProfile.hundredOf(13).pct == 5000
-    var p = back.vibProfile
-    p.hundredByVibrator = @[VibHundred(vibrator: 12, pct: 7000)]
-    doAssert p.hundredOf(12).pct == 7000 and p.hundredOf(13).pct == 5000
+    doAssert back.vibProfile.hundredOf.pct == 5000 and back.vibProfile.hundredConflict == ""
 
 when isMainModule:
   main()

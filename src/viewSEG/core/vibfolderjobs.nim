@@ -307,7 +307,7 @@ proc loadReference(reference: FolderReference): tuple[held: HeldRef; problem: st
     result.problem = e.msg
 
 func forceWhyNot(facts: SignatureFacts; ask: VibQcAsk; measures: seq[FolderMeasure];
-    hundredProblem: string; ownHundred: bool; vibrator: int): string =
+    hundredProblem: string; ownHundred: bool): string =
   ## Why this file's force limits were not judged, in words; "" when they were (or
   ## are off). The missing piece is named from what the file and the settings hold.
   var notJudged = false
@@ -327,8 +327,8 @@ func forceWhyNot(facts: SignatureFacts; ask: VibQcAsk; measures: seq[FolderMeasu
       else: "no 100 % force is set for the ground force made from mass and baseplate")
   elif ownHundred:
     result.add "no force was measured in the judged part"
-  elif vibrator > 0 and ask.hundredByVibrator.len > 0:
-    result.add "no 100 % force is set for vibrator " & $vibrator & " in the project's QC profile"
+  elif ask.hundredConflict.len > 0:
+    result.add "no 100 % force is set (" & ask.hundredConflict & ")"
   else:
     case facts.kind
     of sgDat:
@@ -424,16 +424,8 @@ proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo:
     names.add label & " (archive)"
     at[vsReference] = rows.high
   var params = folderParams(ask, roles, facts.kind)
-  # the 100 % force of this file's vibrator (its pair's for a `.vib`), else the project's one,
-  # each in the unit and set it was given in
-  var vibrator = item.info.vibrator
-  if vibrator == 0 and pairInfo.vibrator > 0: vibrator = pairInfo.vibrator
-  let hundred = hundredFor(ask.hundredByVibrator, VibHundred(pct: ask.options.forceHundredPct,
-    unit: ask.forceHundredUnit, accelSet: ask.forceHundredSet,
-    setKnown: ask.forceHundredSetKnown), vibrator)
-  params.forceHundredPct = hundred.pct
-  params.forceHundredUnit = hundred.unit
-  (params.forceHundredSet, params.forceHundredSetKnown) = (hundred.accelSet, hundred.setKnown)
+  # the project's one 100 % force, for every vibrator, in the unit and set it was given in
+  # (`folderParams` takes them from the ask)
   let sig = if item.converted: SignatureAsk()
     else: folderSignature(facts, ask.forceScale, ask.accelSet, pair, ask.options.targetPct)
   # (the window's check of the converter's order: said when the other order fits clearly better)
@@ -465,7 +457,7 @@ proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo:
       problem: answer.problem, polarity: answer.polarity.line, warnings: warnings)
   let measures = measuresOf(answer.qc.rows)
   let forceWhy = forceWhyNot(facts, ask, measures, answer.hundredProblem,
-    typedForce(hundred.pct), vibrator)
+    typedForce(params.forceHundredPct))
   if forceWhy.len > 0:
     addLine(warnings, forceWhy.capitalizeAscii)
   FolderRow(path: path, kind: facts.kind, pair: pairPath, outcome: foJudged,
@@ -581,12 +573,6 @@ proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
     # a cancel the batch saw between files: the rest is skipped, as in a file
     skipFrom(table.rows, files, paired.pairs, ran.taken)
     stopJob(target, table)
-  if oneWeightsForAll(ask.hundredByVibrator, ask.judge) and
-      typedForce(ask.options.reactionMassKg) and typedForce(ask.options.baseplateMassKg):
-    # (said once, when a SEG-Y file was judged on those weights)
-    for row in table.rows:
-      if row.kind == sgNone and row.outcome == foJudged and OneWeightsSet notin table.problems:
-        table.problems.add OneWeightsSet
   finish(target, table)
 
 proc folderQcWork*(ask: VibQcAsk; weights: VibJobWeights; files: seq[FolderListed];
