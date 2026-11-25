@@ -1,5 +1,6 @@
-## A background job that reads the seismic files it is given, one at a time,
-## and fills a trace-quality report (`qualityReport`).
+## A background job that reads the seismic files it is given, several at a time on the
+## item pool (each measured into a build of its own, merged in file order), and fills a
+## trace-quality report (`qualityReport`).
 ##
 ## The caller lists the paths and the per-file edits. A killed trace is
 ## counted as killed, not as bad, and is not measured. An auxiliary trace
@@ -12,7 +13,7 @@
 ## could not be read is not a note: it is an unread row naming the file,
 ## the trace and the reader's reason. A file whose walk stopped short is
 ## unread as cut short; its other traces still count. Each file is closed
-## before the next opens. A path already scanned (compared
+## when it is measured. A path already scanned (compared
 ## normalised) is not scanned again and is not unread. A file that cannot
 ## be opened, or that is not seismic, is one unread row and the scan goes
 ## on. A cancel leaves the sink untouched.
@@ -47,8 +48,9 @@ import std/[algorithm, options, os, sets, sequtils, tables]
 import parseSEG
 import processSEG/core/[pool, rows, types, workspace]
 import processSEG/qc/amplitude
-import components, edits, filejobs, filesystem, firstbreakjobs, firstbreaks, jobs, noisearea,
-  qualityreport, recordingkind, recordqc, relationside, reportside, session, settings, state, threads
+import components, edits, filejobs, filesystem, firstbreakjobs, firstbreaks, itempool, jobs,
+  noisearea, qualityreport, recordingkind, recordqc, relationside, reportside, session, settings,
+      state, threads
 from missingreport import StationSide
 export StationSide
 
@@ -101,15 +103,15 @@ func scanProgressWords*(done, total: int64): string =
   let percent = min(100'i64, max(0'i64, done) * 100 div total)
   "file " & $at & " of " & $count & ", " & $percent & "%"
 
-proc fileProgress(ctx: JobContext; at, count: int; done, total: int64) =
-  ## The job's progress when file `at` of `count` is `done` of `total` traces through (the
+proc fileProgress(it: ItemContext; done, total: int64) =
+  ## The item's progress (of `PerFile`) when its file is `done` of `total` traces through (the
   ## open is over). A cancel raises `JobCancelledError`.
   let inside = Opening + (if total > 0: (PerFile - Opening) * min(done, total) div total
     else: 0'i64)
-  if not ctx.progress(PerFile * int64(at) + inside, PerFile * int64(count)):
+  if not it.progress(inside, PerFile):
     raise newException(JobCancelledError, "cancelled")
 
-proc openKeys(path, cacheDir: string; ctx: JobContext; at, count: int): Session =
+proc openKeys(path, cacheDir: string; it: ItemContext): Session =
   # The file at `path`, keys included, closed by the caller. A cancel during
   # the open is `SegCancelledError`. An unmapped read that fails raises
   # here, before the file is opened. A current index cache in `cacheDir` is
@@ -121,8 +123,7 @@ proc openKeys(path, cacheDir: string; ctx: JobContext; at, count: int): Session 
   let progress: Progress = proc (done, total: int64): bool {.gcsafe, raises: [].} =
     try: fs.mappedRead(path)
     except CatchableError: discard
-    ctx.progress(PerFile * int64(at) + (if total > 0: Opening * done div total else: 0'i64),
-      PerFile * int64(count))
+    it.progress(if total > 0: Opening * done div total else: 0'i64, PerFile)
   result = openSession(path, progress, if cached: index else: "")
   if index.len == 0 or result.file.kind == skUnknown or result.file.fromCache or
       result.file.demuxPath.len > 0: return
@@ -197,7 +198,7 @@ func cutShortWhy(f: SeismicFile): string =
 
 proc judgeRecord(f: ptr SeismicFile; path: string; traces: Slice[int];
     amps: var seq[TraceAmplitude]; unread: openArray[int]; killed: HashSet[int];
-    noise: NoiseSettings; ctx: JobContext; noisyJudged, weakJudged: var HashSet[int];
+    noise: NoiseSettings; noisyJudged, weakJudged: var HashSet[int];
     workers: ptr ProcessPool; tick: BreakProgress): bool =
   ## The map's noisy and weak test on the record `traces`, whose statistics are `amps`
   ## (`unread`: rows left out). Sets the flags in `amps`, and puts in `noisyJudged` the
@@ -224,7 +225,7 @@ proc judgeRecord(f: ptr SeismicFile; path: string; traces: Slice[int];
 proc measure(f: ptr SeismicFile; path: string; sides: set[StationSide]; killed: HashSet[int];
     b: var array[StationSide, QualityBuild];
     unread: var seq[tuple[path, why: string]]; gathers: seq[Gather];
-    noise: NoiseSettings; ctx: JobContext; workers: ptr ProcessPool; at, count: int) =
+    noise: NoiseSettings; it: ItemContext; workers: ptr ProcessPool) =
   let n = f[].len
   var first = 0
   var held: seq[TraceAmplitude] = @[] # statistics of the traces from `heldFrom` on
@@ -249,11 +250,9 @@ proc measure(f: ptr SeismicFile; path: string; sides: set[StationSide]; killed: 
     held = held[(upTo + 1 - heldFrom) .. ^1]
     heldFrom = upTo + 1
     noted = upTo + 1
-  # one phase for the file: a phase restarts the bar and its time estimate
-  ctx.setPhase "measuring"
-  ctx.fileProgress(at, count, 0, n)
+  it.fileProgress(0, n)
   while first < n:
-    ctx.checkCancelled()
+    it.checkCancelled()
     let last = min(n - 1, first + QcChunk - 1)
     let part = first .. last
     var amps: seq[TraceAmplitude] = @[]
@@ -288,7 +287,7 @@ proc measure(f: ptr SeismicFile; path: string; sides: set[StationSide]; killed: 
     for t in missed: missedAll.incl t
     held.add amps
     # (half of a file's share is for the reads, half for the tests)
-    ctx.fileProgress(at, count, (last + 1 + noted) div 2, n)
+    it.fileProgress((last + 1 + noted) div 2, n)
     while nextGather < gathers.len and gathers[nextGather].traces.b <= last:
       let g = gathers[nextGather].traces
       inc nextGather
@@ -300,15 +299,189 @@ proc measure(f: ptr SeismicFile; path: string; sides: set[StationSide]; killed: 
         if t in missedAll or not wantsSamples(f[].index.keys[t], t in killed):
           skip.add t - g.a
       let tick = proc (done, total: int): bool {.closure, gcsafe.} =
-        ctx.fileProgress(at, count, (last + 1 + g.a + g.len * done div max(total, 1)) div 2, n)
+        it.fileProgress((last + 1 + g.a + g.len * done div max(total, 1)) div 2, n)
         true
-      if judgeRecord(f, path, g, rec, skip, killed, noise, ctx, noisyAt, weakAt, workers,
-          tick):
+      if judgeRecord(f, path, g, rec, skip, killed, noise, noisyAt, weakAt, workers, tick):
         for i in 0 ..< rec.len: held[g.a - heldFrom + i] = rec[i]
       note(g.b)
-      ctx.fileProgress(at, count, (last + 1 + noted) div 2, n)
+      it.fileProgress((last + 1 + noted) div 2, n)
     first = last + 1
   if noted < n: note(n - 1)
+
+var itemBudget* = 256'i64 shl 20
+  ## Most bytes of files in hand at once. The pool lets the first file not yet taken run
+  ## whatever its size, so a file over the budget runs alone and never waits for ever. Set
+  ## only by tests.
+
+type
+  QualityFile = object
+    ## What the scan knows of one file before it is opened: the traces its edits killed and the
+    ## kind the user set for it.
+    path: string
+    killed: HashSet[int]
+    forced: bool
+    forcedKind: RecordingKind
+
+  QualityItems = object
+    ## What every item of a batch reads, never writes. No `ref` is inside it.
+    files: seq[QualityFile]
+    cacheDir: string
+    noise: NoiseSettings
+    untold: UntoldKind
+    folderRun: bool
+    round: int ## 0: the files; 1: those whose kind cannot be told, taken as `takenAs`
+    takenAs: ReportSide
+
+  QualityOne = object
+    ## What one file came to, for `apply` to put with the others in file order: the file's own
+    ## stations and notes, nothing kept per trace.
+    seismic: bool ## it opened and is a seismic file
+    why: string ## why it is unread, in words ("" for it is not)
+    sided: bool ## its side was decided
+    side: ReportSide
+    sideWhy: string
+    chose: bool ## its side is the user's choice for the files that cannot be told
+    deferred: bool ## left for the second round
+    measured: bool
+    measureWhy: string ## the measuring failed part-way: it counts nothing
+    shortWhy: string ## its walk stopped short
+    unread: seq[tuple[path, why: string]] ## the traces whose samples could not be read
+    build: QualityBuild ## the file's stations, at its side
+
+  ScanState = object
+    ## What the scan has taken of the files so far, in file order.
+    builds: array[StationSide, QualityBuild]
+    unread, notChecked, deferred: seq[tuple[path, why: string]]
+    deferredAt: seq[int]
+    read: seq[string] ## the files the scan read as seismic: only these are taken by the CSV refusal
+    counts: SideCounts
+    taken: int
+    takenAs: ReportSide
+
+static:
+  doAssert plainData(QualityItems) and plainData(QualityOne)
+
+proc qualityFile(edits: Table[string, FileEdits]; forced: Table[string, RecordingKind];
+    path: string): QualityFile =
+  result = QualityFile(path: path, killed: killedSet(edits, path))
+  let key = forcedPath(path)
+  if key in forced:
+    result.forced = true
+    result.forcedKind = forced[key]
+
+proc qualityItem(it: ItemContext; a: ptr QualityItems; i: int): QualityOne
+    {.nimcall, gcsafe.} =
+  ## Opens file `i`, tells its side and, when it has one, measures it into a build of its own.
+  ## A cancel raises; any other failure is the file's `why`.
+  let path = a.files[i].path
+  var s: Session = nil
+  var workers: ProcessPool # (one thread for the first-break passes of this file's records)
+  try:
+    s = openKeys(path, a.cacheDir, it)
+    result.seismic = s.file.kind != skUnknown
+    if s.file.kind == skUnknown: result.why = "not a SEG-Y, SEG-D or SEG-2 file"
+    elif s.file.len == 0: result.why = "has no trace keys"
+    else:
+      let isForced = a.files[i].forced
+      let kind =
+        if isForced: some(a.files[i].forcedKind)
+        else: autoKindOf(s, path, proc () {.gcsafe.} = it.checkCancelled())
+      var whole = initStations()
+      for k in s.file.index.keys: whole.note(k)
+      var fileSide = reportSide(kind, isForced, whole)
+      if a.round == 1: fileSide = (a.takenAs, "")
+      elif fileSide.side == rsCannotTell and a.untold != ukNotChecked:
+        # the user's choice for the files that cannot be told
+        let choice = if a.untold == ukShot: rsShot else: rsReceiver
+        fileSide = (choice, "")
+        result.chose = true
+      (result.side, result.sideWhy) = fileSide
+      result.sided = true
+      if a.round == 0 and fileSide.side == rsCannotTell and a.folderRun:
+        result.deferred = true
+      elif fileSide.side != rsCannotTell:
+        # (a continuous recording is measured at its receiver stations)
+        let side = if fileSide.side == rsReceiver: ssSources else: ssReceivers
+        var part: array[StationSide, QualityBuild] = [initQualityBuild(), initQualityBuild()]
+        var partUnread: seq[tuple[path, why: string]] = @[]
+        try:
+          if s.gathers.len > 0: workers = newProcessPool(1)
+          measure(s.filePtr, path, {side}, a.files[i].killed, part, partUnread, s.gathers,
+            a.noise, it, addr workers)
+          result.measured = true
+          result.build = part[side]
+          result.unread = partUnread
+          result.shortWhy = cutShortWhy(s.file)
+        except SegCancelledError:
+          raise newException(JobCancelledError, "cancelled")
+        except JobCancelledError:
+          raise
+        except CatchableError as e:
+          # (a file that fails part-way counts nothing)
+          result.measureWhy = if e.msg.len > 0: e.msg else: $e.name
+  except SegCancelledError:
+    raise newException(JobCancelledError, "cancelled")
+  except JobCancelledError:
+    raise
+  except CatchableError as e:
+    result.why = if e.msg.len > 0: e.msg else: $e.name
+  finally:
+    s = nil
+    clearCycleRoots()
+
+proc apply(st: var ScanState; path: string; at: int; one: sink QualityOne; round: int;
+    untold: UntoldKind) =
+  ## Takes what file `path` came to, as the files before it were: the files are taken in
+  ## order, so a mix seen by the files before this one leaves it only counted.
+  var why = one.why
+  var shortWhy = ""
+  if round == 0 and one.seismic: st.read.add path
+  if one.sided:
+    if one.chose:
+      st.takenAs = if untold == ukShot: rsShot else: rsReceiver
+      inc st.taken
+    if one.deferred:
+      st.deferred.add (path: path, why: one.sideWhy)
+      st.deferredAt.add at
+    else:
+      st.counts.note one.side
+      if one.side == rsCannotTell:
+        st.notChecked.add (path: path, why: one.sideWhy)
+      elif not st.counts.isMixed:
+        # (a mix is not reported: once both sides are seen, files are only counted)
+        if one.measureWhy.len > 0:
+          why = one.measureWhy
+        elif one.measured:
+          let side = if one.side == rsReceiver: ssSources else: ssReceivers
+          st.builds[side].absorb one.build
+          st.unread.add one.unread
+          shortWhy = one.shortWhy
+  if why.len > 0: st.unread.add (path: path, why: why)
+  if shortWhy.len > 0: st.unread.add (path: path, why: shortWhy)
+
+proc runRound(ctx: JobContext; st: ptr ScanState; args: ptr QualityItems; at: seq[int]) =
+  ## Measures `args.files` (file `at[k]` of the scan is `args.files[k]`) on the item pool and
+  ## takes them in order.
+  let count = args.files.len
+  var sizes = newSeq[int64](count)
+  for k, f in args.files:
+    try:
+      sizes[k] = max(0'i64, fs.getFileSize(f.path))
+    except OSError:
+      sizes[k] = 0 # the item says why it cannot be read
+  proc take(k: int; outcome: sink ItemOutcome[QualityOne]) {.closure, gcsafe.} =
+    if ctx.cancelled: raise newException(JobCancelledError, "cancelled")
+    if outcome.ok:
+      st[].apply(args.files[k].path, at[k], outcome.value, args.round, args.untold)
+    elif outcome.failure.cancelled:
+      raise newException(JobCancelledError, "cancelled")
+    else:
+      let e = outcome.failure
+      st.unread.add (path: args.files[k].path, why: if e.msg.len > 0: e.msg else: e.name)
+  ctx.setPhase "measuring"
+  let ran = ctx.parallelItems(count, args, qualityItem, take,
+    ItemOptions(scale: PerFile, cost: sizes, budget: itemBudget))
+  if ran.taken < count: raise newException(JobCancelledError, "cancelled")
 
 proc fail(sink: QualitySink; why: string; unread: seq[tuple[path, why: string]]) =
   if sink != nil:
@@ -328,116 +501,57 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
   ## the Files window, by the canonical path (`reportside.forcedPath`): it replaces the kind
   ## told from the file. Files whose kind cannot be told are taken for what `untold` says;
   ## with "not checked" and `folderRun`, for the side of the files that are told when all of
-  ## those are of one (`takenNote` says so), else left out.
+  ## those are of one (`takenNote` says so), else left out. Up to the item pool's threads of
+  ## files are open at once, each measured into a build of its own that is merged in file
+  ## order, so the report is the same on one thread and on eight; the files in hand hold at
+  ## most 256 MiB together (a file larger than that runs alone).
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
-    var unread: seq[tuple[path, why: string]] = @[]
-    var builds: array[StationSide, QualityBuild] = [initQualityBuild(), initQualityBuild()]
-    var notChecked: seq[tuple[path, why: string]] = @[]
-    var counts: SideCounts
-    var seen = initHashSet[string]()
-    # the files the scan read as seismic: only these are taken by the CSV refusal
-    var read: seq[string] = @[]
-    # one set of threads for every record
-    var workers = newProcessPool(defaultBreakWorkers())
-    var list = paths
-    var round = 0 # 0: the files; 1: those whose kind cannot be told, taken as `takenAs`
-    var takenAs = rsCannotTell
-    var deferred: seq[tuple[path, why: string]] = @[]
-    var taken = 0
+    var st = ScanState(builds: [initQualityBuild(), initQualityBuild()])
     try:
-      while true:
-        for i, path in list:
-          ctx.setPhase "reading " & path.extractFilename
-          ctx.checkCancelled()
-          let key = path.normalizedPath
-          let at = if round == 0: i else: paths.len - 1
-          if round == 1 or key notin seen:
-            seen.incl key
-            var s: Session = nil
-            var why = ""
-            var shortWhy = ""
-            try:
-              s = openKeys(path, cacheDir, ctx, at, paths.len)
-              if s.file.kind != skUnknown and round == 0: read.add path
-              if s.file.kind == skUnknown: why = "not a SEG-Y, SEG-D or SEG-2 file"
-              elif s.file.len == 0: why = "has no trace keys"
-              else:
-                let isForced = forcedPath(path) in forced
-                let kind =
-                  if isForced: some(forced[forcedPath(path)]) else: autoKindOf(s, path, ctx)
-                var whole = initStations()
-                for k in s.file.index.keys: whole.note(k)
-                var fileSide = reportSide(kind, isForced, whole)
-                if round == 1: fileSide = (takenAs, "")
-                elif fileSide.side == rsCannotTell and untold != ukNotChecked:
-                  # the user's choice for the files that cannot be told
-                  takenAs = if untold == ukShot: rsShot else: rsReceiver
-                  fileSide = (takenAs, "")
-                  inc taken
-                if round == 0 and fileSide.side == rsCannotTell and folderRun:
-                  # taken for the side of the files that are told, when all are of one
-                  deferred.add (path: path, why: fileSide.why)
-                else:
-                  counts.note fileSide.side
-                  if fileSide.side == rsCannotTell:
-                    notChecked.add (path: path, why: fileSide.why)
-                  elif not counts.isMixed:
-                    # (a mix is not reported: once both sides are seen, files are only
-                    # counted; a continuous recording is measured at its receiver stations)
-                    let side = if fileSide.side == rsReceiver: ssSources else: ssReceivers
-                    # (a file that fails part-way counts nothing: it is listed unread, once)
-                    var part: array[StationSide, QualityBuild] =
-                      [initQualityBuild(), initQualityBuild()]
-                    var partUnread: seq[tuple[path, why: string]] = @[]
-                    measure(s.filePtr, path, {side}, killedSet(edits, path), part, partUnread,
-                      s.gathers, noise, ctx, addr workers, at, paths.len)
-                    builds[side].absorb part[side]
-                    unread.add partUnread
-                    shortWhy = cutShortWhy(s.file)
-            except SegCancelledError:
-              raise newException(JobCancelledError, "cancelled")
-            except JobCancelledError:
-              raise
-            except CatchableError as e:
-              why = if e.msg.len > 0: e.msg else: $e.name
-            finally:
-              s = nil
-              clearCycleRoots()
-            if why.len > 0: unread.add (path: path, why: why)
-            if shortWhy.len > 0: unread.add (path: path, why: shortWhy)
-          if round == 0 and not ctx.progress(PerFile * int64(i + 1), PerFile * int64(paths.len)):
-            raise newException(JobCancelledError, "cancelled")
-        if round == 1 or deferred.len == 0: break
+      # the files, each path once (compared normalised)
+      var args = QualityItems(cacheDir: cacheDir, noise: noise, untold: untold,
+        folderRun: folderRun)
+      var seen = initHashSet[string]()
+      var at: seq[int] = @[]
+      for path in paths:
+        if not seen.containsOrIncl path.normalizedPath:
+          at.add args.files.len
+          args.files.add qualityFile(edits, forced, path)
+      ctx.runRound(addr st, addr args, at)
+      if st.deferred.len > 0:
         # the files that cannot be told: the side of those that are, when all are of one
-        let one = unanimousSide(counts)
+        let one = unanimousSide(st.counts)
         if one == rsCannotTell:
-          counts.untold += deferred.len
-          for d in deferred: notChecked.add (path: d.path, why: d.why)
-          deferred.setLen 0
-          break
-        takenAs = one
-        taken = deferred.len
-        list = @[]
-        for d in deferred: list.add d.path
-        round = 1
+          st.counts.untold += st.deferred.len
+          for d in st.deferred: st.notChecked.add (path: d.path, why: d.why)
+          st.deferred.setLen 0
+        else:
+          st.takenAs = one
+          st.taken = st.deferred.len
+          var again = QualityItems(cacheDir: cacheDir, noise: noise, untold: untold,
+            folderRun: folderRun, round: 1, takenAs: one)
+          for k in st.deferredAt: again.files.add args.files[k]
+          st.deferred.setLen 0
+          st.deferredAt.setLen 0
+          ctx.runRound(addr st, addr again, newSeq[int](again.files.len))
       ctx.setPhase "reporting"
       ctx.checkCancelled()
       if sink != nil:
-        sink.result = QualityJobResult(ok: true, unread: unread, notChecked: notChecked,
-          sides: counts, paths: read.mapIt(it.normalizedPath),
-          taken: takenNote(taken, takenAs, untold != ukNotChecked))
-        if counts.isMixed:
-          sink.result.mixed = mixedNote(counts)
+        sink.result = QualityJobResult(ok: true, unread: st.unread, notChecked: st.notChecked,
+          sides: st.counts, paths: st.read.mapIt(it.normalizedPath),
+          taken: takenNote(st.taken, st.takenAs, untold != ukNotChecked))
+        if st.counts.isMixed:
+          sink.result.mixed = mixedNote(st.counts)
         else:
-          sink.result.receivers = qualityReport(builds[ssReceivers])
-          sink.result.sources = qualityReport(builds[ssSources])
+          sink.result.receivers = qualityReport(st.builds[ssReceivers])
+          sink.result.sources = qualityReport(st.builds[ssSources])
     except JobCancelledError:
       raise
     except SegCancelledError:
       raise newException(JobCancelledError, "cancelled")
     except CatchableError as e:
-      fail(sink, if e.msg.len > 0: e.msg else: $e.name, unread)
+      fail(sink, if e.msg.len > 0: e.msg else: $e.name, st.unread)
 
 proc editsFor(paths: openArray[string]; snap: EditsSnapshot): Table[string, FileEdits] =
   ## `snap` keyed by each listed path, so a killed trace is found under the

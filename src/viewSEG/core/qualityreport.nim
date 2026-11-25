@@ -243,7 +243,8 @@ type
     fileComps: set[uint8] ## its components in the file `stamp`
     stamp: int            ## the serial of the file `fileComps` is for
     seen, killed, bad: int
-    counts: array[Finding, int]
+    counts: array[0 .. ord(high(Finding)), int]
+      ## by `ord(Finding)`: a plain array, so that a build may be handed between threads
     noisyTested, noisy, weakTested, weak: int
 
   QualityBuild* = object
@@ -302,7 +303,7 @@ proc bump(acc: var StAcc; note: TraceNote; serial: int) =
   else:
     if note.findings != {}:
       inc acc.bad
-      for f in note.findings: inc acc.counts[f]
+      for f in note.findings: inc acc.counts[ord(f)]
     if note.noisyTested:
       inc acc.noisyTested
       if note.noisy: inc acc.noisy
@@ -362,7 +363,7 @@ proc addCounts(dst: var StAcc; src: StAcc) =
   dst.seen += src.seen
   dst.killed += src.killed
   dst.bad += src.bad
-  for f in Finding: dst.counts[f] += src.counts[f]
+  for f in 0 .. ord(high(Finding)): dst.counts[f] += src.counts[f]
   dst.noisyTested += src.noisyTested
   dst.noisy += src.noisy
   dst.weakTested += src.weakTested
@@ -398,9 +399,10 @@ proc tableOf(b: QualityBuild): QualityReport =
     let acc = b.stations[key]
     result.stations.add StationRow(line: lineOf(key), point: pointOf(key),
       components: acc.components, lacking: acc.lacking, lackFiles: acc.lackFiles,
-      seen: acc.seen, killed: acc.killed, bad: acc.bad, counts: acc.counts,
+      seen: acc.seen, killed: acc.killed, bad: acc.bad,
       noisyTested: acc.noisyTested, noisy: acc.noisy, weakTested: acc.weakTested,
       weak: acc.weak)
+    for f in Finding: result.stations[^1].counts[f] = acc.counts[ord(f)]
     traces += acc.seen
     killed += acc.killed
     bad += acc.bad
@@ -412,7 +414,7 @@ proc tableOf(b: QualityBuild): QualityReport =
     noisy += acc.noisy
     weakTested += acc.weakTested
     weak += acc.weak
-    for f in Finding: counts[f] += acc.counts[f]
+    for f in Finding: counts[f] += acc.counts[ord(f)]
   result.totals = Totals(files: b.files, traces: traces, killed: killed, bad: bad,
     stations: stations, badStations: badStations, lacking: lacking,
     components: b.most, counts: counts, noisyTested: noisyTested, noisy: noisy,

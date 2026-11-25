@@ -22,7 +22,7 @@
 ## chunk, `skipped_traces_are_not_sample_read` saw one sample read for
 ## four live runs. With the bar's text the job's own units,
 ## `the_progress_reads_*` saw "1450 / 3000". With a measuring phase for each chunk after the
-## first, `one_measuring_phase_a_file` saw 3 for two files.
+## first, `one_measuring_phase_for_the_files_in_hand` saw 3 for two files.
 
 import std/[os, strutils, tables]
 import parseSEG
@@ -180,12 +180,9 @@ proc unreadWhy(rows: openArray[tuple[path, why: string]]; path: string): string 
   doAssert false, "not unread: " & path
 
 var lane: Jobs
-var readings: int
 
-proc stopOnSecond(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
-  if back or not phase.startsWith("reading"): return
-  inc readings
-  if readings >= 2: discard lane.cancel(id)
+proc stopWhenMeasuring(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
+  if not back and phase == "measuring": discard lane.cancel(id)
 
 proc stopOnReport(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
   if not back and phase == "reporting": discard lane.cancel(id)
@@ -317,10 +314,9 @@ proc main*() =
     doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled})
     doAssert jobs.state(id) == jsDone, $jobs.state(id)
 
-  block cancel_between_files:
-    readings = 0
+  block cancel_as_the_files_are_taken:
     lane = initJobs()
-    setJobHook(stopOnSecond)
+    setJobHook(stopWhenMeasuring)
     defer: setJobHook(nil)
     let sink = QualitySink()
     let one = dir / "one.sgd"
@@ -367,9 +363,9 @@ proc main*() =
     doAssert sink.result.receivers.totals.traces == 0
     doAssert sink.result.unread.len == 0
 
-  block one_measuring_phase_a_file:
+  block one_measuring_phase_for_the_files_in_hand:
     # two files of 1100 and 600 traces, three and two chunks: a phase restarts the bar and
-    # its time estimate, so each file has one
+    # its time estimate, and the files measured together share one bar of a file each
     var paths: seq[string] = @[]
     for (name, n) in [("long1.sgd", 1100), ("long2.sgd", 600)]:
       var traces: seq[tuple[line, point: float64; component: uint8; status: TraceStatus;
@@ -385,7 +381,7 @@ proc main*() =
     let got = run(paths, none)
     doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
     doAssert got.sink.result.receivers.totals.traces == 1700, $got.sink.result.receivers.totals
-    doAssert measurings == 2, $measurings & " measuring phases for two files"
+    doAssert measurings == 1, $measurings & " measuring phases for two files"
 
   block each_interval_measured_alone:
     let slow = quiet()

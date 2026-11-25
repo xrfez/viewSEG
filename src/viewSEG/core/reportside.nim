@@ -102,21 +102,26 @@ proc forcedPath*(path: string): string =
   try: absolutePath(path).normalizedPath
   except OSError, ValueError: path.normalizedPath
 
-proc autoKindOf*(s: Session; path: string; ctx: JobContext): Option[RecordingKind] =
+proc autoKindOf*(s: Session; path: string; stop: proc () {.gcsafe.}): Option[RecordingKind] =
   ## The kind of the open file told from itself, as the Files window tells it; none when
   ## the file has no sample interval or no live trace, when the plan cannot be made, or
   ## when it reads as continuous only for want of a boundary between segments to judge
   ## by (one segment for each receiver: one live trace, or the components of one station
-  ## at one start). Runs on a job's thread.
+  ## at one start). Runs on a job's thread. `stop` is called between steps and raises
+  ## `JobCancelledError` to end the work.
   let dtMs = seismicDtMs(s.filePtr)
   if dtMs.isNaN or dtMs <= 0: return
   try:
     {.cast(gcsafe).}:
       let facts = describeRecording(planRecording(s.filePtr, path, dtMs, currentVendors(),
-        proc () {.gcsafe.} = ctx.checkCancelled()))
+        stop))
       if facts.ready and not (facts.kind == rkReceiverContinuous and facts.boundaries == 0):
         result = some(facts.kind)
   except JobCancelledError, SegCancelledError:
     raise
   except CatchableError:
     discard
+
+proc autoKindOf*(s: Session; path: string; ctx: JobContext): Option[RecordingKind] =
+  ## `autoKindOf` for a job's own thread: a cancel of the job raises `JobCancelledError`.
+  autoKindOf(s, path, proc () {.gcsafe.} = ctx.checkCancelled())
