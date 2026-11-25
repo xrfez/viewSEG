@@ -1953,6 +1953,8 @@ proc guessMap*(text: string): ShotLogMap {.raises: [].} =
   if decided.len > 0: keep = decided[0]
   elif timeCols.len == 1: keep = timeCols[0]
   elif timeCols.len > 1: result.timeSplit = tsFound
+  if keep >= 0 and patterns[keep].len == 0 and crGpsMicros in seenRoles:
+    keep = -1 # GPSTB is the time: an undecided form is user defined (`timeNote`)
   for c in timeCols:
     if c != keep: result.roles[c] = crText
   if keep >= 0: result.dateTimePattern = patterns[keep]
@@ -2080,14 +2082,23 @@ proc timeNote*(log: ShotLog; map: ShotLogMap): string {.raises: [].} =
   ## how Time (UTC) is read, that its form could not be decided or its
   ## pattern cannot be used, that the log's time is spread over several
   ## columns, or that a column that looks like a time is not read (numbers
-  ## that may be GPS or Unix microseconds: which to choose). "" when there is
-  ## nothing to say.
+  ## that may be GPS or Unix microseconds: which to choose; beside GPSTB, a
+  ## time whose form was not decided). "" when there is nothing to say.
   if timeColumn(map) >= 0:
     let fault = patternFault(map.dateTimePattern)
     if fault.len > 0: return fault
     let used = timePattern(log, map)
     return if used.len > 0: "Time (UTC) is read as " & used else: undecidedWords(log, map)
-  if crGpsMicros in map.roles: return ""
+  if crGpsMicros in map.roles:
+    if log != nil:
+      for col, role in map.roles:
+        let header = log.columnName(col)
+        if role == crText and header.len > 0 and roleOfName(header) == crTime and
+            timeLike(sampleCells(log, map, col)):
+          return "\"" & header & "\" is user defined: its time's form could not be " &
+            "decided, and GPSTB is the time. Choose Time (UTC) for it and type the " &
+            "pattern to check it against GPSTB."
+    return ""
   if map.timeSplit == tsOld: return SplitTimeOld
   if map.timeSplit == tsFound: return SplitTimeFound
   timeAsk(log, map).text

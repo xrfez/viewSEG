@@ -49,7 +49,9 @@
 ## is empty, `crossCheck` mixed two clocks in one log and said nothing. With
 ## a calendar fraction cut after six digits, `epochRounding` read .0000005 as
 ## 0 where epoch seconds read 1. With only `mm` migrated, `oldMaps` refused
-## an older project's `h:mm:ss`, whose time read before.
+## an older project's `h:mm:ss`, whose time read before. With an undecided
+## time kept as Time (UTC) beside GPSTB, `gpsBesideUndecided` had a problem
+## at the top of a log whose every row has its time.
 
 import std/[math, options, os, strutils, times]
 import viewSEG/core/shotlog
@@ -816,6 +818,27 @@ proc main*() =
     doAssert timeAt("2024-02-29 24:00:01", "yyyy-mo-dd hh:mi:ss").isNone
     doAssert timeAt("2024-02-29 24:01:00", "yyyy-mo-dd hh:mi:ss").isNone
     doAssert timeAt("2024-02-29 24:00:00.5", "yyyy-mo-dd hh:mi:ss.f").isNone
+
+  block gpsBesideUndecided:
+    # GPSTB is the time, and a time column whose form is not decided is user defined,
+    # with a note in the dialog and nothing at the top of Problems
+    let text = "FFID,Shot time,GPSTB\n1,13:14:15," & $GpsMarch & "\n2,13:14:25," &
+      $(GpsMarch + 10_000_000) & "\n"
+    let g = guessMap(text)
+    doAssert g.roles == @[crFileNumber, crText, crGpsMicros]
+    doAssert g.names[1] == "Shot time" and g.dateTimePattern == ""
+    let log = parseShotLog(text, g)
+    let v = shots(log, g)
+    doAssert v.problems.count == 0
+    doAssert v.rows[0].timeUtcUs.get == UtcMarch
+    doAssert timeNote(log, g) == "\"Shot time\" is user defined: its time's form could " &
+      "not be decided, and GPSTB is the time. Choose Time (UTC) for it and type the " &
+      "pattern to check it against GPSTB."
+    # a form that is decided stays Time (UTC) beside GPSTB, as the check
+    let decided = "FFID,Shot time,GPSTB\n1,2024-03-01 00:00:00," & $GpsMarch & "\n"
+    let dg = guessMap(decided)
+    doAssert dg.roles == @[crFileNumber, crTime, crGpsMicros]
+    doAssert dg.dateTimePattern == "yyyy-mo-dd hh:mi:ss"
 
   block spacesInHeader:
     # the header names hold spaces, so a header cut at spaces has more fields

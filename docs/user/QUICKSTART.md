@@ -1430,6 +1430,11 @@ seconds; GPS seconds are not read." A time that
 does not read says so in Problems with the row, the time and the pattern: "time '2024 361
 23:59:xx' does not match yyyy ddd hh:mi:ss".
 
+When GPSTB is chosen, a time column whose form could not be decided is left user defined, and
+the dialog says so ("Shot time is user defined: its time's form could not be decided, and
+GPSTB is the time"); nothing is said at the top of Problems, because every row has its time
+from GPSTB. Choose Time (UTC) for it and type the pattern to have it checked against GPSTB.
+
 A log whose time is spread over several columns (a year, a day of year, an hour, a minute
 and a second in columns of their own) has no Time (UTC) column: those columns are user
 defined, named from the header. The dialog says "This log's time is spread over several
