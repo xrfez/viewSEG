@@ -12,7 +12,20 @@ const
   WhereToConfigure* = "Set it in a Vibrator signature window: Analysis > New plot > " &
     "Vibrator, on a signature file."
 
+  ReferencesLoading* = "The references are being read."
+  ReferenceMissing* = "The chosen reference is not in the archive: choose a reference " &
+    "(Analysis > References). To measure against each file's recorded reference, choose a " &
+    "reference that is a trace of the record (Analysis > References)."
+
 type
+  ReferenceState* = enum
+    ## Which reference a run measures against.
+    rfNone      ## none is chosen: each file's recorded reference
+    rfStored    ## a stored sweep of the archive
+    rfRecorded  ## a reference that is a trace of the record: each file's recorded reference
+    rfLoading   ## the archive is still being read: not known yet
+    rfMissing   ## the chosen reference is not in the archive
+
   VibQcConfig* = object
     ## What a run uses. Copied out of `AppState`, so a job never reads the state.
     configured*: bool
@@ -21,6 +34,8 @@ type
     weights*: VibJobWeights
     reference*: FolderReference ## the archive reference; no path: the recorded pilot
     referenceName*: string      ## the name of the reference measured against; "": the recorded one
+    referenceState*: ReferenceState
+    blocked*: string            ## why a run cannot start (the reference is not known); "": it can
 
 func archiveIds(st: AppState): seq[string] =
   result = @[]
@@ -28,15 +43,26 @@ func archiveIds(st: AppState): seq[string] =
   for e in st.references.entries:
     if e.id.len > 0: result.add e.id
 
-func referenceFor(st: AppState; id: string): tuple[reference: FolderReference; name: string] =
-  ## The archive entry `id` names: its name, and, when it is a file of the archive (not a
-  ## trace of each record), where it is. Nothing when `id` is none or not in the archive.
-  if id.len == 0 or not st.referencesLoaded: return
-  for e in st.references.entries:
+func referenceChoice*(loaded: bool; index: ReferenceIndex; home, id: string): tuple[
+    reference: FolderReference; name: string; state: ReferenceState] =
+  ## The archive entry `id` names: its name, how it is measured against, and, for a
+  ## stored sweep, where its file is. A trace of the record (a pilot rule) has no
+  ## file: each file's recorded reference is used, and the entry's name says so.
+  result.state = rfNone
+  if id.len == 0: return
+  if not loaded:
+    result.state = rfLoading
+    return
+  result.state = rfMissing
+  for e in index.entries:
     if e.id == id:
       result.name = e.name
-      if not (e.isPilot or e.file.len == 0 or st.referencesHome.len == 0):
-        result.reference = FolderReference(path: st.referencesHome / e.file, name: e.name,
+      if e.isPilot:
+        result.state = rfRecorded
+        result.reference = FolderReference(name: e.name, recorded: true)
+      elif not (e.file.len == 0 or home.len == 0):
+        result.state = rfStored
+        result.reference = FolderReference(path: home / e.file, name: e.name,
           startMs: e.timeStart)
       return
 
@@ -55,9 +81,15 @@ func vibQcConfig*(st: AppState): VibQcConfig =
   result.profile.forceScale = st.settings.forceScale
   result.ask = applied(result.profile, archiveIds(st))
   result.weights = st.project.doc.vibJobWeights
-  let found = referenceFor(st, result.profile.referenceId)
+  let found = referenceChoice(st.referencesLoaded, st.references, st.referencesHome,
+    result.profile.referenceId)
   result.reference = found.reference
   result.referenceName = found.name
+  result.referenceState = found.state
+  result.blocked = case found.state
+    of rfLoading: ReferencesLoading
+    of rfMissing: ReferenceMissing
+    else: ""
 
 proc withShots*(rows: var seq[FolderRow]; st: AppState) =
   ## Each row's shot log match, from the loaded logs (the first that has a row

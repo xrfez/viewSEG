@@ -42,6 +42,7 @@ type
     dtMs: float64
     name: string
     startMs: float64
+    recorded: bool
 
 func shareOf(done, total: int64): int64 =
   if total <= 0 or done <= 0: return 0
@@ -261,6 +262,7 @@ proc controllersOf(rows: seq[ControllerRow]): seq[FolderController] =
 proc loadReference(reference: FolderReference): tuple[held: HeldRef; problem: string] =
   result.held.startMs = reference.startMs
   result.held.name = reference.name
+  result.held.recorded = reference.recorded
   if reference.path.len == 0: return
   try:
     let read = readReferenceFile(reference.path)
@@ -380,8 +382,11 @@ proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: 
       answer.against = "Measured against the project reference " & label
     elif at[vsReference] >= 0 and at[vsReference] < names.len:
       # the window's sentence when no project reference is chosen
+      let why = if held.recorded:
+          "the project reference " & held.name & " is a trace of the record"
+        else: "no project reference is chosen"
       answer.against = "Measured against the recorded reference, " &
-        names[at[vsReference]] & " (no project reference is chosen)"
+        names[at[vsReference]] & " (" & why & ")"
   var warnings: seq[string] = @[]
   for w in facts.warnings: addLine(warnings, w)
   for w in fitLines(facts): addLine(warnings, w)
@@ -421,6 +426,8 @@ proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
     stopJob(sink, table)
   var held: HeldRef
   var gone = ""
+  held.recorded = reference.recorded
+  held.name = reference.name
   if reference.path.len > 0:
     let loaded = loadReference(reference)
     held = loaded.held

@@ -285,10 +285,13 @@ func configLines*(c: VibQcConfig): seq[string] =
   ## The configuration a run uses, as read-only lines: the reference measured
   ## against, the file it was set from when known, the settings, then the job's
   ## weights when any is set.
-  let against = if c.profile.referenceId.len == 0:
-      "each file's recorded reference"
-    elif c.referenceName.len > 0: c.referenceName
-    else: c.profile.referenceId
+  let named = if c.referenceName.len > 0: c.referenceName else: c.profile.referenceId
+  let against = case c.referenceState
+    of rfNone: "each file's own recorded reference (no reference is chosen)"
+    of rfStored: named & " (a stored sweep)"
+    of rfRecorded: "each file's own recorded reference (" & named & " is a trace of the record)"
+    of rfLoading: "being read"
+    of rfMissing: named & " is not in the archive"
   var head = "Reference: " & against & "."
   if c.profile.fromFile.len > 0:
     head.add " Configured from " & c.profile.fromFile & "."

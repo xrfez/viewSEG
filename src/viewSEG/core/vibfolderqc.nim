@@ -98,6 +98,9 @@ type
     path*: string
     name*: string
     startMs*: float64 = NaN
+    recorded*: bool
+      ## the project's reference is a trace of the record: each file's recorded
+      ## reference is used, and `name` is the rule's
 
 func totalsOf*(rows: openArray[FolderRow]): FolderTotals =
   ## Counts of `rows`. `files` is every row.

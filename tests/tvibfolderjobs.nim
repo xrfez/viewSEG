@@ -771,6 +771,80 @@ proc main*() =
       doAssert st.project.doc.vibProfile.topHz == 80.0, $st.project.doc.vibProfile.topHz
       doAssert vibQcConfig(st).ask.topHz == 80.0
 
+    block referenceStates:
+      ## The reference is the user's choice, never a silent fallback: a stored sweep,
+      ## a trace of the record (each file's recorded reference), none chosen, a
+      ## chosen reference missing from the archive, or the archive still being read.
+      ## Seen to fail when a missing reference left Run enabled and the rows said
+      ## "no project reference is chosen".
+      var st = started()
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job-r", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      let w = st.openWindow(good)
+      let base = st.sessions[0].base
+      var p = st.plots[w].params
+      p.targetPct = 60
+      st.change(w, p, frozen = true)
+      proc said(cfg: VibQcConfig): string = configLines(cfg)[0]
+      proc against(cfg: VibQcConfig): seq[string] =
+        let t = runJob(@[listed(good)], cfg.ask, reference = cfg.reference).table
+        doAssert t.rows[0].outcome == foJudged, t.rows[0].problem
+        t.rows[0].warnings
+      proc hasWord(ws: seq[string]; part: string): bool =
+        for x in ws:
+          if part in x: return true
+      var cfg = vibQcConfig(st)
+      doAssert cfg.referenceState == rfNone and cfg.blocked.len == 0
+      doAssert cfg.said.startsWith("Reference: each file's own recorded reference (no " &
+        "reference is chosen)."), cfg.said
+      doAssert against(cfg).hasWord("(no project reference is chosen)")
+      # a stored sweep
+      let stored = st.chooseStored(fx.dir / "refs-r", base, "stored sweep")
+      p = st.plots[w].params
+      p.qc.avgPhaseDeg = 8
+      st.change(w, p, frozen = true)
+      cfg = vibQcConfig(st)
+      doAssert cfg.referenceState == rfStored and cfg.blocked.len == 0
+      doAssert cfg.said.startsWith("Reference: stored sweep (a stored sweep)."), cfg.said
+      doAssert against(cfg).hasWord("Measured against the project reference stored sweep")
+      # a trace of the record
+      st.apply Command(kind: ckPilotReference, refPilot: PilotRule(name: "record pilot",
+        aux: false, trace: 1, startMs: 0, spanMs: 200))
+      proc idOf(st: var AppState; name: string): string =
+        discard st.drainInbox()
+        for e in st.references.entries:
+          if e.name == name: result = e.id
+      doAssert waitUntil(st.idOf("record pilot").len > 0), "no pilot"
+      let pilot = st.idOf("record pilot")
+      st.apply Command(kind: ckSelectReference, refId: pilot)
+      cfg = vibQcConfig(st)
+      doAssert cfg.referenceState == rfRecorded and cfg.blocked.len == 0
+      doAssert cfg.said.startsWith("Reference: each file's own recorded reference (record " &
+        "pilot is a trace of the record)."), cfg.said
+      doAssert against(cfg).hasWord("(the project reference record pilot is a trace of the " &
+        "record)"), $against(cfg)
+      # the chosen sweep is gone from the archive: blocked, with the way out
+      st.apply Command(kind: ckSelectReference, refId: stored)
+      st.apply Command(kind: ckDeleteReference, refId: stored)
+      doAssert waitUntil(st.idOf("stored sweep").len == 0), "the sweep was not deleted"
+      cfg = vibQcConfig(st)
+      doAssert cfg.referenceState == rfNone, "deleting the chosen sweep left it chosen"
+      # a choice the archive does not hold (a project opened before its archive was read,
+      # or one whose reference was removed outside the program) is blocked, with the way out
+      let missing = referenceChoice(true, ReferenceIndex(), "", "r1")
+      doAssert missing.state == rfMissing
+      let blocked = ReferenceMissing
+      doAssert "choose a reference (Analysis > References)." in blocked
+      doAssert "To measure against each file's recorded reference, choose a reference that " &
+        "is a trace of the record (Analysis > References)." in blocked
+      # the archive still being read
+      let none = ReferenceIndex()
+      let loading = referenceChoice(false, none, "", "r1")
+      doAssert loading.state == rfLoading
+      doAssert referenceChoice(true, none, "", "r1").state == rfMissing
+      doAssert referenceChoice(true, none, "", "").state == rfNone
+      doAssert ReferencesLoading == "The references are being read."
+
     block shotLogMatch:
       ## The sweep's row in a loaded shot log: its FFID and source line and point. With no
       ## log, or no row for the sweep, nothing: never a guess.

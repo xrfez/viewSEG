@@ -453,6 +453,13 @@ yet, the window says only "Vibrator signature QC is not configured." and where t
 **Run** stays inactive. The job's three weights (hold-down, baseplate, reaction mass) are in that
 window's settings wheel.
 
+The reference line says which is in force: a stored sweep ("Reference: <name> (a stored
+sweep)"), or each file's own recorded reference, which is what you get when you choose a
+reference that is a trace of the record ("<name> is a trace of the record") or none at all.
+When the chosen stored reference is not in the archive, or the references are still being
+read, the window says so and **Run** waits; to measure against each file's recorded reference,
+choose a reference that is a trace of the record (**Analysis > References**).
+
 The **Files** tab picks what to run. **Folder...** opens the system's folder dialog;
 **Include subfolders** (off at first) also takes the folders under it. **Files...** opens the
 system's file dialog for single signature files. What was chosen is shown, and the signature

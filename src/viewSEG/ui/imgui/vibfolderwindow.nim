@@ -234,6 +234,9 @@ proc submitQc(ui: var VibFolderUi; st: AppState) =
   if not config.configured:
     ui.status = NotConfigured
     return
+  if config.blocked.len > 0:
+    ui.status = config.blocked
+    return
   let files = ui.ticked
   if files.len == 0:
     ui.status = NoTicked
@@ -560,6 +563,7 @@ proc drawResults(ui: var VibFolderUi; st: AppState; marks: var Marks;
 
 proc runWhy(ui: VibFolderUi; config: VibQcConfig; n: int): string =
   if not config.configured: NotConfigured
+  elif config.blocked.len > 0: config.blocked
   elif not ui.choice.hasChoice: NothingChosen
   elif ui.listing or not ui.haveList: Listing
   elif n == 0: NoTicked
@@ -579,6 +583,9 @@ proc drawConfig(config: VibQcConfig; marks: var Marks) =
     for line in lines:
       igTextUnformatted(line.cstring, nil)
     marks.mark("vibfolder.profile " & lines.join(" "))
+    if config.blocked.len > 0:
+      igTextUnformatted(config.blocked.cstring, nil)
+      marks.mark("vibfolder.blocked " & config.blocked)
   igPopTextWrapPos()
 
 proc drawVibFolder*(ui: var VibFolderUi; title: string; st: AppState;
@@ -605,7 +612,8 @@ proc drawVibFolder*(ui: var VibFolderUi; title: string; st: AppState;
         result.commands.add Command(kind: ckCancelJob, job: ui.qcJob)
       marks.mark("vibfolder.cancel")
     else:
-      let canRun = ui.haveList and not ui.listing and config.configured and n > 0
+      let canRun = ui.haveList and not ui.listing and config.configured and config.blocked.len == 0 and
+        n > 0
       igBeginDisabled(not canRun)
       if igButton(RunButton.cstring, ImVec2_c(x: 0, y: 0)): ui.submitQc(st)
       igEndDisabled()
