@@ -137,8 +137,10 @@ Land 2026/                  the project folder: this is what is opened
  (outputPattern "Line"))
 ```
 
-  `relations` counts the survey's X records and `receiverRelations` its O records; a
-  document with only `relations` (an earlier one) is read with that count as X records.
+  `relations` counts the survey's X records and `receiverRelations` its O records. A
+  document with only `relations` (an earlier build's, where it counted both) is read with the
+  split unknown: the Project window says "N relation records" and the agent state says
+  `relationsSplit: false`, until the survey is imported again.
 
 - **Output names.** Beside the display presets, the document can say how a file written
   from the project is named: `(outputPatterns (pattern "Line" (separator "_") (part "srcLine"

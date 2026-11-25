@@ -122,6 +122,9 @@ type
       ## the X records (source-domain relations; `(relations n)` in the document, as
       ## it always was, so an older build and an older document read as before)
     receiverRelations*: int ## the O records (receiver-domain relations)
+    splitKnown*: bool
+      ## `relations` and `receiverRelations` are the X and O counts apart; false for a
+      ## document of an earlier build, whose `relations` held both
 
   ProjectDoc* = object
     ## What the project document holds.

@@ -1019,6 +1019,7 @@ proc projectJson(state: AppState; limit: int): JsonNode =
       "updateOffered": p.offer, "options": toJson(p.doc.options), "units": toJson(p.doc.units),
       "sources": p.doc.store.sources, "receivers": p.doc.store.receivers,
       "relations": p.doc.store.relations, "receiverRelations": p.doc.store.receiverRelations,
+      "relationsSplit": p.doc.store.splitKnown,
       "storeBytes": p.doc.store.bytes,
       "restoreMs": p.restoreMs},
     "displayPresets": (if p.doc.hasPresets: p.doc.displayPresets.len else: -1),

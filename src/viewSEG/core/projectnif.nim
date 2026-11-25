@@ -670,7 +670,9 @@ proc store(r: var Reading; n: NifNode; s: var StoreInfo) =
       of "sources": r.count(k, s.sources)
       of "receivers": r.count(k, s.receivers)
       of "relations": r.count(k, s.relations)
-      of "receiverRelations": r.count(k, s.receiverRelations)
+      of "receiverRelations":
+        r.count(k, s.receiverRelations)
+        s.splitKnown = true
       else: discard
 
 proc survey(r: var Reading; n: NifNode; d: var ProjectDoc) =

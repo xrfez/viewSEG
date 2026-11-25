@@ -82,7 +82,8 @@ proc main*() =
       line: 4960)])
     d.units = JoinUnits(survey: suUsFeet, file: suFeet, fileFromHeaders: true)
     d.notes = @["H20 Description of grid units: US survey feet"]
-    d.store = StoreInfo(format: 1, bytes: 31457280, hash: 0x51f3'u64, sources: 1200,
+    d.store = StoreInfo(format: 1, splitKnown: true, bytes: 31457280, hash: 0x51f3'u64,
+      sources: 1200,
       receivers: 3954, relations: 1200)
     d.processing = Processing(band: pbBandPass, f1: 5, f2: 10, f3: 50, f4: 70)
     d.hasProcessing = true

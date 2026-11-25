@@ -268,7 +268,7 @@ proc writeStore*(dir: string; files: openArray[SurveyCopy]; ctx: JobContext;
   var w = Writer(path: tmp, h: initHasher())
   if not fs.open(w.f, tmp, fmWrite): raise newException(IOError, "cannot write " & tmp)
   var ok = false
-  result = StoreInfo(format: StoreFormat)
+  result = StoreInfo(format: StoreFormat, splitKnown: true)
   try:
     var head = StoreMagic
     head.raw uint32(StoreFormat)
