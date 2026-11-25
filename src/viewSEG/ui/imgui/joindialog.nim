@@ -34,7 +34,7 @@
 import std/[options, os, strutils]
 import imguin/cimgui
 import parseSEG
-import ../../core/[filekinds, geometry, state]
+import ../../core/[filekinds, geometry, ofile, state]
 import ../../view/theme
 import chrome, clearsurvey, focus, icons, style
 
@@ -64,6 +64,18 @@ type
     commands*: seq[Command]
     addFiles*: bool    ## show the file dialog for survey files to add
     clearSurvey*: bool ## Clear survey was clicked: ask for its confirmation
+    generateO*: string
+      ## Generate O file... was clicked: the file the save dialog starts at (the X file's
+      ## name with the O extension, beside it)
+
+const
+  GenerateOButton = "Generate O file..."
+  NeedsX = "Needs a relation file with X records (SPS X) in the imported survey."
+  OFromX = "Writes the receiver-domain (O) records of the imported survey's X records as an " &
+    "SPS file, in the X file's revision and with its H records: one gather per receiver, " &
+    "its traces the source points it recorded."
+  OFromLoaded = " The imported survey holds O records already: the new ones are generated " &
+    "from the X records, not copied from those."
 
 func kindByName*(path: string): JoinFileKind =
   ## What a file added to the import is, by its name (the import reads its
@@ -337,6 +349,27 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
     marks.marked("join.add")
     tip("SPS (S, R, X, O), SEG P1 files, or a CSV table of stations: line, point, x, y " &
       "(and index, elevation, kind) columns")
+    # Generate O file: from the X records of the loaded relation file.
+    let xLayer = st.relationLayer
+    let oWhy = if xLayer < 0: NeedsX
+               elif st.oFileRunning: "An O file is being generated."
+               else: ""
+    igSameLine(0, -1)
+    igBeginDisabled(oWhy.len > 0)
+    if igButton(GenerateOButton.cstring, ImVec2_c(x: 0, y: 0)) and ui.focus.acts and
+        oWhy.len == 0:
+      result.generateO = st.survey.layers[xLayer].path.changeFileExt(OFileExt)
+    igEndDisabled()
+    marks.marked("join.ofile")
+    if xLayer < 0: marks.mark("join.ofile.dim")
+    var holdsO = false
+    if xLayer >= 0:
+      for l in st.survey.layers:
+        if l.origin == loSurveyFile and l.relationRuns > l.xRuns: holdsO = true
+    tip(if xLayer < 0: NeedsX elif holdsO: OFromX & OFromLoaded else: OFromX)
+    if st.oFileOutcome.len > 0:
+      dim(st.oFileOutcome, t)
+      marks.marked("join.ofile.outcome")
     igAlignTextToFramePadding()
     igTextUnformatted("Their coordinates are in", nil)
     igSameLine(0, -1)

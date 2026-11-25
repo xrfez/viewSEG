@@ -69,6 +69,7 @@ type
     dkOutputText = "Text header file"          ## a text file or a SEG-Y file whose text header is read
     dkVibFolder = "Vibrator QC folder"         ## the folder whose signature files are judged
     dkVibFiles = "Vibrator QC files"           ## signature files to judge
+    dkGenerateOFile = "Generate O file"        ## an SPS file of O records to write (a save dialog)
 
   ShellEventKind* = enum
     sePathsChosen,  ## a dialog returned `paths` (at least one)
@@ -277,6 +278,10 @@ let textHeaderFilters = [
   SDL_DialogFileFilter(name: "Text or SEG-Y files", pattern: "txt;text;hdr;sgy;segy"),
   SDL_DialogFileFilter(name: "All files", pattern: "*")]
 
+let oFileFilters = [
+  SDL_DialogFileFilter(name: "SPS O records (*.ops)", pattern: "ops"),
+  SDL_DialogFileFilter(name: "All files", pattern: "*")]
+
 let shotLogFilters = [
   SDL_DialogFileFilter(name: "Shot log (*.csv, *.txt, *.tsv)", pattern: "csv;txt;tsv"),
   SDL_DialogFileFilter(name: "All files", pattern: "*")]
@@ -350,6 +355,9 @@ proc showDialog*(kind: DialogKind; parentWindowId = 0'u32; location = "") =
   of dkOutputText:
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr textHeaderFilters[0],
       textHeaderFilters.len.cint, at, false)
+  of dkGenerateOFile:
+    SDL_ShowSaveFileDialog(onDialogResult, userdata, parent, addr oFileFilters[0],
+      oFileFilters.len.cint, at)
   of dkShotLog:
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr shotLogFilters[0],
       shotLogFilters.len.cint, at, false)

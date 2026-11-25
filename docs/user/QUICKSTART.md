@@ -1250,6 +1250,21 @@ changed**. The **Import survey** window goes in the order of the work:
   was in the project and is not named, and "The survey now has no X records." (or O records)
   when that took all of them. A project made by an earlier version shows "N relation
   records" until the survey is imported again.
+  different units are named in a warning, and the first is taken.
+  **Generate O file...** (beside Add files...) writes the survey's **O file**. An X record
+  says, for a shot record, which receiver stations recorded it; an O record says the same
+  for a receiver: which source points it recorded. Some programs want that receiver-domain
+  view, and a receiver gather is checked against it. The button is there once the imported
+  survey has a relation file with X records (SPS X); without one it is dim and says so. It
+  asks for a file (it starts at the X file's name with `.ops`), then writes, on a job, one
+  gather per receiver station, its traces the source points that station recorded, in the X
+  file's SPS revision and layout and with its H records. The O records are made from the
+  X records, also when the survey holds O records already. Messages says how many O
+  records, receivers, source points and pairs were written and what O records cannot hold
+  (a station's channels beyond its first component, X records without receiver stations;
+  none is left out unsaid). The file is new: one of the survey's own files, or an open file,
+  is refused and nothing is written over it; an existing file of another name is replaced.
+  The file is not imported: add it with **Add files...** to use it.
 - **Seismic file**: the file whose traces the survey is matched to, the one the plot
   shows (or another open file), the units its headers give its coordinates in, and its
   coordinate reference system as the file gives it (SEG-Y Rev 2 stanza, SEG-D Rev 3

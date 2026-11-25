@@ -42,7 +42,7 @@ import asserts # before imguin: Nim keys its cache of imguin's C++ objects on th
 import sdl3_nim
 import imguin/[cimgui, impl_sdl3, impl_opengl]
 import imguin/glad/gl
-import ../../core/[filesystem, geometry, leapfile, screens, state, watchdog]
+import ../../core/[filesystem, geometry, leapfile, ofile, screens, state, watchdog]
 from ../../core/vibfolderqc import FolderRow
 from ../../core/editmarks import shiftWords
 import ../../platform/[paths, trayguard, trayhost]
@@ -993,6 +993,9 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
     of dkVibFolder: ui.vibfolder.setFolder(ev.paths[0])
     of dkVibFiles: ui.vibfolder.setFiles(ev.paths)
     of dkExportShotSps: ui.shotLog.setSpsDest(ev.paths[0])
+    of dkGenerateOFile:
+      let path = if ev.paths[0].splitFile.ext.len == 0: ev.paths[0] & OFileExt else: ev.paths[0]
+      ui.core.apply Command(kind: ckGenerateOFile, oDest: path)
     of dkShotLog:
       ui.core.apply Command(kind: ckImportShotLog, logPath: ev.paths[0])
       ui.windows.bringForward(awShotLog)
@@ -1745,6 +1748,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   if project.clearSurvey: ui.clearSurvey.ask(projectTitle)
   for c in ui.clearSurvey.drawClearSurvey(ui.marks):
     ui.core.apply c
+  if join.generateO.len > 0: ui.ask(dkGenerateOFile, join.generateO)
   if join.addFiles:
     let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
     let folder = if i >= 0: ui.core.sessions[i].path.parentDir & DirSep else: ""

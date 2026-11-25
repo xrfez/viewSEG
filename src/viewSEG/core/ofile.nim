@@ -177,4 +177,4 @@ func oFileSentences*(s: OFileSummary; name, source: string): string =
   if s.noStations > 0:
     result.add " " & plural(s.noStations, "X record has", "X records have") &
       " no receiver stations and give no O record."
-  result.add " The file is not imported: add it in the Imported Survey window to use it."
+  result.add " The file is not imported: add it in the Import survey window to use it."
