@@ -314,7 +314,7 @@ proc main*() =
     var placed: Placed
     let id = jobs.submit(JobSpec(title: "Check " & $session, lane: jlBackground, auto: true,
       reads: @[s.path]), recordQcWork(s.filePtr, s.path, session, 0, 0, 0 ..< s.len,
-      rdSource, nil, "", rmAuto, tmAuto, placed, true, newSeq[FilterEntry](), newSeq[int](),
+      rdSource, nil, "", tmAuto, placed, true, newSeq[FilterEntry](), newSeq[int](),
       newSeq[ShiftEntry](), noise, box.poster, correlated))
     let hits = awaitQc(box, session)
     doAssert finish(jobs, id) == jsDone, "the record check failed"

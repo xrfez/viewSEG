@@ -112,7 +112,7 @@ proc mapSets(path: string; killed: seq[int]): MapSets =
     var placed: Placed
     let id = jobs.submit(JobSpec(title: "map", lane: jlBackground, auto: true,
       reads: @[path]), recordQcWork(s.filePtr, path, sid, 0, gi, g.traces, rdSource, nil, "",
-        rmAuto, tmAuto, placed, true, newSeq[FilterEntry](), newSeq[int](),
+        tmAuto, placed, true, newSeq[FilterEntry](), newSeq[int](),
         newSeq[ShiftEntry](), work, box.poster, nil))
     let m = awaitQc(box, sid)
     doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled})
