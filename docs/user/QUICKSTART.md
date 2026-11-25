@@ -524,7 +524,10 @@ this in a Vibrator signature window (**Analysis > New plot > Vibrator**, on a si
 it is kept in the project as you set it, with no button. With no project, or with nothing set
 yet, the window says only "Vibrator signature QC is not configured." and where to set it, and
 **Run** stays inactive. The job's three weights (hold-down, baseplate, reaction mass) are in that
-window's settings wheel.
+window's settings wheel. When anything a run shown was judged with changes afterwards (a setting
+in a Vibrator window, the polarity or the ground force chosen for a file layout, a top frequency
+typed in any Vibrator window, a file reopened with other options), the window says "The settings
+changed since this run."
 
 The reference line says which is in force: a stored sweep ("Reference: <name> (a stored
 sweep)"), or each file's own recorded reference, which is what you get when you choose a
@@ -542,7 +545,10 @@ SEG-Y files (traces coded 21, 19, 18, 20, which the list shows as **converted SE
 profile's masses, typed as the converter's reaction-mass and baseplate weights; the run applies
 them to the trace that is that channel (code 19 is the reaction mass's: the Vibrator window opens
 on such a file with the reaction mass on the code-19 trace, so no swap is needed). A file that cannot follow
-the choice (no weights in the profile) is judged on the record and says so in its warnings.
+the choice (no weights in the profile) is judged on the record and says so in its warnings. A file
+whose layout has a choice of its own (made in a Vibrator window on a file of that layout) is judged
+on that one, as its window is; the line names the switch set last, which files of the other
+layouts take.
 
 The **Files** tab picks what to run. **Folder...** opens the system's folder dialog;
 **Include subfolders** (off at first) also takes the folders under it. **Files...** opens the

@@ -101,12 +101,35 @@ func vibQcConfig*(st: AppState): VibQcConfig =
     of rfMissing: ReferenceMissing
     else: ""
 
-proc folderChoices*(st: AppState; files: openArray[FolderListed]): seq[SignatureChoice] =
-  ## The options each of `files` is decoded with, as a window opens it now
-  ## (`openChoiceOf`): those it was reopened with, else those given for every file of its
+func choicesAt*(st: AppState; paths: openArray[string]): seq[SignatureChoice] =
+  ## The options each of the files at `paths` (canonical) is decoded with, as a window opens it
+  ## now (`openChoiceOf`): those it was reopened with, else those given for every file of its
   ## kind in the listing, else the defaults. In memory: no file is read.
-  result = newSeq[SignatureChoice](files.len)
-  for i, f in files: result[i] = st.openChoiceOf(canonical(f.path)).signature
+  result = newSeq[SignatureChoice](paths.len)
+  for i, path in paths: result[i] = st.openChoiceOf(path).signature
+
+proc canonicalPaths*(files: openArray[FolderListed]): seq[string] =
+  ## The canonical path of each of `files` (`canonical`), as `choicesAt` takes them.
+  result = newSeq[string](files.len)
+  for i, f in files: result[i] = canonical(f.path)
+
+proc folderChoices*(st: AppState; files: openArray[FolderListed]): seq[SignatureChoice] =
+  ## The options each of `files` is decoded with, as a window opens it now (`choicesAt`).
+  st.choicesAt(canonicalPaths(files))
+
+type FolderRunKey* = object
+  ## Everything a folder run is judged with beside what its configuration's lines show: the
+  ## whole ask (the roles, polarities and ground force switch chosen per file layout, the tops
+  ## typed, a SEG-Y window's 100 % force and drive level among them), the job's weights, the
+  ## reference, and each file's open options. A run made now with another key judges with other
+  ## settings.
+  settings: string
+  choices: seq[SignatureChoice]
+
+proc runKeyOf*(c: VibQcConfig; choices: seq[SignatureChoice]): FolderRunKey =
+  ## The key of a run made with `c` on files decoded with `choices` (`folderChoices`). An
+  ## unset value (NaN) is the same as another unset one.
+  FolderRunKey(settings: $c.ask & $c.weights & $c.reference, choices: choices)
 
 func sameShot(a, b: FolderShot): bool =
   a.ffid == b.ffid and a.line == b.line and a.point == b.point

@@ -24,7 +24,9 @@
 ## SEG-Y window, the row's distortion was measured in another band than its window's; with the
 ## profile's ground force switch taken over each layout's own (and the weights only when the
 ## profile makes it), a converter's file chosen made was judged on the record without its 100 %
-## force, and a .dat left in the record on the made signal. The
+## force, and a .dat left in the record on the made signal; with the run shown kept current while
+## its configuration's lines alone did not change, the ground force reversed, a top typed on a
+## converter's window, and a file reopened at another interval each left it current. The
 ## comparison itself (`differences`) was seen to fail on a row's polarity line changed, on its
 ## reason for the force not judged changed to one the window does not give, and on a limit the
 ## row has and the window lacks.
@@ -348,6 +350,62 @@ proc main*() =
       let next = st.run(files)
       st.parity(files, next)
       doAssert "from M and B" notin rowOf(next, a11).sentence, rowOf(next, a11).sentence
+      st.shutdown()
+
+  block staleRun:
+    # every setting a run is judged with marks the run shown stale when it changes, set or unset:
+    # the polarity chosen for the layout, a file's open options, a top typed for a layout, even
+    # where the configuration's lines do not show it
+    withFixtures fx:
+      let dir = fx.dir / "config"
+      createDir(dir)
+      let a11 = sweep(fx.dir / "sweeps", "a11.dat", 11, 7001, 1.0)
+      let files = @[listed(a11)]
+      var st = initAppState()
+      st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      st.apply Command(kind: ckBrowse, paths: @[fx.dir / "sweeps"])
+      doAssert st.settle(not st.fileList.scanning and st.fileList.entries.len == 1)
+      let w = st.window(a11)
+      var p = st.plots[w].params
+      p.harmonics = 4 # (the limits: a profile)
+      st.change(w, p)
+      type Ran = tuple[lines: seq[string]; key: FolderRunKey]
+      proc ran(st: AppState): Ran =
+        let c = vibQcConfig(st)
+        (configLines(c), runKeyOf(c, folderChoices(st, files)))
+      proc stale(st: AppState; r: Ran): bool =
+        settingsChanged(r.lines, r.key, vibQcConfig(st), st.choicesAt(canonicalPaths(files)))
+      var r = st.ran
+      doAssert not st.stale(r), "a run is stale before anything changed"
+      for (what, on) in [("reversed", poReversed), ("as recorded", poAsRecorded)]:
+        p = st.plots[w].params
+        p.roles.groundForcePolarity = on
+        st.change(w, p)
+        doAssert st.stale(r), "the ground force chosen " & what & " left the run current"
+        r = st.ran
+      st.close(w)
+      # (a top typed on a converter's window is the project's alone: the profile's lines stay)
+      let c = converterOf()
+      let sgy = fx.dir / "converted.sgy"
+      writeVibSegy(sgy, [c.reference, c.mass, c.plate, c.record], 1.0, [21'i16, 19, 18, 20])
+      let other = st.window(sgy)
+      let key = st.vibTopKey(st.plots[other])
+      for (what, hz) in [("typed", 70.0), ("cleared", NaN)]:
+        p = st.plots[other].params
+        p.tops = p.tops.withTop(key, hz)
+        st.change(other, p)
+        doAssert st.stale(r), "a top " & what & " left the run current"
+        r = st.ran
+      st.close(other)
+      for (what, us) in [("another interval", 2000.0), ("the default", 0.0)]:
+        st.apply Command(kind: ckReopen, reopenPath: a11, reopenAll: true,
+          openChoice: OpenChoice(signature: SignatureChoice(intervalUs: us)))
+        doAssert st.settle(st.folderChoices(files)[0].intervalUs == us and
+          st.jobs.active.len == 0), what
+        doAssert st.stale(r), "a file reopened at " & what & " left the run current"
+        r = st.ran
       st.shutdown()
 
   block noProject:

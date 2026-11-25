@@ -4,6 +4,7 @@
 import std/[math, os, strutils]
 from ../core/sigtypes import SignatureKind, sgDat, sgNone, sgVib, timeText
 from ../core/analysis import JudgeOn, joWeighted
+from ../core/openchoice import SignatureChoice
 import ../core/[project, settings, units, vibfolderconf, vibfolderqc, vibjudge, vibprofile]
 
 const
@@ -314,6 +315,13 @@ func configLines*(c: VibQcConfig): seq[string] =
   if not c.weights.reactionMassKg.isNaN:
     kg.add "reaction mass " & sensible(c.weights.reactionMassKg) & " kg"
   if kg.len > 0: result.add "Job weights: " & kg.join(", ") & "."
+
+proc settingsChanged*(ranLines: seq[string]; ranKey: FolderRunKey; now: VibQcConfig;
+    choices: seq[SignatureChoice]): bool =
+  ## Whether a run made with the configuration shown as `ranLines` and keyed `ranKey`
+  ## (`runKeyOf`) would be judged otherwise now, with `now` on files decoded with `choices`
+  ## (`choicesAt`): the run shown then says `SettingsChanged`.
+  not now.configured or configLines(now) != ranLines or runKeyOf(now, choices) != ranKey
 
 proc sortColumn*(name: string; col: var FolderColumn): bool =
   ## The sort key `name` is, when that header sorts. False for Warnings.
