@@ -307,7 +307,7 @@ proc vibProfileOf*(state: AppState; w: AnalysisWindow): VibQcProfile =
   if top.isNaN and state.inProject: top = topsOf(state.project.doc.vibTops).topOf(key)
   profileOf(p.qc, p.qcWindowMs, p.harmonics, p.accelSet, state.settings.forceScale,
     p.forceHundredPct, p.targetPct, refId, top, p.forceHundredUnit, p.forceHundredSet,
-    w.file)
+    w.file, p.roles.judge, p.reactionMassKg, p.baseplateMassKg, p.forceHundredWeighted)
 
 proc signatureAsk(state: AppState; s: Session; p: AnalysisParams): SignatureAsk =
   ## What a signature file adds to the Vibrator window's ask: the user's force scale (the

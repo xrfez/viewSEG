@@ -354,7 +354,8 @@ proc columnWidths(rows: seq[FolderRow]; cells: seq[seq[string]];
   for i, name in names:
     result[i] = textWidth(name) + extra
   var fileW = if names.len > 0: result[0] else: cap
-  let kindW = max(textWidth(DatKindLabel), textWidth(VibKindLabel)) + extra
+  let kindW = max(max(textWidth(DatKindLabel), textWidth(VibKindLabel)),
+    textWidth(SegyKindLabel)) + extra
   for row in rows:
     fileW = max(fileW, min(cap, textWidth(row.path.extractFilename) + extra))
   for i, name in names:

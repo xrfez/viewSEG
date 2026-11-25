@@ -215,6 +215,10 @@ proc writeVibProfile(w: var NifWriter; p: VibQcProfile) =
   if finite(p.forceHundredPct): w.value("forceHundredPct", p.forceHundredPct)
   if p.forceHundredUnit.len > 0: w.value("forceHundredUnit", p.forceHundredUnit)
   if p.forceHundredSetKnown: w.choice("forceHundredSet", $p.forceHundredSet)
+  if p.judge == joWeighted: w.choice("judge", "made")
+  if finite(p.madeReactionKg): w.value("madeReactionKg", p.madeReactionKg)
+  if finite(p.madeBaseplateKg): w.value("madeBaseplateKg", p.madeBaseplateKg)
+  if finite(p.forceHundredWeighted): w.value("forceHundredWeighted", p.forceHundredWeighted)
   if finite(p.targetPct): w.value("targetPct", p.targetPct)
   if p.referenceId.len > 0: w.value("referenceId", p.referenceId)
   if finite(p.topHz): w.value("topHz", p.topHz)
@@ -760,6 +764,15 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
         if r.accel(c, d.vibProfile.forceHundredSet):
           d.vibProfile.forceHundredSetKnown = true
       of "targetPct": r.number(c, TargetPctRange, d.vibProfile.targetPct)
+      of "judge":
+        if c.kids.len == 1 and c.kids[0].kind == nkIdent and c.kids[0].text == "made":
+          d.vibProfile.judge = joWeighted
+        elif c.kids.len == 1 and c.kids[0].kind == nkIdent and c.kids[0].text == "record":
+          d.vibProfile.judge = joRecorded
+        else: r.problem(c, "(judge) needs record or made")
+      of "madeReactionKg": r.number(c, MassKgRange, d.vibProfile.madeReactionKg)
+      of "madeBaseplateKg": r.number(c, MassKgRange, d.vibProfile.madeBaseplateKg)
+      of "forceHundredWeighted": r.number(c, MassKgRange, d.vibProfile.forceHundredWeighted)
       of "referenceId": r.text(c, d.vibProfile.referenceId)
       of "topHz": r.number(c, TopHzRange, d.vibProfile.topHz)
       of "fromFile": r.text(c, d.vibProfile.fromFile)

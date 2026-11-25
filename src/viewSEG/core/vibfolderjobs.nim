@@ -98,6 +98,10 @@ proc folderListWork*(c: FolderChoice; sink: FolderListSink): JobWork =
       ctx.checkCancelled()
       discard ctx.progress(int64(i), int64(paths.len))
       let kind = sniff(path)
+      if kind == fkSegy and convertedSegy(path):
+        # the external converter's SEG-Y from a signature file: judged with the signature files
+        files.add FolderListed(path: path, info: SweepInfo(), converted: true)
+        continue
       if kind notin SignatureFileKinds:
         if path in chosen:
           # a file the user chose is listed with its problem, never dropped
@@ -144,18 +148,22 @@ proc folderRoles*(codes: openArray[int16]; kind: SignatureKind;
   result.judge = joRecorded
 
 proc folderParams*(ask: VibQcAsk; roles: VibRoles; kind: SignatureKind): AnalysisParams =
-  ## The ask a Vibrator window would use, with no typed masses. A 100 % force
+  ## The ask a Vibrator window would use, with the profile's masses only when it makes the
+  ## ground force from M and B (else none). A 100 % force
   ## the profile did not type stays unset. Its unit, and the accelerometer set
   ## a pound-counts force was typed on, are the ones the profile stored, never
   ## the set now judged and never guessed from the scale. A set an older
   ## project did not store stays unknown.
+  var roles = roles
+  roles.judge = ask.judge
   AnalysisParams(roles: roles, harmonics: ask.options.harmonics,
     accelSet: ask.accelSet, qcWindowMs: ask.options.qcWindowMs, qc: ask.options.qc,
     forceHundredPct: ask.options.forceHundredPct,
     forceHundredUnit: ask.forceHundredUnit, forceHundredSet: ask.forceHundredSet,
     forceHundredSetKnown: ask.forceHundredSetKnown,
     targetPct: ask.options.targetPct, phaseShow: ask.options.phaseShow,
-    reactionMassKg: NaN, baseplateMassKg: NaN, projectReference: false)
+    reactionMassKg: ask.options.reactionMassKg, baseplateMassKg: ask.options.baseplateMassKg,
+    forceHundredWeighted: ask.options.forceHundredWeighted, projectReference: false)
 
 proc folderSignature*(facts: SignatureFacts; scale: ForceScale; accelSet: AccelSet;
     pair = SignaturePair(); targetPct = NaN): SignatureAsk =
@@ -324,7 +332,7 @@ proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: 
   except OSError as e:
     raise newException(IOError, name & " cannot be read (" & e.msg & ").")
   let modified = fs.getLastModificationTime(path)
-  let bytes = readAll(ctx, path, size, fileNo, count)
+  let bytes = if item.converted: newSeq[byte]() else: readAll(ctx, path, size, fileNo, count)
   if ctx.cancelled: raise newException(JobCancelledError, "Cancelled.")
   var pair = SignaturePair()
   if item.info.kind == sgVib and pairPath.len > 0:
@@ -336,7 +344,8 @@ proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: 
   defer:
     s = nil
     clearCycleRoots()
-  s = decodeToSession(bytes, path, modified, choice, log, pair)
+  s = if item.converted: openSession(path)
+    else: decodeToSession(bytes, path, modified, choice, log, pair)
   if ctx.cancelled: raise newException(JobCancelledError, "Cancelled.")
   let n = s.len
   if n == 0:
@@ -383,8 +392,8 @@ proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: 
     names.add label & " (archive)"
     at[vsReference] = rows.high
   let params = folderParams(ask, roles, facts.kind)
-  let sig = folderSignature(facts, ask.forceScale, ask.accelSet, pair,
-    ask.options.targetPct)
+  let sig = if item.converted: SignatureAsk()
+    else: folderSignature(facts, ask.forceScale, ask.accelSet, pair, ask.options.targetPct)
   var answer = vibratorOf(rows, names, at, dtMs, params, recorded, ask.topHz, NaN, note, sig)
   if answer.problem.len == 0:
     if held.samples.len > 0:
@@ -466,7 +475,7 @@ proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
       elif item.info.problem.len > 0:
         row = FolderRow(path: item.path, kind: item.info.kind, pair: partner,
           outcome: foProblem, problem: item.info.problem)
-      elif item.info.kind notin {sgDat, sgVib}:
+      elif item.info.kind notin {sgDat, sgVib} and not item.converted:
         row = FolderRow(path: item.path, kind: item.info.kind, pair: partner,
           outcome: foProblem, problem: item.path.extractFilename &
           " is not a signature file.")

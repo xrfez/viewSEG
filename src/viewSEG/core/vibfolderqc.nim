@@ -90,9 +90,12 @@ type
     totals*: FolderTotals
 
   FolderListed* = object
-    ## One file the caller chose, with the header facts already read.
+    ## One file the caller chose, with the header facts already read. `converted`: a SEG-Y
+    ## file laid out as the external converter writes a signature file (`isConverterLayout`),
+    ## which has no sweep facts of a signature file's own.
     path*: string
     info*: SweepInfo
+    converted*: bool
 
   FolderReference* = object
     ## An archive reference the run may measure against. Empty `path`: the

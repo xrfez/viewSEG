@@ -381,8 +381,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       else: "the ground force is made from M and B once both masses are typed (Masses): the " &
         "ground force in the record is judged until then"
   elif made and not canMake and vsGroundForce in u.signals:
-    result.judgeWarning = "the ground force cannot be made from M and B: this window has no " &
-      "trace in the M or the B role. The ground force in the record is judged"
+    result.judgeWarning = "the ground force cannot be made from M and B: the file has no " &
+      "trace for the M or the B role. The ground force in the record is judged"
   if canMake and signature and sig.given:
     result.madeNote = if sig.isDat:
         "In this file the two force channels are already weighted: both choices give the " &

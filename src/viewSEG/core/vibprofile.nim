@@ -34,6 +34,12 @@ type
       ## the document stored `forceHundredSet`. An older project that leaves
       ## the field out is unknown: not the default set, and not the set judged.
     targetPct*: float64 = NaN ## NaN: the user did not type a drive level
+    judge*: JudgeOn = joRecorded
+      ## the ground force the run judges: in the record, or made from mass and baseplate
+    madeReactionKg*, madeBaseplateKg*: float64 = NaN
+      ## the masses (a converter's file: its weights) the ground force is made from M and B with
+    forceHundredWeighted*: float64 = NaN
+      ## the 100 % force of the ground force made from M and B (NaN: none typed)
     referenceId*: string ## the reference's archive id; "" is none; never samples
     topHz*: float64 = NaN ## the top typed for `referenceId`; NaN: none
     fromFile*: string
@@ -55,6 +61,7 @@ type
       ## the set a pound-counts 100 % force was typed on, when known
     forceHundredSetKnown*: bool
       ## `forceHundredSet` was stored. False: an older project, the set unknown.
+    judge*: JudgeOn = joRecorded ## the ground force judged (`VibQcProfile.judge`)
     problems*: seq[string]
 
 const ForceNotJudged* = "No 100 % force: the force limits are not judged."
@@ -85,7 +92,10 @@ func `==`*(a, b: VibQcProfile): bool =
     a.forceHundredSet == b.forceHundredSet and
     a.forceHundredSetKnown == b.forceHundredSetKnown and
     sameFloat(a.targetPct, b.targetPct) and a.referenceId == b.referenceId and
-    sameFloat(a.topHz, b.topHz) and a.fromFile == b.fromFile
+    sameFloat(a.topHz, b.topHz) and a.fromFile == b.fromFile and a.judge == b.judge and
+    sameFloat(a.madeReactionKg, b.madeReactionKg) and
+    sameFloat(a.madeBaseplateKg, b.madeBaseplateKg) and
+    sameFloat(a.forceHundredWeighted, b.forceHundredWeighted)
 
 func merged*(stored, had, now: VibQcProfile): VibQcProfile =
   ## The stored profile with only what the user changed in one window written into
@@ -118,6 +128,10 @@ func merged*(stored, had, now: VibQcProfile): VibQcProfile =
   takeFloat(result.targetPct, had.targetPct, now.targetPct)
   take(referenceId)
   takeFloat(result.topHz, had.topHz, now.topHz)
+  take(judge)
+  takeFloat(result.madeReactionKg, had.madeReactionKg, now.madeReactionKg)
+  takeFloat(result.madeBaseplateKg, had.madeBaseplateKg, now.madeBaseplateKg)
+  takeFloat(result.forceHundredWeighted, had.forceHundredWeighted, now.forceHundredWeighted)
   if had.referenceId != now.referenceId: result.topHz = now.topHz
   if not sameFloat(had.forceHundredPct, now.forceHundredPct) or
       had.forceHundredUnit != now.forceHundredUnit or
@@ -157,6 +171,15 @@ func changeWords*(a, b: VibQcProfile): seq[string] =
   if not sameFloat(a.topHz, b.topHz):
     result.add (if b.topHz.isNaN: "top frequency cleared"
       else: "top frequency " & sensible(b.topHz) & " Hz")
+  if a.judge != b.judge:
+    result.add (if b.judge == joWeighted: "ground force made from mass and baseplate"
+      else: "ground force in the record")
+  if not sameFloat(a.madeReactionKg, b.madeReactionKg) or
+      not sameFloat(a.madeBaseplateKg, b.madeBaseplateKg):
+    result.add "masses for the made ground force"
+  if not sameFloat(a.forceHundredWeighted, b.forceHundredWeighted):
+    result.add (if b.forceHundredWeighted.isNaN: "100 % force of the made ground force cleared"
+      else: "100 % force of the made ground force " & sensible(b.forceHundredWeighted))
 
 func referenceProblem*(id: string): string =
   ## What `applied` says when `id` is not among the archive ids it was given.
@@ -166,7 +189,8 @@ func referenceProblem*(id: string): string =
 func profileOf*(limits: QcLimits; qcWindowMs: float64; harmonics: int;
     accelSet: AccelSet; scale: ForceScale; forceHundredPct, targetPct: float64;
     referenceId: string; topHz: float64; forceHundredUnit = "";
-    forceHundredSet = asB; fromFile = ""): VibQcProfile =
+    forceHundredSet = asB; fromFile = ""; judge = joRecorded; madeReactionKg = NaN;
+    madeBaseplateKg = NaN; forceHundredWeighted = NaN): VibQcProfile =
   ## The profile a Vibrator window is using. Pass that window's values, not a
   ## signature file's built-in reset (which clears a typed 100 % force and drive
   ## level). `referenceId` is the archive id, never samples. `topHz` is the top
@@ -174,12 +198,15 @@ func profileOf*(limits: QcLimits; qcWindowMs: float64; harmonics: int;
   ## left NaN was not typed. `forceHundredUnit` is the unit that force was typed
   ## in; empty when none was said. `forceHundredSet` is the accelerometer set a
   ## pound-counts force was typed on; the window's, so it is known. `fromFile`
-  ## names the file the window showed.
+  ## names the file the window showed. `judge` is the ground force switch, with the masses
+  ## (weights) and the 100 % force it needs.
   VibQcProfile(limits: limits, qcWindowMs: qcWindowMs, harmonics: harmonics,
     accelSet: accelSet, forceScale: scale, forceHundredPct: forceHundredPct,
     forceHundredUnit: forceHundredUnit, forceHundredSet: forceHundredSet,
     forceHundredSetKnown: true, targetPct: targetPct,
-    referenceId: referenceId, topHz: topHz, fromFile: fromFile)
+    referenceId: referenceId, topHz: topHz, fromFile: fromFile, judge: judge,
+    madeReactionKg: madeReactionKg, madeBaseplateKg: madeBaseplateKg,
+    forceHundredWeighted: forceHundredWeighted)
 
 func typedForce(x: float64): bool {.inline.} =
   x > 0 and x < Inf
@@ -194,7 +221,12 @@ func applied*(p: VibQcProfile; archiveIds: openArray[string]): VibQcAsk =
     targetPct: p.targetPct), accelSet: p.accelSet, forceScale: p.forceScale,
     referenceId: p.referenceId, topHz: p.topHz,
     forceHundredUnit: p.forceHundredUnit, forceHundredSet: p.forceHundredSet,
-    forceHundredSetKnown: p.forceHundredSetKnown)
+    forceHundredSetKnown: p.forceHundredSetKnown, judge: p.judge)
+  if p.judge == joWeighted:
+    # the masses and the made signal's own 100 % force go to the run only when it is made
+    result.options.reactionMassKg = p.madeReactionKg
+    result.options.baseplateMassKg = p.madeBaseplateKg
+    result.options.forceHundredWeighted = p.forceHundredWeighted
   if p.referenceId.len == 0 or p.referenceId notin archiveIds:
     result.problems.add referenceProblem(p.referenceId)
   if not typedForce(p.forceHundredPct):
