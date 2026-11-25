@@ -175,9 +175,6 @@ proc completeness(hits: var array[MapFilter, FilterHits]; f: SeismicFile; base: 
     hits[mfDuplicate].note = "stations with two traces of one component"
   else:
     # A receiver gather: the O records of its receiver station, together.
-    if f.hasNoSources(traces):
-      notChecked("this record is unmatched in " & against & ": " & NoSourceStation)
-      return
     var (found, rcv) = f.index.keys.gatherReceiver(traces)
     if not found and placed.found:
       (rcv, found, byPlace) = (placed.station, true, true)
@@ -189,7 +186,11 @@ proc completeness(hits: var array[MapFilter, FilterHits]; f: SeismicFile; base: 
     if records.len == 0:
       notChecked("this record is unmatched in " & against & ": " & why)
       return
-    result = records
+    result = records # (the box names them even when the filters cannot be checked)
+    if f.hasNoSources(traces):
+      # What the receiver recorded cannot be told: no count of the shots it lacks
+      notChecked("this record is unmatched in " & against & ": " & NoSourceStation)
+      return
   if not byStation:
     for m in [mfMissing, mfUnlisted, mfDuplicate]:
       hits[m].note.add " (matched by channel: not placed)"

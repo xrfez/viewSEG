@@ -180,8 +180,9 @@ proc main*() =
       doAssert st.settle(st.shownDomain == rdReceiver and st.done)
       let h = st.filterHits
       let o = st.recordQc.record
-      doAssert h[mfMissing].state == fsDone and o >= 0 and st.recordQc.byPlace and
-        ("O record " & $o & " plans") in h[mfMissing].note, h[mfMissing].note
+      # (the file's headers name no station: found by its place, its shots not told)
+      doAssert h[mfMissing].state == fsNotChecked and o >= 0 and st.recordQc.byPlace and
+        "no source station" in h[mfMissing].note, h[mfMissing].note
       doAssert st.shownSpread.record == o and st.shownSpread.byPlace
       st.shutdown()
     doAssert readFile(shot) == bytes and getLastModificationTime(shot) == time, "the record changed"
