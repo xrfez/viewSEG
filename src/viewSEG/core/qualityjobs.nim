@@ -322,6 +322,8 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
     var opened: seq[array[StationSide, QualityBuild]] = @[]
     var took = [0, 0] # files that were not open: at the receivers, at the sources
     var seen = initHashSet[string]()
+    # the files the scan read as seismic: only these are taken by the CSV refusal
+    var read: seq[string] = @[]
     # one set of threads for every record
     var workers = newProcessPool(defaultBreakWorkers())
     try:
@@ -336,6 +338,7 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
           var shortWhy = ""
           try:
             s = openKeys(path, cacheDir, ctx, i, paths.len)
+            if s.file.kind != skUnknown: read.add path
             if s.file.kind == skUnknown: why = "not a SEG-Y, SEG-D or SEG-2 file"
             elif s.file.len == 0: why = "has no trace keys"
             else:
@@ -374,7 +377,7 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
         sink.result = QualityJobResult(ok: true,
           receivers: qualityReport(builds[ssReceivers]),
           sources: qualityReport(builds[ssSources]), unread: unread,
-          paths: paths.mapIt(it.normalizedPath))
+          paths: read.mapIt(it.normalizedPath))
     except JobCancelledError:
       raise
     except SegCancelledError:

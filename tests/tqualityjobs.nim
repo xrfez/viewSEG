@@ -282,6 +282,21 @@ proc main*() =
     doAssert got.sink.result.receivers.totals.files == 1, $got.sink.result.receivers.totals
     doAssert got.sink.result.unread.len == 0
 
+  block only_the_files_read_as_seismic_are_taken:
+    # the CSV refusal of the export takes `paths`: a text file the scan listed but could not
+    # read (the default name of the CSV among them) must not be taken, the seismic file must
+    let exp = dir / "exp"
+    createDir(exp)
+    let one = exp / "one.sgd"
+    let csv = exp / "trace-quality.csv"
+    seismicFile(one, 1, @[(line: 10.0, point: 1.0, component: 1'u8, status: tsLive,
+      samples: zeros(32))])
+    writeFile(csv, "# old export\n")
+    let got = run(@[one, csv], none)
+    doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
+    doAssert got.sink.result.paths == @[one.normalizedPath], $got.sink.result.paths
+    doAssert unreadWhy(got.sink.result.unread, csv) == "not a SEG-Y, SEG-D or SEG-2 file"
+
   block nil_sink_is_skipped:
     let jobs = initJobs()
     let id = jobs.submit(qualitySpec(@[]),

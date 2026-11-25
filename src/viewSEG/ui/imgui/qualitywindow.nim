@@ -495,7 +495,7 @@ proc drawScan(ui: var QualityUi; st: AppState; folderTab: bool; marks: var Marks
     var rows: seq[StationRow] = @[]
     for i in filterStations(report.stations, text): rows.add report.stations[i]
     var taken = r.paths
-    for session in st.sessions: taken.add normalizedPath($session.path)
+    for session in st.sessions: taken.add normalizedPath($session.diskPath)
     ui.ask = ExportAsk(rows: rows, totals: report.totals, side: ui.side, taken: taken,
       withStats: ui.withStats, live: true)
     out0.exportAsked = true
