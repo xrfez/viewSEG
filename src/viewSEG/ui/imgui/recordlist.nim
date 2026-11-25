@@ -257,7 +257,8 @@ proc drawRecordList*(ui: var RecordListUi; title: string; st: AppState; panel: P
               cell(if missing >= 0: $missing else: "")
               if missing > 0: igPopStyleColor(1)
               if i < 3: marks.mark("records.missing " & $i)
-              tip(missingText(r, session.checkedAgainst))
+              tip(if r.planned < 0 and session.checkNote.len > 0: session.checkNote
+                else: missingText(r, session.checkedAgainst))
         ImGuiListClipper_End(clipper)
         ImGuiListClipper_destroy(clipper)
         igEndTable()

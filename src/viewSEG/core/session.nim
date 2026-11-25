@@ -78,6 +78,7 @@ type
     size: int64 ## the file's size when it was opened; -1 when not known
     modified: Time ## its modification time then
     checkedAgainst: string ## the relation file its records were checked against; "" none
+    checkNote: string ## why its records are not checked ("" when they are, or nothing says)
     crs: FileCrs ## what its headers say of its coordinates
     facts: FileFacts ## its summary and file headers, for the Headers window
     keysRevision: int
@@ -432,6 +433,13 @@ func domainOf*(s: Session; gather: int): RelationDomain =
   if gather in 0 ..< s.records.len and s.records[gather].side == sdReceiver: rdReceiver
   else: rdSource
 
+func checkNote*(s: Session): lent string {.inline.} = s.checkNote
+  ## Why the records are not checked, when something says ("" for none).
+
+proc setCheckNote*(s: Session; note: string) =
+  ## Says why the records are not checked; `setChecks` clears it.
+  s.checkNote = note
+
 func checkedAgainst*(s: Session): lent string {.inline.} = s.checkedAgainst
   ## The relation file the records' planned stations come from; "" for none.
 func leapRead*(s: Session): int {.inline.} = s.leapRead
@@ -460,6 +468,7 @@ proc setChecks*(s: Session; against: string; planned, missing: openArray[int];
   ## a record the file does not plan; `unlisted` and `duplicates` may be
   ## empty: not counted). An `against` of "" clears the check. Lists of
   ## another length than the records change nothing.
+  s.checkNote = ""
   if against.len == 0:
     s.checkedAgainst = ""
     for r in s.records.mitems:

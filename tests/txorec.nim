@@ -218,6 +218,33 @@ proc main*() =
     doAssert shots.sessions[0].records[0].planned == -1, "a shot with no X records"
     shots.shutdown()
 
+  block oFileLoadedAfterX:
+    # X records loaded and a receiver file checked against the O records derived from them;
+    # an O file loaded afterwards (receiver 2: shots 5 and 6) checks it again against its own;
+    # unloaded, back to the derived
+    let late = dir / "late.o"
+    surveyFile(late, @[oRecord(1, 2, 5, 6)])
+    var st = initAppState()
+    st.open(@[xs], rcv)
+    doAssert st.settle(st.sessions[0].checkedAgainst.len > 0 and st.jobs.active.len == 0)
+    doAssert st.sessions[0].records[0].planned == 4, $st.sessions[0].records[0].planned
+    doAssert st.derivedCount == 1
+    # a note why it was not checked (a derive job cancelled) goes with the next check
+    st.sessions[0].setCheckNote("not checked: the O records were not derived (cancelled)")
+    st.apply Command(kind: ckLoadSurvey, paths: @[late])
+    doAssert st.settle(st.survey.listedLayer(rdReceiver) >= 0 and
+      st.sessions[0].records[0].planned == 2 and st.sessions[0].checkNote.len == 0 and
+      st.jobs.active.len == 0), $st.sessions[0].records[0].planned
+    st.apply Command(kind: ckUnloadSurvey,
+      layer: st.survey.layers[st.survey.listedLayer(rdReceiver)].id)
+    doAssert st.settle(st.survey.listedLayer(rdReceiver) < 0 and st.sessions[0].records[
+        0].planned == 4 and
+      st.jobs.active.len == 0), $st.sessions[0].records[0].planned
+    # clearing the survey drops what was derived
+    st.apply Command(kind: ckClearSurvey)
+    doAssert st.settle(st.derivedCount == 0)
+    st.shutdown()
+
   block derivedOnce:
     # X records only, no map filter: the O records are derived once for two receiver files
     var st = initAppState()

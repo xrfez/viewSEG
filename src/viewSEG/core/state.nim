@@ -1156,12 +1156,16 @@ type
 
   DerivedReceivers = object
     ## The O records derived from one relation file's X records, for the check of
-    ## receiver gathers against them: made once on a job for each such file.
-    source: ref SurveyGeometry ## the X records they were derived from (held: its identity)
-    relations: ref SurveyGeometry ## the derived O records; nil while none are
-    job: JobId = NoJob ## the job deriving them
-    jobSource: ref SurveyGeometry ## what that job reads, held until it ends
+    ## receiver gathers against them: made once on a job for each such geometry. A joined
+    ## file's own geometry and a loaded X layer can both serve receiver gathers at once, so
+    ## each has an entry (found by identity, dropped when its geometry is gone).
+    entries: seq[DerivedEntry] ## one for each X geometry that serves receiver gathers
     runs: int ## jobs started
+
+  DerivedEntry = object
+    source: ref SurveyGeometry    ## the X records derived from (held: its identity)
+    relations: ref SurveyGeometry ## the derived O records; nil while none are
+    job: JobId = NoJob            ## the job deriving them
 
   AppState* = object
     ## Everything the views show. Move-only.
@@ -6248,6 +6252,16 @@ func checkLayer(state: AppState): int =
   result = state.relationLayer
   if result < 0: result = state.survey.listedLayer(rdReceiver)
 
+func checkKey(state: AppState): (SurveyLayerId, SurveyLayerId) =
+  ## What the records are checked against: the ids of the layer of `checkLayer` and of
+  ## the layer whose O records serve the receiver gathers; compared before and after a
+  ## change of the survey, to know whether to check again.
+  let c = state.checkLayer
+  let o = state.survey.listedLayer(rdReceiver)
+  let cid = if c >= 0: state.survey.layers[c].id else: NoSurveyLayer
+  let oid = if o >= 0: state.survey.layers[o].id else: NoSurveyLayer
+  (cid, oid)
+
 func joinedRelations(state: AppState; session: SessionId): int =
   ## The index in `joins` of open file `session`'s join when its survey has
   ## relation records (what its records are then checked against); -1 when not.
@@ -6259,13 +6273,31 @@ func fileNames(files: openArray[JoinFile]): string =
   for f in files: names.add f.path.extractFilename
   names.join(", ")
 
+func derivedCount*(state: AppState): int {.inline.} =
+  ## How many X geometries have derived O records held, or being derived.
+  state.derived.entries.len
+
+proc resetDerived(state: var AppState) =
+  ## The derived O records dropped and their jobs cancelled (the survey went); the count
+  ## of runs stays.
+  for e in state.derived.entries:
+    if e.job != NoJob: discard state.jobs.cancel(e.job)
+  state.derived.entries.setLen 0
+
+func isLiveSource(state: AppState; source: ref SurveyGeometry): bool =
+  ## Whether `source` is still the relations of a loaded survey file or of a join.
+  for i in 0 ..< state.survey.layers.len:
+    if state.survey.layers[i].relations == source: return true
+  for j in 0 ..< state.joins.len:
+    if state.joins[j].relations == source or state.joins[j].geometry == source: return true
+
 proc derivedFor(state: var AppState; source: ref SurveyGeometry; ready: var bool):
     ref SurveyGeometry =
   ## The O records the check of a receiver gather against `source`'s X records reads,
   ## when `source` has none of its own: those the map's template box made from them, else
-  ## those derived on a job, once for `source` (`state.derived`, held while `source` is the
-  ## one it was derived from: a new import is a new `source`). `ready` false while the job
-  ## runs: the check waits for it (`takeDerived`).
+  ## those derived on a job, once for `source` (`state.derived`, an entry for each source,
+  ## found by identity: a new import is a new `source`, and an entry whose source is gone
+  ## is dropped). `ready` false while the job runs: the check waits for it (`takeDerived`).
   ready = true
   if source[].relationCount(rdReceiver) > 0: return nil
   template sp: untyped = state.spreads
@@ -6273,15 +6305,26 @@ proc derivedFor(state: var AppState; source: ref SurveyGeometry; ready: var bool
       sp.relations[].relationCount(rdReceiver) > 0:
     return sp.relations
   template d: untyped = state.derived
-  if d.source == source and not d.relations.isNil: return d.relations
+  var k = 0
+  while k < d.entries.len: # entries of sources that are gone
+    if d.entries[k].source != source and not state.isLiveSource(d.entries[k].source):
+      if d.entries[k].job != NoJob: discard state.jobs.cancel(d.entries[k].job)
+      d.entries.delete k
+    else: inc k
+  var at = -1
+  for i in 0 ..< d.entries.len:
+    if d.entries[i].source == source: at = i
+  if at < 0:
+    d.entries.add DerivedEntry(source: source)
+    at = d.entries.high
+  if not d.entries[at].relations.isNil: return d.entries[at].relations
   ready = false
-  if d.job != NoJob and d.jobSource == source: return nil
-  if d.job != NoJob: discard state.jobs.cancel(d.job)
-  d.jobSource = source
+  if d.entries[at].job != NoJob: return nil
   inc d.runs
-  d.job = state.jobs.submit(JobSpec(title: "Derive the receivers' shots from the X records",
-    lane: jlBackground, auto: true), deriveReceiversWork(addr source[], state.inbox.poster))
-  state.checking.add (d.job, source)
+  d.entries[at].job = state.jobs.submit(JobSpec(title: "Derive the receivers' shots from " &
+    "the X records", lane: jlBackground, auto: true), deriveReceiversWork(addr source[],
+    state.inbox.poster))
+  state.checking.add (d.entries[at].job, source)
 
 proc checkRecords(state: var AppState; s: Session) =
   ## Checks the records of open file `s` on a job (the Records window's
@@ -6337,13 +6380,14 @@ proc checkRecords(state: var AppState; s: Session) =
   if not orel.isNil: state.checking.add (job, orel)
 
 proc takeDerived(state: var AppState; m: sink Msg) =
-  ## The O records derived for the check: kept for `source`, and every open file's
+  ## The O records derived for the check: kept for their source, and every open file's
   ## records checked again with them.
-  template d: untyped = state.derived
-  if m.job == d.job and not m.derived.isNil:
-    d.source = d.jobSource
-    d.relations = move m.derived
-    for s in state.sessions: state.checkRecords(s)
+  if m.derived.isNil: return
+  for e in state.derived.entries.mitems:
+    if e.job == m.job:
+      e.relations = move m.derived
+      for s in state.sessions: state.checkRecords(s)
+      return
 
 proc takeChecked(state: var AppState; m: sink Msg) =
   ## An open file's records checked against the survey it was joined with,
@@ -6451,8 +6495,7 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
       ": " & layer.summary & "." & (if problems.len > 0: " " & problems.join("; ") & "." else: "")
     var lost = 0
     for c in layer.counts: lost += c.missing + c.zero + c.moved
-    let before = state.checkLayer
-    let wasId = if before >= 0: state.survey.layers[before].id else: NoSurveyLayer
+    let wasKey = state.checkKey
     # An import's layer in place of the same file's keeps the one it
     # replaces until the import ends: a cancel or a failure puts it back.
     template j: untyped = state.joining
@@ -6461,8 +6504,7 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
     let id = if ours: state.survey.add(layer, replaced) else: state.survey.add(layer)
     if ours and replaced.id != NoSurveyLayer: j.replaced.add (id, move replaced)
     state.log.add(if lost > 0: sevWarning else: sevInfo, name, text)
-    let now = state.checkLayer
-    if now >= 0 and state.survey.layers[now].id != wasId:
+    if state.checkLayer >= 0 and state.checkKey != wasKey:
       for s in state.sessions: # against the relation file now loaded
         if state.joining.job != NoJob and state.joining.session == s.id:
           state.joining.checkLater = true # its import checks it once, at its end
@@ -7349,8 +7391,7 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
       discard state.jobs.cancel(job)
       state.droppedLoads.add job
     # its layers taken off, those they replaced put back as they were
-    let before = state.checkLayer
-    let wasId = if before >= 0: state.survey.layers[before].id else: NoSurveyLayer
+    let wasKey = state.checkKey
     for id in j.added:
       var back = -1
       for k in 0 ..< j.replaced.len:
@@ -7359,8 +7400,7 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
       else: discard state.survey.remove(id)
     if j.added.len > 0:
       state.map.followed(state.survey)
-      let now = state.checkLayer
-      if now >= 0 and state.survey.layers[now].id != wasId:
+      if state.checkLayer >= 0 and state.checkKey != wasKey:
         for s in state.sessions: # against the relation file the map has again
           if s.id == j.session: j.checkLater = true # (below)
           elif state.joinedRelations(s.id) < 0: state.checkRecords(s)
@@ -8013,6 +8053,7 @@ proc leaveProject(state: var AppState; restoreUser: bool) =
       p.doc.name & ": the copy stops here, and is taken up when the project is next opened.")
   state.clearSession()
   state.forgetFileMemory()
+  state.resetDerived()
   for job in [p.surveyJob, p.lookJob, p.originalsJob]:
     if job != NoJob: discard state.jobs.cancel(job)
   state.releaseLock()
@@ -9995,7 +10036,14 @@ proc onFinished(state: var AppState; job: JobInfo) =
     for c in state.checking:
       if c.job == job.id: state.leftChecks.add c
   state.checking.keepItIf(it.job != job.id) # the relations a check read
-  if job.id == state.derived.job: state.derived.job = NoJob
+  for e in state.derived.entries.mitems:
+    if e.job == job.id:
+      e.job = NoJob
+      if e.relations.isNil and job.state in {jsCancelled, jsFailed}:
+        # the cells say so; the next open tries again
+        let why = if job.state == jsCancelled: "cancelled" else: job.error
+        for s in state.sessions:
+          s.setCheckNote("not checked: the O records were not derived (" & why & ")")
   for i in 0 ..< state.loading.len:
     if state.loading[i].job == job.id: # (one that posted its layer was let go of then)
       let x = state.loading[i]
@@ -10579,6 +10627,7 @@ proc clearSurvey(state: var AppState; cmd: Command) =
     for i in 0 ..< state.survey.layers.len:
       if state.survey.layers[i].origin == loSurveyFile: ids.add state.survey.layers[i].id
     for id in ids: discard state.survey.remove(id)
+    state.resetDerived()
     state.map.followed(state.survey)
     for id in joined: state.dropKeys(id)
     for s in state.sessions: # the records are checked against no survey now
@@ -13009,10 +13058,10 @@ proc applyCommand(state: var AppState; cmd: Command) =
       state.ignore(cmd, $cmd.layer & " holds an open file's positions: they go when it is closed")
     else:
       let name = state.survey.layers[i].name
-      let checked = state.checkLayer
+      let wasKey = state.checkKey
       discard state.survey.remove(cmd.layer)
       state.log.add(sevInfo, name, name & " was taken out of the survey.")
-      if checked == i: # the records were checked against it
+      if state.checkKey != wasKey: # the records were checked against it
         for s in state.sessions:
           if state.joinedRelations(s.id) < 0: state.checkRecords(s)
   of ckSetCompare: state.setCompare(cmd)
