@@ -6245,7 +6245,8 @@ proc checkRecords(state: var AppState; s: Session) =
     s.setChecks("", [], []) # nothing of it is on a survey's stations
     return
   var gathers = newSeq[Slice[int]](s.gathers.len)
-  for i, g in s.gathers: gathers[i] = g.traces
+  var kinds = newSeq[GatherKind](s.gathers.len)
+  for i, g in s.gathers: (gathers[i], kinds[i]) = (g.traces, g.kind)
   let j = state.joinedRelations(s.id)
   let opts = state.settings.join
   if j >= 0:
@@ -6255,7 +6256,7 @@ proc checkRecords(state: var AppState; s: Session) =
       " against the survey imported", lane: jlBackground, auto: true, reads: @[s.path]), checkWork(
       s.filePtr,
       s.id, gathers, addr g[], fileNames(x.files), NoSurveyLayer, state.inbox.poster,
-      x.options.recordMatch, x.options.traceMatch))
+      x.options.traceMatch, kinds))
     state.checking.add (job, g)
     return
   let r = state.relationLayer
@@ -6263,13 +6264,20 @@ proc checkRecords(state: var AppState; s: Session) =
     s.setChecks("", [], [])
     return
   template l: untyped = state.survey.layers[r]
+  # The O records of a loaded file of their own serve the receiver gathers.
+  let ol = state.survey.listedLayer(rdReceiver)
+  let orel = if ol >= 0 and ol != r and l.relations[].relationCount(rdReceiver) == 0:
+      state.survey.layers[ol].relations
+    else: nil
   # The job reads the layer's relations where they are (a copy of a large X
   # file's took a frame per file opened); they are kept until it ends, also
   # when the layer is unloaded meanwhile.
   let job = state.jobs.submit(JobSpec(title: "Check the records of " & s.name & " against " &
     l.name, lane: jlBackground, auto: true, reads: @[s.path]), checkWork(s.filePtr, s.id, gathers,
-    addr l.relations[], l.name, l.id, state.inbox.poster, opts.recordMatch, opts.traceMatch))
+    addr l.relations[], l.name, l.id, state.inbox.poster, opts.traceMatch, kinds,
+    (if orel.isNil: nil else: addr orel[])))
   state.checking.add (job, l.relations)
+  if not orel.isNil: state.checking.add (job, orel)
 
 proc takeChecked(state: var AppState; m: sink Msg) =
   ## An open file's records checked against the survey it was joined with,
@@ -8789,12 +8797,11 @@ proc followUnits(state: var AppState) =
 
 func shownDomain*(state: AppState): RelationDomain =
   ## The domain of the record on show in the main panel: `rdReceiver` for a
-  ## receiver gather, else `rdSource` (a shot, or no record).
+  ## receiver gather (told from its stations, `relationside`: a time sliced
+  ## receiver gather of one shot is one too), else `rdSource` (a shot, or no record).
   let g = state.selection.activeGather
   let i = state.findSession(g.file)
-  if i >= 0 and g.gather in 0 ..< state.sessions[i].gathers.len and
-      state.sessions[i].gathers[g.gather].kind == gkReceiver: rdReceiver
-  else: rdSource
+  if i >= 0: state.sessions[i].domainOf(g.gather) else: rdSource
 
 func shownPlace*(state: AppState; s: Session; gather: int;
     domain: RelationDomain): Placed =
@@ -8828,7 +8835,7 @@ func shownSpread*(state: AppState): PlannedSpread =
   if q.key.file != g.file or q.key.gather != g.gather or q.key.domain != domain or
       q.record < 0:
     return
-  result = state.survey.checkedSpread(state.spreads, domain, q.record)
+  result = state.survey.checkedSpread(state.spreads, domain, q.records)
   result.byPlace = q.byPlace
 
 func spreadAt*(state: AppState; p: PointRef): PlannedSpread =
@@ -9090,10 +9097,7 @@ func templateAvailable(state: AppState; k: int): bool =
   ## `panels[k]` shows against.
   let i = state.shownFile(k)
   if i < 0: return false
-  let domain = if state.sessions[i].gathers.len > state.panels[k].layers[0].source.gather and
-      state.sessions[i].gathers[state.panels[k].layers[0].source.gather].kind == gkReceiver:
-        rdReceiver
-      else: rdSource
+  let domain = state.sessions[i].domainOf(state.panels[k].layers[0].source.gather)
   not state.sessions[i].noSeismic and not state.sessions[i].isSignature and
     not state.qcRelations(domain)[0].isNil
 
@@ -9258,7 +9262,7 @@ proc followRecordQc(state: var AppState) =
         if b.key.sameRecord(work.key):
           share = 2 # failed or stopped: a result too, the job does not ask again
   let key = (s.id, g.gather, s.keysRevision, (if rel.isNil: nil else: cast[pointer](rel)),
-    domain, state.settings.join.recordMatch, state.settings.join.traceMatch, placed, samples,
+    domain, state.settings.join.traceMatch, placed, samples,
     ownKeyOf(state.editsAt(s.path), gatherTraces), work.settings, work.key, share)
   if key == q.key: return
   if q.job != NoJob:
@@ -9267,6 +9271,7 @@ proc followRecordQc(state: var AppState) =
   q.key = key
   for m in TraceFilters: q.hits[m] = FilterHits(state: fsComputing)
   (q.record, q.byPlace, q.onStations) = (-1'i64, false, false)
+  q.records = @[]
   q.noise = NoiseSummary()
   q.picks = work.on and share == 0
   q.pickKey = work.key
@@ -9276,7 +9281,7 @@ proc followRecordQc(state: var AppState) =
   q.job = state.jobs.submit(JobSpec(title: "Check the record shown for the map's filters",
     lane: jlBackground, auto: true, reads: @[s.path]), recordQcWork(s.filePtr, s.path, s.id, s.base,
     g.gather, s.gathers[g.gather].traces, domain, (if rel.isNil: nil else: addr rel[]), against,
-    state.settings.join.recordMatch, state.settings.join.traceMatch, placed, samples,
+    state.settings.join.traceMatch, placed, samples,
     own, reversed, shifts, work, state.inbox.poster, s.correlatedView))
   if not rel.isNil: state.qcHeld.add (q.job, rel)
 
@@ -9310,6 +9315,7 @@ proc takeRecordQc(state: var AppState; m: sink Msg) =
       m.qcKeys == q.key.keys:
     for f in TraceFilters: q.hits[f] = move m.qcHits[f]
     (q.record, q.byPlace, q.onStations) = (m.qcRecord, m.qcByPlace, m.qcOnStations)
+    q.records = move m.qcRecords
     q.noise = move m.qcNoise
     q.picks = false
     inc q.revision
