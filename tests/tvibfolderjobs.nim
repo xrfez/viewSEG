@@ -652,9 +652,13 @@ proc main*() =
       var p = st.plots[w].params
       p.targetPct = 60
       p.qc.avgPhaseDeg = 33
+      p.roles.groundForcePolarity = poReversed # (kept for the file layout, not the profile)
       st.change(w, p)
       let cfg = vibQcConfig(st)
       doAssert cfg.configured, "the window's settings were not kept"
+      # the roles kept per file layout reach the run, as the window uses them
+      doAssert cfg.ask.layouts.len == 1 and cfg.ask.layouts == st.vibRoleChoices,
+        $cfg.ask.layouts
       doAssert cfg.ask.options.targetPct == 60, $cfg.ask.options.targetPct
       doAssert cfg.ask.options.qc.avgPhaseDeg == 33
       doAssert cfg.profile.fromFile == "good.dat", cfg.profile.fromFile

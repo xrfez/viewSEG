@@ -84,6 +84,7 @@ func vibQcConfig*(st: AppState): VibQcConfig =
     result.profile.topHz = topsOf(st.project.doc.vibTops).topOf(chosen)
   result.profile.forceScale = st.settings.forceScale
   result.ask = applied(result.profile, archiveIds(st))
+  result.ask.layouts = st.vibRoleChoices
   result.weights = st.project.doc.vibJobWeights
   let found = referenceChoice(st.referencesLoaded, st.references, st.referencesHome,
     result.profile.referenceId)

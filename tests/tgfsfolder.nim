@@ -10,15 +10,19 @@
 ## - "Made from mass and baseplate" judges a converter's file on the ground force made with
 ##   the profile's weights (the reaction mass on the trace coded 19, the channel it is), a `.dat`
 ##   on the plain sum of its two channels; a profile with no weights leaves the file judged on
-##   the record, with a warning on its row; the profile's text says which is judged.
+##   the record, with a warning on its row; the profile's text says which is judged;
+## - Swap mass and baseplate pressed on a converter's window is kept for its layout, and the
+##   folder judges a file of that layout on the swapped roles with the window's numbers and its
+##   word that the other order fits better.
 ##
 ## Seen to fail: with the converter's role swap left out of `withCodeRoles`, the made row's numbers no
 ## longer matched those of the true ground force (`mixedFolder`); with the profile's masses always dropped (`masses = NaN`),
-## the made row was judged on the record.
+## the made row was judged on the record; with the layouts' choices not applied, the swapped row's
+## numbers were not the window's; with the order check left off, its row had no word of it.
 
 import std/[math, os, strutils]
-import viewSEG/core/[analysis, jobs, nif, project, projectnif, settings, signatures, sigtypes, sweepinfo,
-  threads, vibanalysis, vibfolderjobs, vibfolderqc, vibjudge, vibprofile]
+import viewSEG/core/[analysis, jobs, nif, project, projectnif, settings, signatures, sigtypes,
+  state, sweepinfo, threads, vibanalysis, vibfolderjobs, vibfolderqc, vibjudge, vibprofile]
 import viewSEG/view/vibfolderwords
 import utils/[fixtures, gfsynth, sigfiles, vibfiles, vibsynth, waiting]
 
@@ -42,6 +46,28 @@ proc listed(path: string): FolderListed =
   var head: seq[byte] = @[]
   let size = readHead(path, head)
   FolderListed(path: path, info: readSweepInfo(path, signatureKindOf(head), size))
+
+proc sessionOf(st: AppState; path: string): int =
+  result = -1
+  for i, s in st.sessions:
+    if s.path == path: result = i
+
+template settle(st: var AppState; cond: untyped): bool =
+  waitUntil((discard st.drainInbox(); cond))
+
+proc window(st: var AppState; path: string): int =
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+  doAssert st.settle(st.sessionOf(path) >= 0 and st.panel(MainPanel).laidOut)
+  st.apply Command(kind: ckOpenPlot, plotView: avVibrator,
+    plotTraces: @[st.sessions[st.sessionOf(path)].base], plotParams: AnalysisParams())
+  result = st.plots.high
+  doAssert st.settle(st.plots[result].result.gen > 0 and not st.plots[result].waiting and
+    (st.plots[result].result.plots.len > 0 or st.plots[result].result.problem.len > 0))
+
+proc change(st: var AppState; w: int; p: AnalysisParams) =
+  let before = st.plots[w].result.gen
+  st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p, origin: coWindow)
+  doAssert st.settle(st.plots[w].result.gen > before and not st.plots[w].waiting)
 
 proc profile(judge: JudgeOn; reaction = NaN; plate = NaN; weighted = NaN): VibQcProfile =
   profileOf(QcLimits(), 500.0, 5, asB, ForceScale(), 5.0e7, NaN, "", NaN, "", asB, "", judge,
@@ -173,6 +199,50 @@ proc main*() =
         if "made from M and B once both masses are typed" in w: told = true
       doAssert told, $bareRow.warnings
       doAssert "on GF from M and B" in bare.rowOf(dat).sentence
+
+  block swappedLayout:
+    # Swap mass and baseplate pressed on a converter's window is remembered for its layout: the
+    # folder QC judges a file of that layout on the swapped roles, as the window does, with the
+    # window's word that the other order fits better
+    withFixtures fx:
+      let dir = fx.dir / "config"
+      createDir(dir)
+      var st = initAppState()
+      st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      let c = converterOf()
+      let sgy = fx.dir / "converted.sgy"
+      writeVibSegy(sgy, [c.reference, c.mass, c.plate, c.record], 1.0, [21'i16, 19, 18, 20])
+      let w = st.window(sgy)
+      var p = st.plots[w].params
+      (p.reactionMassKg, p.baseplateMassKg, p.forceHundredWeighted) = (Wm, Wb, 1000.0)
+      p.roles.judge = joWeighted
+      st.change(w, p)
+      p = st.plots[w].params
+      doAssert p.roles.mass == 1 and p.roles.baseplate == 2, $p.roles
+      swap(p.roles.mass, p.roles.baseplate)
+      st.change(w, p)
+      let r = st.plots[w].result
+      doAssert st.plots[w].params.roles.mass == 2 and r.judged == "GF (M, B)", $r.judged
+      doAssert "with the two weights on the other traces" in r.judgeWarning, r.judgeWarning
+      var ask = applied(profile(joWeighted, Wm, Wb, 1000.0), [])
+      ask.layouts = st.vibRoleChoices
+      let row = runJob(@[listed(sgy)], ask).rowOf(sgy)
+      doAssert row.outcome == foJudged, row.problem
+      for m in row.measures:
+        let want = r.qc.rows[ord(m.limit)].measured
+        doAssert abs(m.measured - want) <= 1e-9 * max(abs(want), 1.0) or
+          (want.isNaN and m.measured.isNaN), $m.limit & ": " & $m.measured & " not " & $want
+      var warned = false
+      for x in row.warnings:
+        if "with the two weights on the other traces" in x: warned = true
+      doAssert warned, $row.warnings
+      # with no choice kept, the codes' roles: another ground force, and no such word
+      ask.layouts = @[]
+      let plain = runJob(@[listed(sgy)], ask).rowOf(sgy)
+      doAssert plain.sentence != row.sentence, plain.sentence
+      for x in plain.warnings:
+        doAssert "with the two weights on the other traces" notin x, x
+      st.shutdown()
 
 when isMainModule:
   main()

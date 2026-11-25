@@ -670,6 +670,10 @@ proc rolesOf(state: AppState; s: Session; fileTraces: openArray[int]; roles: Vib
     (result.reference, result.groundForce, result.mass, result.baseplate) = (0, 1, 2, 3)
     result.source = rsPosition
 
+func vibRoleChoices*(state: AppState): seq[string] =
+  ## The vibrator signature's roles chosen by hand per file layout, in force (`choiceText`).
+  state.vibLayouts
+
 proc vibWindowFile(state: AppState; w: int): int =
   ## The index of the open file window `plots[w]` is of; -1 when none.
   if state.plots[w].traces.len == 0: -1 else: state.findTrace(state.plots[w].traces[0])

@@ -192,7 +192,10 @@ reaction mass's channel and the one coded 18 the baseplate's. For this layout on
 the reaction mass on the trace coded 19 and the baseplate on the one coded 18 (the other way
 round from the codes' usual meaning), so no swap is needed; the Masses group says which trace
 each mass multiplies (trace number and code), and **Swap mass and baseplate** in Roles still
-works and is remembered for the file layout. The role pickers are free for these files.
+works and is remembered for the file layout. The role pickers are free for these files. The
+folder QC judges a converter's file on the roles the window takes for its layout, a swap
+included, and its row carries the same word when the other order fits the reference clearly
+better (the polarity stays as recorded there).
 
 For a `.dat` and a `.vib` a line under the choice says that both choices give the same ground
 force. When a file cannot follow the choice (no mass or baseplate trace, masses not typed, a `.vib`

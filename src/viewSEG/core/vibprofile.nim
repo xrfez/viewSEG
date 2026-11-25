@@ -89,6 +89,10 @@ type
       ## `forceHundredSet` was stored. False: an older project, the set unknown.
     hundredByVibrator*: seq[VibHundred] ## each vibrator's own 100 % force
     judge*: JudgeOn = joRecorded ## the ground force judged (`VibQcProfile.judge`)
+    layouts*: seq[string]
+      ## the roles chosen by hand per file layout (`choiceText`), the ones the Vibrator window
+      ## uses: a file of a layout with a choice is judged on its places (Swap mass and
+      ## baseplate among them); not part of the profile
     problems*: seq[string]
 
 const ForceNotJudged* = "No 100 % force: the force limits are not judged."

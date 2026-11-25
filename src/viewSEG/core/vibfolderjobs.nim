@@ -147,6 +147,23 @@ proc folderRoles*(codes: openArray[int16]; kind: SignatureKind;
   result.massPolarity = poAsRecorded
   result.judge = joRecorded
 
+func chosenRoles*(roles: VibRoles; layouts: openArray[string]; codes: openArray[int16];
+    count, first: int): VibRoles =
+  ## `roles` with the places chosen by hand for the layout of a record of `count` traces from
+  ## trace `first` whose codes are `codes` (`layoutKey`), as a Vibrator window on that record
+  ## takes them (Swap mass and baseplate among them); unchanged when none is remembered for the
+  ## layout or a place is not in the record. The polarity stays as recorded.
+  result = roles
+  var places: array[4, int]
+  if layouts.choiceFor(layoutKey(codes, count), places):
+    for p in places:
+      if p >= count: return
+    for p in places.mitems:
+      if p >= 0: p += first
+    (result.reference, result.groundForce, result.mass, result.baseplate) =
+      (places[0], places[1], places[2], places[3])
+    (result.source, result.handFile) = (rsRemembered, "")
+
 proc folderParams*(ask: VibQcAsk; roles: VibRoles; kind: SignatureKind): AnalysisParams =
   ## The ask a Vibrator window would use, with the profile's masses only when it makes the
   ## ground force from M and B (else none). A 100 % force
@@ -370,6 +387,10 @@ proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: 
     else: names.add "trace " & $(t + 1)
   let facts = s.signature
   let note = signatureForceNote(facts)
+  # the first record, as a window on it holds it: the layout its remembered roles are kept for
+  var (first, count) = (0, n)
+  if s.gathers.len > 0:
+    (first, count) = (s.gathers[0].traces.a, s.gathers[0].traces.len)
   s = nil
   clearCycleRoots()
   if held.samples.len > 0 and not sameDt(held.dtMs, dtMs):
@@ -378,7 +399,12 @@ proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: 
       else: intervalRefusal(held.dtMs, dtMs)
     return FolderRow(path: path, kind: facts.kind, pair: pairPath, outcome: foProblem,
       problem: why)
-  let roles = folderRoles(codes, facts.kind, ask.accelSet)
+  var roles = folderRoles(codes, facts.kind, ask.accelSet)
+  if facts.kind == sgNone and first in 0 ..< codes.len and first + count <= codes.len:
+    # a SEG-Y file's roles are those the Vibrator window takes for its layout: a choice made by
+    # hand there (Swap mass and baseplate) is the folder's too; a signature file's are its codes'
+    roles = roles.chosenRoles(ask.layouts, codes.toOpenArray(first, first + count - 1), count,
+      first)
   var at: array[VibRole, int]
   at[vsReference] = roles.reference
   at[vsGroundForce] = roles.groundForce
@@ -412,7 +438,9 @@ proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: 
   (params.forceHundredSet, params.forceHundredSetKnown) = (hundred.accelSet, hundred.setKnown)
   let sig = if item.converted: SignatureAsk()
     else: folderSignature(facts, ask.forceScale, ask.accelSet, pair, ask.options.targetPct)
-  var answer = vibratorOf(rows, names, at, dtMs, params, recorded, ask.topHz, NaN, note, sig)
+  # (the window's check of the converter's order: said when the other order fits clearly better)
+  var answer = vibratorOf(rows, names, at, dtMs, params, recorded, ask.topHz, NaN, note, sig,
+    converterOrder = facts.kind == sgNone and isConverterLayout(codes))
   if answer.problem.len == 0:
     if held.samples.len > 0:
       let label = if held.name.len > 0: held.name else: "reference"
