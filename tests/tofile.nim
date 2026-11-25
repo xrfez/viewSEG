@@ -352,6 +352,37 @@ proc main*() =
     doAssert "O record" in made.summary.error and "X." notin made.summary.error,
       made.summary.error
 
+  block head_is_read_to_the_first_record:
+    # 4 000 H26 records (over 300 KB), then 60 000 X records (5 MB): all the H
+    # records are copied, the X records are not read.
+    var text = "H00 SPS format version num.     SPS 2.1;\n"
+    for i in 0 ..< 4000: text.add "H26 " & align($i, 70) & "\n"
+    let hp = dir / "bighead.x"
+    var body = newStringOfCap(17_000_000)
+    body.add text
+    for i in 1 .. 60_000: body.add xRec(i, i, 1, 3, 1, 3) & "\n"
+    writeFile(hp, body)
+    let head = readHead(hp)
+    doAssert head.headers.len == 4001, "H records: " & $head.headers.len
+    doAssert head.revision == sps21 and head.relations.len < 20_000,
+      "the file was read past its head: " & $head.relations.len
+    doAssert headLines(spsText(SpsFile(headers: head.headers)).text).len == 4001
+    var asked = ""
+    try:
+      discard readHead(hp, limit = 100_000)
+    except IOError as e:
+      asked = e.msg
+    doAssert "bighead.x" in asked and "run past" in asked, asked
+    let through = new SurveyGeometry
+    through[] = geometryOf(hp, false)
+    let made = runOFile(through, hp, dir / "bighead.ops")
+    doAssert made.sink.summary.error.len == 0 and made.sink.summary.headers == 4001,
+      $made.sink.summary
+    # A file of records only has no head, and a short one with no end of line is read.
+    writeFile(dir / "nohead.x", xRec(1, 1, 1, 3, 1, 3))
+    doAssert readHead(dir / "nohead.x").headers.len == 0
+    doAssert readHead(dir / "nohead.x").relations.len == 1
+
   block the_command:
     let source = dir / "cmd.x"
     copyFile(Surveys[0], source)

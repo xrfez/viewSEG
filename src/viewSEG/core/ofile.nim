@@ -18,7 +18,9 @@ import filesystem, jobs, shotlogsps
 const
   OFileExt* = ".ops"
     ## The extension parseSEG gives O records: it reads such a file's records as receiver gathers.
-  HeadBytes = 256 * 1024
+  HeadChunk = 64 * 1024
+  HeadTail = 8 * 1024              ## records read past the H records, to tell the revision
+  MaxHeadBytes* = 64 * 1024 * 1024 ## the H records of an SPS file are not longer than this
 
 type
   OFileSummary* = object
@@ -51,20 +53,36 @@ type
 func plural(n: int; one, many: string): string =
   $n & " " & (if n == 1: one else: many)
 
-proc readHead(path: string): SpsFile {.raises: [IOError].} =
-  ## The first records of the SPS file `path`, read as a file of their own: its
-  ## revision, line ending and H records.
+proc readHead*(path: string; limit = MaxHeadBytes): SpsFile {.raises: [IOError].} =
+  ## The head of the SPS file `path`, read as a file of its own: its revision, line
+  ## ending and H records. It is read in chunks up to the first record that is not an
+  ## H or C record, and a little further (so the revision is known from records when
+  ## no H record says), never the whole file. H records past `limit` bytes are an error.
   var f: File = nil
   if not fs.open(f, path, fmRead):
     raise newException(IOError, "cannot read " & path)
-  var text = newString(HeadBytes)
-  var n = 0
+  var text = ""
+  var buf = newString(HeadChunk)
+  var scanned = 0 # the start of the first line not looked at
+  var body = -1 # the start of the first line that is not an H or C record
+  var eof = false
   try:
-    n = fs.readBuffer(f, path, addr text[0], text.len)
+    while not eof:
+      let n = fs.readBuffer(f, path, addr buf[0], HeadChunk)
+      eof = n < HeadChunk
+      if n > 0: text.add buf.substr(0, n - 1)
+      while body < 0:
+        let nl = text.find('\n', scanned)
+        if nl < 0: break
+        if text[scanned] notin {'H', 'C', '\r', '\n'}: body = scanned
+        else: scanned = nl + 1
+      if body >= 0 and text.len - body >= HeadTail: break
+      if body < 0 and text.len > limit:
+        raise newException(IOError, "the H records of " & path & " run past " &
+          $(limit div (1024 * 1024)) & " MiB")
   finally:
     close(f)
-  text.setLen(n)
-  if n == text.len and n == HeadBytes:
+  if not eof:
     let cut = text.rfind('\n')
     if cut >= 0: text.setLen(cut + 1)
   try:
