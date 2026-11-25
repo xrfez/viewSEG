@@ -113,11 +113,7 @@ type
     textFilled: bool                           ## `textValues` are that file's, not sample values
     textValues: TextValues
     textWhy: string                            ## why the preview shows sample values
-    vendorJob: JobId = NoJob                   ## the job reading the example's vendor values
-    vendorSink: VendorPreview                  ## what it fills
-    vendorAsked: string                        ## the key it was asked for (`vendorPreviewKey`)
-    vendorKey: string                          ## the key `vendorValues` are for
-    vendorValues: seq[VendorFieldValue]        ## read from the shown file; empty before an answer
+    vendor: VendorPreviewState                 ## the example's vendor values and the job reading them
     binOpen: bool                              ## the binary header set editor is shown
     binEdit: BinaryEdit
     binNameBuf: array[257, char]
@@ -1102,33 +1098,25 @@ proc drawPartRow(ui: var OutputUi; i: int; marks: var Marks): int =
   igPopID()
 
 proc vendorPreview(ui: var OutputUi; st: AppState): bool =
-  ## Whether `ui.vendorValues` are the example's vendor values read from the shown file, as the
-  ## output run reads them. They come from a job (never read here), asked once per file, killed
-  ## trace choice, field names and vendor maps' load; an answer for another key is dropped.
+  ## Whether `ui.vendor.values` are the example's vendor values read from the shown file, as
+  ## the output run reads them. They come from a job (never read here); the decision is
+  ## `vendorPreviewStep`.
   let fields = vendorFieldsOf(ui.draft)
-  if ui.vendorJob != NoJob:
-    let info = st.jobs.info(ui.vendorJob)
-    if info.isSome and info.get.state in {jsQueued, jsRunning}: return false
-    if info.isSome and info.get.state == jsDone:
-      let got = vendorAnswer(ui.vendorSink, ui.vendorAsked)
-      if got.isSome:
-        ui.vendorValues = got.get
-        ui.vendorKey = ui.vendorAsked
-    ui.vendorJob = NoJob
   let i = st.shownFile(st.findPanel(MainPanel))
-  if fields.len == 0 or i < 0: return false
-  let fp = st.sessions[i].filePtr
-  if fp == nil: return false
-  let path = $(st.sessions[i].path)
-  let key = vendorPreviewKey(path, ui.dropKilled, fields, vendorStamp())
-  if key == ui.vendorKey: return true
-  if key != ui.vendorAsked:
-    ui.vendorAsked = key
-    ui.vendorSink = VendorPreview()
-    ui.vendorJob = st.jobs.submit(vendorPreviewSpec(extractFilename(path), path),
-      vendorPreviewWork(fp, st.sessions[i].signature, st.editsAt(path), ui.dropKilled, fields,
-      currentVendors(), key, ui.vendorSink))
-  false
+  var key = ""
+  if fields.len > 0 and i >= 0 and st.sessions[i].filePtr != nil:
+    let path = $(st.sessions[i].path)
+    key = vendorPreviewKey(path, int(st.sessions[i].id), ui.dropKilled,
+      st.editsAt(path).revision, fields, vendorStamp())
+  case ui.vendor.vendorPreviewStep(st.jobs, key)
+  of vsUse: return true
+  of vsSample: return false
+  of vsSubmit:
+    let path = $(st.sessions[i].path)
+    ui.vendor.started st.jobs.submit(vendorPreviewSpec(extractFilename(path), path),
+      vendorPreviewWork(st.sessions[i].filePtr, st.sessions[i].signature, st.editsAt(path),
+      ui.dropKilled, fields, currentVendors(), key, ui.vendor.sink))
+    return false
 
 proc drawEditor(ui: var OutputUi; st: AppState; marks: var Marks; outp: var OutputOutput) =
   igSeparator()
@@ -1169,7 +1157,7 @@ proc drawEditor(ui: var OutputUi; st: AppState; marks: var Marks; outp: var Outp
   ui.drawKindList(marks)
   var sample: seq[VendorFieldValue] = @[]
   if ui.vendorPreview(st):
-    sample = ui.vendorValues
+    sample = ui.vendor.values
   else:
     for name in vendorFieldsOf(ui.draft):
       sample.add VendorFieldValue(name: name, value: NameValue(state: nvInt, intValue: 42))

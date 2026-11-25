@@ -6,12 +6,23 @@
 ## The file is `fx.vendorTraceSegd(77)`: three traces whose vendor block (type 176) holds its
 ## own type, 176, at byte 32 of every trace.
 ##
+## The window's decision each frame (`vendorPreviewStep`) is tested with a driver that
+## submits as the window does: one submit per key and none while it runs, the answer used, a
+## changed pattern dropping a stale answer, a key that differs by the edits revision (killing
+## traces with killed traces dropped) or by the session (a file reloaded under the same path),
+## a cancelled job asked again, a failed one not, and a job pruned from the history
+## (`initJobs(historyLimit = 0)`) still answering.
+##
 ## Seen to fail: with `vendorAnswer` not comparing the key, `stale_answer_dropped` found the
-## old pattern's answer used.
+## old pattern's answer used. With the key lacking the revision, `key_revision` failed; lacking
+## the session, `key_session` failed; with `cancelled` not clearing `asked`,
+## `cancel_asks_again` failed; with the answer read only for a done job, `pruned_job` failed;
+## with a failed job clearing `asked`, `failed_not_retried` counted a second submit.
 
 import std/[options, os]
 import parseSEG
-import viewSEG/core/[edits, jobs, namepreviewjobs, outputnames, outputnamevalues, sigtypes,
+import viewSEG/core/[edits, jobs, namepreviewjobs, outputnames,
+  outputnamevalues, sigtypes,
   vendormaps]
 import utils/[fixtures, waiting]
 
@@ -19,9 +30,11 @@ proc patternOf(fields: openArray[string]): OutputPattern =
   result = OutputPattern(name: "V", separator: nsDot, parts: @[NamePart(kind: npStem)])
   for f in fields: result.parts.add NamePart(kind: npVendor, text: f)
 
-proc runName(f: SeismicFile; path: string; p: OutputPattern; reg: VendorRegistry): NameResult =
+proc runName(f: SeismicFile; path: string; p: OutputPattern;
+    reg: VendorRegistry): NameResult =
   ## What the output run renders for `f` (as `renderedLeaf` does).
-  let values = nameValuesOf(f, path, SignatureFacts(), FileEdits(), true, nil, {npStem}, reg)
+  let values = nameValuesOf(f, path, SignatureFacts(), FileEdits(), true, nil, {
+      npStem}, reg)
   render(p, values, ".sgd", vendorValuesOf(f, SignatureFacts(), FileEdits(), true,
     vendorFieldsOf(p), reg))
 
@@ -29,14 +42,49 @@ proc jobName(jobs: Jobs; f: var SeismicFile; path: string; p: OutputPattern;
     reg: VendorRegistry): NameResult =
   ## What the example renders: the values come from the job.
   let fields = vendorFieldsOf(p)
-  let key = vendorPreviewKey(path, true, fields, 1)
+  let key = vendorPreviewKey(path, 1, true, 0, fields, 1)
   let sink = VendorPreview()
   let id = jobs.submit(vendorPreviewSpec("f", path),
-    vendorPreviewWork(addr f, SignatureFacts(), FileEdits(), true, fields, reg, key, sink))
+    vendorPreviewWork(addr f, SignatureFacts(), FileEdits(), true, fields, reg,
+        key, sink))
   doAssert waitUntil(vendorAnswer(sink, key).isSome), "the job did not answer"
   doAssert id != NoJob
-  let values = nameValuesOf(f, path, SignatureFacts(), FileEdits(), true, nil, {npStem}, reg)
+  let values = nameValuesOf(f, path, SignatureFacts(), FileEdits(), true, nil, {
+      npStem}, reg)
   render(p, values, ".sgd", vendorAnswer(sink, key).get)
+
+type Driver = object
+  st: VendorPreviewState
+  submits: int
+  gate: ptr bool ## when set, the job waits until it is true
+
+proc frame(d: var Driver; jobs: Jobs; f: ptr SeismicFile; path: string;
+    key: string; reg: VendorRegistry; fields: seq[string];
+        fail = false): VendorStep =
+  ## One frame of the window: decide, and submit as the window does.
+  result = d.st.vendorPreviewStep(jobs, key)
+  if result == vsSubmit:
+    inc d.submits
+    let gate = d.gate
+    let real = vendorPreviewWork(f, SignatureFacts(), FileEdits(), true, fields,
+        reg, key,
+      d.st.sink)
+    let work = proc (ctx: JobContext) {.gcsafe.} =
+      {.cast(gcsafe).}:
+        if fail: raise newException(ValueError, "no")
+        while gate != nil and not gate[]:
+          ctx.checkCancelled()
+          sleep(1)
+      real(ctx)
+    d.st.started jobs.submit(vendorPreviewSpec("f", path), work)
+
+proc settle(d: var Driver; jobs: Jobs; f: ptr SeismicFile; path, key: string;
+    reg: VendorRegistry; fields: seq[string]): VendorStep =
+  ## Frames until the job is over (at most 2000 ms), returns the last decision.
+  for n in 0 ..< 2000:
+    result = d.frame(jobs, f, path, key, reg, fields)
+    if result == vsUse: return
+    sleep(1)
 
 proc main*() =
   withFixtures fx:
@@ -58,7 +106,8 @@ proc main*() =
       block known_field:
         let p = patternOf(["kind"])
         let want = runName(f, path, p, mapped)
-        doAssert want.problem.len == 0 and want.name == "vendor-trace-77.176.sgd", want.name
+        doAssert want.problem.len == 0 and want.name ==
+            "vendor-trace-77.176.sgd", want.name
         let got = jobName(jobs, f, path, p, mapped)
         doAssert got == want, got.name & got.problem
 
@@ -76,17 +125,112 @@ proc main*() =
 
       block stale_answer_dropped:
         let sink = VendorPreview()
-        let old = vendorPreviewKey(path, true, ["kind"], 1)
+        let old = vendorPreviewKey(path, 1, true, 0, ["kind"], 1)
         let id = jobs.submit(vendorPreviewSpec("f", path),
-          vendorPreviewWork(addr f, SignatureFacts(), FileEdits(), true, @["kind"], mapped,
+          vendorPreviewWork(addr f, SignatureFacts(), FileEdits(), true, @[
+              "kind"], mapped,
           old, sink))
         doAssert waitUntil(vendorAnswer(sink, old).isSome)
         doAssert id != NoJob
-        let changed = vendorPreviewKey(path, true, ["kind", "other"], 1)
+        let changed = vendorPreviewKey(path, 1, true, 0, ["kind", "other"], 1)
         doAssert vendorAnswer(sink, changed).isNone, "an answer for the old pattern was used"
-        doAssert vendorAnswer(sink, vendorPreviewKey(path, true, ["kind"], 2)).isNone,
+        doAssert vendorAnswer(sink, vendorPreviewKey(path, 1, true, 0, ["kind"],
+            2)).isNone,
           "an answer for older vendor maps was used"
         doAssert vendorAnswer(nil, old).isNone
+
+      block one_submit_then_use:
+        var d = Driver()
+        let key = vendorPreviewKey(path, 1, true, 0, ["kind"], 1)
+        doAssert d.frame(jobs, addr f, path, key, mapped, @["kind"]) == vsSubmit
+        doAssert d.frame(jobs, addr f, path, key, mapped, @["kind"]) == vsSample
+        doAssert d.settle(jobs, addr f, path, key, mapped, @["kind"]) == vsUse
+        doAssert d.submits == 1, "asked more than once: " & $d.submits
+        doAssert d.st.values.len == 1 and d.st.values[0].name == "kind"
+        doAssert d.frame(jobs, addr f, path, key, mapped, @["kind"]) == vsUse
+        doAssert d.submits == 1
+        doAssert d.st.vendorPreviewStep(jobs, "") == vsSample
+
+      block changed_pattern_drops_answer:
+        var d = Driver()
+        let k1 = vendorPreviewKey(path, 1, true, 0, ["kind"], 1)
+        doAssert d.settle(jobs, addr f, path, k1, mapped, @["kind"]) == vsUse
+        let k2 = vendorPreviewKey(path, 1, true, 0, ["kind", "nosuch"], 1)
+        doAssert d.frame(jobs, addr f, path, k2, mapped, @["kind", "nosuch"]) ==
+            vsSubmit,
+          "the old answer was used for a changed pattern"
+        doAssert d.settle(jobs, addr f, path, k2, mapped, @["kind",
+            "nosuch"]) == vsUse
+        doAssert d.submits == 2 and d.st.values.len == 2
+
+      block key_revision:
+        var e: FileEdits
+        let r0 = vendorPreviewKey(path, 1, true, e.revision, ["kind"], 1)
+        discard e.change(teKilled, [0, 1, 2], true)
+        let r1 = vendorPreviewKey(path, 1, true, e.revision, ["kind"], 1)
+        doAssert r0 != r1, "killing traces did not change the key"
+        doAssert vendorPreviewKey(path, 1, false, 0, ["kind"], 1) ==
+          vendorPreviewKey(path, 1, false, e.revision, ["kind"], 1),
+          "the revision matters when killed traces are not dropped"
+        var d = Driver()
+        doAssert d.settle(jobs, addr f, path, r0, mapped, @["kind"]) == vsUse
+        doAssert d.frame(jobs, addr f, path, r1, mapped, @["kind"]) == vsSubmit
+
+      block key_session:
+        var d = Driver()
+        let a = vendorPreviewKey(path, 1, true, 0, ["kind"], 1)
+        let b = vendorPreviewKey(path, 2, true, 0, ["kind"], 1)
+        doAssert a != b
+        doAssert d.settle(jobs, addr f, path, a, mapped, @["kind"]) == vsUse
+        doAssert d.frame(jobs, addr f, path, b, mapped, @["kind"]) == vsSubmit,
+          "a file reloaded under the same path kept the old values"
+
+      block cancel_asks_again:
+        var d = Driver()
+        var open = false
+        d.gate = addr open
+        let key = vendorPreviewKey(path, 1, true, 0, ["kind"], 1)
+        doAssert d.frame(jobs, addr f, path, key, mapped, @["kind"]) == vsSubmit
+        doAssert d.frame(jobs, addr f, path, key, mapped, @["kind"]) == vsSample
+        doAssert jobs.cancel(d.st.job)
+        var again = false
+        for n in 0 ..< 2000:
+          if d.frame(jobs, addr f, path, key, mapped, @["kind"]) == vsSubmit:
+            again = true
+            break
+          sleep(1)
+        doAssert again, "a cancelled job was never asked again"
+        open = true
+        doAssert d.settle(jobs, addr f, path, key, mapped, @["kind"]) == vsUse
+        doAssert d.submits == 2
+
+      block failed_not_retried:
+        var d = Driver()
+        let key = vendorPreviewKey(path, 1, true, 0, ["kind"], 1)
+        doAssert d.frame(jobs, addr f, path, key, mapped, @["kind"],
+            fail = true) == vsSubmit
+        for n in 0 ..< 200:
+          doAssert d.frame(jobs, addr f, path, key, mapped, @["kind"]) == vsSample
+          sleep(1)
+        doAssert d.submits == 1, "a failed job was retried"
+
+      block pruned_job:
+        let none = initJobs(historyLimit = 0)
+        var d = Driver()
+        let key = vendorPreviewKey(path, 1, true, 0, ["kind"], 1)
+        doAssert d.frame(none, addr f, path, key, mapped, @["kind"]) == vsSubmit
+        doAssert waitUntil(d.st.sink.ready and none.info(d.st.job).isNone)
+        doAssert d.frame(none, addr f, path, key, mapped, @["kind"]) == vsUse,
+          "a pruned job's answer was not read"
+        doAssert d.submits == 1
+        # pruned with no answer: asked again
+        var d2 = Driver()
+        let big = vendorPreviewKey(path, 1, true, 0, ["x"], 1)
+        doAssert d2.frame(none, addr f, path, big, mapped, @["kind"],
+            fail = true) == vsSubmit
+        doAssert waitUntil(none.info(d2.st.job).isNone)
+        doAssert d2.frame(none, addr f, path, big, mapped, @["kind"]) == vsSubmit
+        none.stop()
     finally:
       jobs.stop()
       f.close()
