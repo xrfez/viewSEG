@@ -4,7 +4,7 @@
 
 import std/math
 import imguin/cimgui
-import ../../core/[firstbreaks, noisearea, state, units]
+import ../../core/[firstbreaks, itempool, noisearea, state, units]
 import ../../view/theme
 import icons, marks, style
 
@@ -133,6 +133,30 @@ proc drawNoiseSettings(st: AppState; s: var NoiseSettings; marks: var Marks; t: 
     "motion traces.")
   igPopStyleColor(1)
 
+proc drawThreads(s: var Settings; marks: var Marks): bool =
+  ## The threads the folder reports read files with; true when the choice changed.
+  igTextUnformatted("Threads for folder reports", nil)
+  marks.mark("settings.threads")
+  igSameLine(0, -1)
+  let label = if s.itemThreads == 0: "Automatic (" & $defaultItemThreads() & ")"
+              else: $s.itemThreads
+  igSetNextItemWidth(round(igCalcTextSize("Automatic (00)", nil, false, -1).x +
+    2 * igGetStyle().FramePadding.x + igGetFrameHeight()))
+  if igBeginCombo("##threads", label.cstring, 0):
+    for n in 0 .. MaxItemThreads:
+      let name = if n == 0: "Automatic (" & $defaultItemThreads() & ")" else: $n
+      if igSelectable_Bool(name.cstring, s.itemThreads == n, 0, ImVec2_c(x: 0, y: 0)) and
+          s.itemThreads != n:
+        s.itemThreads = n
+        result = true
+      marks.mark("settings.threads " & (if n == 0: "auto" else: $n))
+    igEndCombo()
+  marks.mark("settings.threads choice")
+  tip("How many files the folder reports (Missing traces, Trace quality and Vibrator QC of " &
+    "a folder) read at once. More is faster and uses more memory; 1 reads one file at a " &
+    "time. The result is the same whatever the number. A report already running keeps the " &
+    "number it started with.")
+
 proc drawSettingsWindow*(ui: var SettingsUi; st: AppState; t: Theme; marks: var Marks):
     seq[Command] =
   ## The window, when it is open. A change of Units is a `ckSettings`.
@@ -169,6 +193,8 @@ proc drawSettingsWindow*(ui: var SettingsUi; st: AppState; t: Theme; marks: var 
     igTextWrapped("A mass box has the same switch beside it. The number converts in place, " &
       "so the mass does not change.")
     igPopStyleColor(1)
+    igSeparator()
+    if drawThreads(s, marks): result.add Command(kind: ckSettings, settings: s)
     var noise = s.noise
     if drawNoiseSettings(st, noise, marks, t):
       s.noise = noise

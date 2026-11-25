@@ -2102,6 +2102,11 @@ and your own sort keys, the Messages window's toggles, and the Headers window's 
 toggles and columns, and the options of each kind of graph window (above). It is saved a
 second after a change and when you quit.
 
+**Tools > Settings...** also sets **Threads for folder reports**: how many files Missing
+traces, Trace quality and the Vibrator QC of a folder read at once ("Automatic" follows the
+cores; 1 reads one file at a time). More is faster and uses more memory; the result is the
+same whatever the number, and a report already running keeps the number it started with.
+
 **Tools > Settings...** chooses **Units**: **Metric** (the default: kilograms, newtons) or
 **Imperial** (pounds, pounds-force). It changes masses and forces in the Vibrator window and
 nothing about distances, offsets or velocities, which always follow the file's or the

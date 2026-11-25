@@ -23,8 +23,9 @@
 ## change from one to the other).
 
 import std/[math, sequtils]
-import components, displaypresets, geometry, join, log, mapkinds, noisearea, outputrevision, panels,
-  pickerplaces, plotoptions, readout, scales, shotlayout, spectra, tracetable, units
+import components, displaypresets, geometry, itempool, join, log, mapkinds, noisearea,
+  outputrevision, panels, pickerplaces, plotoptions, readout, scales, shotlayout, spectra,
+      tracetable, units
 
 export displaypresets, join, mapkinds, noisearea, pickerplaces, plotoptions, readout, scales,
     shotlayout, spectra, units
@@ -271,6 +272,9 @@ type
     hideKilled*: bool
       ## killed traces are left out of the plot (the traces beside them close
       ## up); off: drawn blank
+    itemThreads*: int
+      ## how many files the folder reports read at once (`Jobs.setItemThreads`); 0:
+      ## automatic, from the cores
     spectrum*: SpectrumOptions ## the spectrum windows' display
     plotOptions*: PlotOptions
       ## the New plot windows' options, per kind: a new window opens with them
@@ -415,6 +419,7 @@ func cleaned*(s: Settings): (Settings, int) =
     r.window = WindowPlacement()
   r.map.spreadTemplate = bounded(s.map.spreadTemplate)
   r.noise = bounded(s.noise)
+  r.itemThreads = clamp(s.itemThreads, 0, MaxItemThreads)
   r.displayPresets = cleaned(s.displayPresets)
   (r, s.calibrations.len - r.calibrations.len + s.readout.len - r.readout.len +
     dropped + s.displayPresets.len - r.displayPresets.len)

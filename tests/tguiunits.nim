@@ -2,7 +2,8 @@
 ## frontend: the kg / lb switch converts the number in place (the stored
 ## kilograms do not change), a value typed in pounds is stored in kilograms,
 ## and Tools > Settings sets the same Units. The 100 % force box names the
-## unit the force axis shows.
+## unit the force axis shows. Its Threads for folder reports choice sets how many files the
+## folder reports read at once.
 ##
 ## Seen to fail: with the unit switch not issuing `ckSettings`, "imperial
 ## from the mass field" found units still metric; with the box storing the
@@ -167,6 +168,18 @@ proc main*() =
     step("imperial from Settings", noop, proc (f: FrameInfo): bool =
       f.core.settings.units == usImperial and
         abs(f.core.plots[0].params.reactionMassKg - stored) < 1e-9)
+    step("the threads row", noop, proc (f: FrameInfo): bool =
+      result = f.markOf("settings.threads choice").size.x > 0
+      if result:
+        doAssert f.core.settings.itemThreads == 0, "not automatic by default"
+        let shots = getEnv("VIEWSEG_SCREENSHOTS")
+        if shots.len > 0:
+          createDir(shots)
+          doAssert f.savePng(shots / "threadset.png"), "cannot save the screenshot")
+    click("settings.threads choice")
+    click("settings.threads 2")
+    step("two threads chosen", noop, proc (f: FrameInfo): bool =
+      f.core.settings.itemThreads == 2 and f.core.itemThreads == 2)
 
     var at = 0
     var started = false

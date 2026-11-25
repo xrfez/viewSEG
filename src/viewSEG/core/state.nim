@@ -1710,6 +1710,7 @@ proc keepSettingsIn*(state: var AppState; dir: string; loaded: LoadedSettings) =
   for (severity, text) in loaded.notes:
     state.log.add(severity, "settings", text)
   state.settings = cleaned(loaded.settings)[0]
+  state.jobs.setItemThreads(state.settings.itemThreads)
   state.kept = state.settings
   if state.project.dir.len == 0: state.vibLayouts = state.settings.vibRoles
   state.defaults = cleaned(loaded.defaults)[0]
@@ -1766,6 +1767,10 @@ func arrangement*(state: AppState): lent string {.inline.} =
 func settingsRevision*(state: AppState): int {.inline.} =
   ## Bumped on every change of the settings.
   state.settingsRev
+
+func itemThreads*(state: AppState): int =
+  ## Files one folder report reads at once now (`Settings.itemThreads`, or the automatic number).
+  state.jobs.itemThreads
 
 proc saveSettings(state: var AppState; first = false) =
   ## Hands the settings to the disk thread; `first`: before what waits there.
@@ -3613,6 +3618,7 @@ proc takeSettings(state: var AppState; s: sink Settings) =
   ## saved: a value that is not a number equals itself).
   if settingsDocument(s) != settingsDocument(state.settings):
     state.settings = s
+    state.jobs.setItemThreads(state.settings.itemThreads)
     inc state.settingsRev
 
 proc keepSettings(state: var AppState; s: sink Settings) =

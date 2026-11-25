@@ -52,6 +52,7 @@
 ##  (missing (folder "/jobs/Land 2026/lines") (subfolders true) (untold notChecked))
 ##  (quality (folder "/jobs/Land 2026/lines") (subfolders false) (untold shot))
 ##  (hideKilled false)
+##  (itemThreads 0)
 ##  (spectrum
 ##   (window (scale db) (logFrequency false) (time whole) (raw true) (processed true)
 ##    (response true) (phase false) (phasePicture unwrapped))
@@ -83,7 +84,7 @@
 ## making old files unreadable.
 
 import std/[math, strutils]
-import analysis, breakmodel, geometry, join, log, nif, noisearea, outputrevision, panels,
+import analysis, breakmodel, geometry, itempool, join, log, nif, noisearea, outputrevision, panels,
   plotoptions, readout, scales, settings, tracetable, units
 
 export nif
@@ -552,6 +553,7 @@ proc settingsDocument*(s: Settings): string =
   w.choice("untold", UntoldKindNames[s.quality.untold])
   w.close()
   w.value("hideKilled", s.hideKilled)
+  w.value("itemThreads", s.itemThreads)
   w.open("spectrum")
   w.spectrumDisplay("window", s.spectrum.window)
   w.spectrumDisplay("live", s.spectrum.live)
@@ -1307,6 +1309,7 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
             elif old.isSegd: result.output.segdRevision = old
           else: r.unknown(k, "output")
       of "hideKilled": r.flag(c, result.hideKilled)
+      of "itemThreads": r.integer(c, 0, MaxItemThreads, result.itemThreads)
       of "spectrum":
         for k in c.kids:
           if k.isTree("window"): r.spectrumDisplay(k, result.spectrum.window)

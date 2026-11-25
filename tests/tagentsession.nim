@@ -119,7 +119,7 @@ const Reached = {
   "output.segyRevision": "", "output.segdRevision": "", "missing.folder": "",
   "missing.subfolders": "", "missing.untold": "", "quality.folder": "",
   "quality.subfolders": "", "quality.untold": "", "hideKilled": "",
-  "tray.icon": "", "tray.minimize": "",
+  "tray.icon": "", "tray.minimize": "", "itemThreads": "",
   # the Seismic gear's Look tab only: no command sets the four component colours
   "componentColours": "",
   "spectrum.window.scale": "open spectrum", "spectrum.window.logFrequency": "open spectrum",

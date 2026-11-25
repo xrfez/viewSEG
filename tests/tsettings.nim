@@ -24,12 +24,13 @@
 ## backup, the second reset's; with `(readout ...)` taken whatever it held,
 ## `noUsableFieldKeepsTheReadout` found the status bar's fields gone; with
 ## the import parsed on the UI thread (`readSettings(m.content, ...)` in
-## `takeIn`), `importHoldsNoFrame` found a frame held 51 ms.
+## `takeIn`), `importHoldsNoFrame` found a frame held 51 ms; with the threads for the folder
+## reports not given to the jobs, `itemThreadsApplied` found the old number.
 ##
 ## Runs alone: it bounds the time taking in an import holds a frame (25 ms).
 
 import std/[math, monotimes, os, random, sequtils, strutils, times]
-import viewSEG/core/[geometry, outputrevision, state]
+import viewSEG/core/[geometry, itempool, outputrevision, state]
 import utils/[fixtures, owntime, waiting]
 
 func has(log: MessageLog; part: string; severity = sevInfo): bool =
@@ -76,7 +77,7 @@ proc everyFieldSet(): Settings =
     output: OutputView(segyRevision: orSegy1, segdRevision: orSegd31),
     missing: MissingView(folder: "/jobs/line 7", subfolders: true, untold: ukReceiver),
     quality: QualityView(folder: "/jobs/line 8", subfolders: true, untold: ukShot),
-    hideKilled: true,
+    hideKilled: true, itemThreads: 3,
     spectrum: SpectrumOptions(window: SpectrumDisplay(scale: ssLinear, logFrequency: true,
       time: stVisible, raw: false, processed: false, response: false, phase: true,
       phasePicture: ppSigned),
@@ -414,6 +415,33 @@ proc main*() =
     doAssert s.calibrations == @[Calibration(monitor: "B", ppi: 120)]
     doAssert s.sortPresets == @[SortPreset(name: "Ok", keys: @[SortKey(field: hfOffset)])]
     doAssert s.recentFiles == @["/a", "/b"]
+
+  block itemThreadsApplied:
+    # The threads of the folder reports: a number set reaches the jobs at once, 0 is the
+    # automatic number, more than the cap is the cap, and a restart reads it from the file.
+    let dir = tmp / "app8"
+    createDir(dir)
+    var st = appIn(dir)
+    doAssert st.settings.itemThreads == 0 and st.itemThreads == defaultItemThreads()
+    for (asked, got) in [(3, 3), (0, defaultItemThreads()), (999, MaxItemThreads)]:
+      var s = st.settings
+      s.itemThreads = asked
+      st.apply Command(kind: ckSettings, settings: s)
+      doAssert st.itemThreads == got, $asked & " gave " & $st.itemThreads
+    var s = st.settings
+    s.itemThreads = 3
+    st.apply Command(kind: ckSettings, settings: s)
+    st.flushFiles()
+    st.shutdown()
+    var again = appIn(dir)
+    doAssert again.settings.itemThreads == 3 and again.itemThreads == 3
+    again.shutdown()
+    var problems: seq[string]
+    for bad in ["(itemThreads 99)", "(itemThreads -1)", "(itemThreads many)"]:
+      problems.setLen 0
+      let r = readSettings("(settings (version 1) " & bad & ")", "settings.nif", Settings(),
+        problems)
+      doAssert r.itemThreads == 0 and problems.len == 1, bad & ": " & $problems
 
   block noUsableFieldKeepsTheReadout:
     # A typing mistake in the only field named keeps the status bar's fields;
