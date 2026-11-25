@@ -203,9 +203,9 @@ proc converterFileBlock() =
     let w = st.window(path)
     doAssert st.vibConverter(st.plots[w])
     var p = st.plots[w].params
-    # the roles by codes (the roles' own rule): M is the trace coded 18, the converter's
-    # baseplate channel; the weights follow the roles, so the roles are swapped
-    swap(p.roles.mass, p.roles.baseplate)
+    # the roles for this layout: the reaction mass is the trace coded 19, the channel it is,
+    # so the typed weights need no swap
+    doAssert p.roles.mass == 1 and p.roles.baseplate == 2, $p.roles
     (p.reactionMassKg, p.baseplateMassKg, p.details) = (Wm, Wb, true)
     p.roles.judge = joWeighted
     st.change(w, p)

@@ -12,7 +12,7 @@
 ##   on the plain sum of its two channels; a profile with no weights leaves the file judged on
 ##   the record, with a warning on its row; the profile's text says which is judged.
 ##
-## Seen to fail: with the converter swap left out of `judgeFile`, the made row's numbers no
+## Seen to fail: with the converter's role swap left out of `withCodeRoles`, the made row's numbers no
 ## longer matched those of the true ground force (`mixedFolder`); with the profile's masses always dropped (`masses = NaN`),
 ## the made row was judged on the record.
 
@@ -44,7 +44,7 @@ proc listed(path: string): FolderListed =
   FolderListed(path: path, info: readSweepInfo(path, signatureKindOf(head), size))
 
 proc profile(judge: JudgeOn; reaction = NaN; plate = NaN; weighted = NaN): VibQcProfile =
-  profileOf(QcLimits(), 500.0, 5, asB, ForceScale(), 5.0e7, NaN, "", NaN, "", asB, judge,
+  profileOf(QcLimits(), 500.0, 5, asB, ForceScale(), 5.0e7, NaN, "", NaN, "", asB, "", judge,
     reaction, plate, weighted)
 
 proc main*() =
@@ -71,10 +71,14 @@ proc main*() =
     let record = applied(profile(joRecorded, Wm, Wb, 1000.0), [])
     doAssert record.judge == joRecorded and record.options.reactionMassKg.isNaN and
       record.options.forceHundredWeighted.isNaN
-    # what the run cannot do is said
-    let bare = applied(profile(joWeighted), [])
-    doAssert MadeNotJudged in bare.problems and MadeNoMasses in bare.problems, $bare.problems
-    doAssert ForceNotJudged notin bare.problems
+    # a window that changes only the switch writes only it into the stored profile
+    let stored = profile(joRecorded, NaN, NaN, NaN)
+    var flipped = stored
+    flipped.judge = joWeighted
+    let kept = merged(profile(joRecorded, Wm, Wb, 1000.0), stored, flipped)
+    doAssert kept.judge == joWeighted and kept.madeReactionKg == Wm and
+      kept.forceHundredWeighted == 1000.0, $kept
+    doAssert "ground force made from mass and baseplate" in changeWords(stored, flipped)
     # the profile's text says which ground force is judged
     doAssert "Ground force in the record." in profileLines(profile(joRecorded))[0]
     doAssert "Ground force made from mass and baseplate (3600 kg, 1400 kg)." in

@@ -62,15 +62,15 @@ proc main*() =
       st.apply Command(kind: ckNewProject, projectPath: proj, projectName: "Job")
       doAssert st.settle(st.inProject)
       let w = st.open(fx.vibFourSegy())
-      doAssert st.plots[w].params.roles.places == (0, 3, 2, 1), $st.plots[w].params.roles
+      doAssert st.plots[w].params.roles.places == (0, 3, 1, 2), $st.plots[w].params.roles
       doAssert st.plots[w].params.roles.source == rsCodes
       let line = st.vibRolesLine(st.plots[w])
       doAssert line == "Reference: trace 1 (vibrator reference (21)) · Ground force: trace 4 " &
-        "(vibrator estimated ground force (20)) · Mass: trace 3 (vibrator reaction mass " &
-        "(18)) · Baseplate: trace 2 (vibrator baseplate (19)) — from the trace " &
+        "(vibrator estimated ground force (20)) · Mass: trace 2 (vibrator baseplate " &
+        "(19)) · Baseplate: trace 3 (vibrator reaction mass (18)) — from the trace " &
         "identification codes", line
       st.swap(w)
-      doAssert st.plots[w].params.roles.places == (0, 3, 1, 2)
+      doAssert st.plots[w].params.roles.places == (0, 3, 2, 1)
       doAssert st.plots[w].params.roles.source == rsHand
       doAssert st.vibRolesLine(st.plots[w]).endsWith("chosen by hand")
       st.apply Command(kind: ckClosePlot, plot: st.plots[w].id)
@@ -85,7 +85,7 @@ proc main*() =
       doAssert st.settle(st.inProject)
       let w = st.open(fx.vibFourAgainSegy())
       let r = st.plots[w].params.roles
-      doAssert r.places == (0, 3, 1, 2) and r.source == rsRemembered, $r
+      doAssert r.places == (0, 3, 2, 1) and r.source == rsRemembered, $r
       doAssert st.vibRolesLine(st.plots[w]).endsWith("remembered for this file layout")
       st.apply Command(kind: ckClosePlot, plot: st.plots[w].id)
       # another layout, and the thirteen-trace one: the codes' roles, the swap not applied
@@ -95,7 +95,7 @@ proc main*() =
       # (codes 21, 18, 19, 20: mass is trace 2 and baseplate trace 3 by the codes)
       st.apply Command(kind: ckClosePlot, plot: st.plots[o].id)
       let t = st.open(fx.vibThirteenSegy())
-      doAssert st.plots[t].params.roles.places == (0, 3, 2, 1) and
+      doAssert st.plots[t].params.roles.places == (0, 3, 1, 2) and
         st.plots[t].params.roles.source == rsCodes, $st.plots[t].params.roles
       doAssert st.plots[t].traces.len == 13, "every trace of the record can be picked"
       doAssert st.vibTraceNames(st.plots[t])[4] == "trace 5 · code 29 (not in the standard)",
@@ -109,7 +109,7 @@ proc main*() =
         origin: coWindow)
       doAssert st.settle(not st.plots[a].waiting)
       doAssert st.plots[a].params.roles.source == rsCodes and
-        st.plots[a].params.roles.places == (0, 3, 2, 1)
+        st.plots[a].params.roles.places == (0, 3, 1, 2)
       st.apply Command(kind: ckClosePlot, plot: st.plots[a].id)
       st.apply Command(kind: ckCloseProject)
       doAssert st.settle(not st.inProject)
@@ -137,7 +137,7 @@ proc main*() =
       var back = initAppState()
       back.keepSettingsIn(dir2, loadSettings(dir2 / "settings.nif"))
       let v = back.open(fx.vibFourAgainSegy())
-      doAssert back.plots[v].params.roles.places == (0, 3, 1, 2) and
+      doAssert back.plots[v].params.roles.places == (0, 3, 2, 1) and
         back.plots[v].params.roles.source == rsRemembered, $back.plots[v].params.roles
       discard back.shutdown()
 

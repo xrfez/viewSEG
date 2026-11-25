@@ -538,7 +538,7 @@ proc drawMassesGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32
         names[p.roles.baseplate] & ". For a converter's SEG-Y file these are its reaction-" &
         "mass and baseplate weights, which undo the converter's scaling" &
         (if st.vibConverter(w): ", and its code 19 trace is the reaction mass's channel " &
-          "(Swap mass and baseplate in Roles if the masses are the wrong way round)"
+          "(the roles are set that way; Swap mass and baseplate in Roles turns them)"
         else: "") & ".", t)
       marks.mark(name & ".masses traces")
   label("Reaction mass")

@@ -55,7 +55,7 @@ proc main*() =
       doAssert w.traces.len == 16 and w.traces[0] == base and w.traces[3] == base + 3, $w.traces
       let r = w.params.roles
       doAssert r.source == rsCodes and
-        (r.reference, r.groundForce, r.mass, r.baseplate) == (0, 3, 2, 1), $r
+        (r.reference, r.groundForce, r.mass, r.baseplate) == (0, 3, 1, 2), $r
       discard st.shutdown()
   echo "tvibreview: ok"
 
