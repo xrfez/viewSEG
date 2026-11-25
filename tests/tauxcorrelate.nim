@@ -520,6 +520,77 @@ proc main*() =
     doAssert readProject(projectDocument(st.project.doc), "p", problems).auxMarks ==
       @[mark(1, 500.0)]
     discard st.shutdown()
+
+  withFixtures fz:
+    ## Marks that come to a file after its correlated view was asked for: those remembered
+    ## with the file, when it opens again with Correlate on, and those of an imported list.
+    let src = fz.dir / "again.sgy"
+    let list = fz.dir / "marks.nif"
+    writeRecords(src, one)
+    proc derivedTrace(st: AppState; t: int): seq[float32] =
+      for i in countdown(st.sessions.high, 0):
+        if st.sessions[i].derived: return samplesOf(st.sessions[i].filePtr[], t)
+    proc rawTrace(st: AppState; t: int; len: int): seq[float32] =
+      samplesOf(st.sessions.filterIt(not it.derived)[0].filePtr[], t)[0 ..< len]
+    proc quiet(st: var AppState; secs: float) =
+      let t0 = epochTime()
+      while epochTime() - t0 < secs:
+        discard st.drainInbox(); st.persist(); sleep(20)
+    proc started(config: string): AppState =
+      result = initAppState(watchEvery = initDuration(hours = 1))
+      var settings = result.settings
+      settings.files.prepareNext = false
+      result.apply Command(kind: ckSettings, settings: settings)
+      result.rememberFilesIn(config)
+      doAssert result.settle(result.referencesLoaded), "the archive was not read"
+    var refId = ""
+    block remembered:
+      var st = started(fz.dir / "config")
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: src)
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+      st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: "short",
+        trace: st.sessions[0].base, fromMs: 0, toMs: 100))
+      doAssert st.settle(st.references.entries.anyIt(it.name == "short"))
+      for e in st.references.entries:
+        if e.name == "short": refId = e.id
+      st.apply Command(kind: ckSelectReference, refId: refId)
+      st.apply Command(kind: ckFileAuxMark, auxFile: src, auxPosition: 1, auxMarked: amMarked,
+        auxShiftMs: 500.0)
+      st.apply Command(kind: ckExportEdits, panel: MainPanel, listPath: list)
+      doAssert st.settle(fileExists(list)), "the marks were not exported"
+      st.quiet(2.0)
+      discard st.shutdown()
+    block reopened:
+      var st = started(fz.dir / "config")
+      st.apply Command(kind: ckSelectReference, refId: refId)
+      st.apply Command(kind: ckCorrelate, panel: MainPanel, correlate: true)
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: src)
+      doAssert st.settle(st.sessions.anyIt(it.derived) and not st.correlating and
+        st.editsAt(src).auxMarks == @[mark(1, 500.0)]),
+        "the file's marks did not come back with it"
+      st.quiet(1.0)
+      let derived = st.derivedTrace(3)
+      doAssert derived != st.rawTrace(3, derived.len),
+        "the view made when the file opened ignored its remembered mark"
+      discard st.shutdown()
+    block imported:
+      var st = started(fz.dir / "config2")
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: src)
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+      st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: "short",
+        trace: st.sessions[0].base, fromMs: 0, toMs: 100))
+      doAssert st.settle(st.references.entries.anyIt(it.name == "short"))
+      for e in st.references.entries:
+        if e.name == "short": st.apply Command(kind: ckSelectReference, refId: e.id)
+      st.apply Command(kind: ckCorrelate, panel: MainPanel, correlate: true)
+      doAssert st.settle(st.sessions.anyIt(it.derived) and not st.correlating)
+      let before = st.derivedTrace(3)
+      sameSamples(before, st.rawTrace(3, before.len), "no mark yet")
+      st.apply Command(kind: ckImportEdits, panel: MainPanel, listPath: list)
+      doAssert st.settle(st.editsAt(src).auxMarks == @[mark(1, 500.0)] and
+        not st.correlating and st.derivedTrace(3) != before),
+        "the imported mark did not reach the correlated view"
+      discard st.shutdown()
   echo "tauxcorrelate: ok"
 
 when isMainModule:

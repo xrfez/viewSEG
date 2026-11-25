@@ -5299,11 +5299,15 @@ proc stampEdits(state: var AppState; s: Session) =
         break
   state.editStamps[s.diskPath] = (size, modified)
 
+proc askCorrelateAgain(state: var AppState; path: string)
+
 proc editsChanged(state: var AppState; path: string; step = EditStep(kind: skChange)) =
   ## The panels that show the file at `path` follow its edits: its polarity
   ## reversed or not as a whole, and their view's tiles made again when
   ## `step` changed a trace of the gather they show (any step when it is
-  ## `skChange` with no traces: what is remembered came).
+  ## `skChange` with no traces: what is remembered came). A step that moved an auxiliary
+  ## mark (or any step of that kind, as what is remembered came) asks for the correlated
+  ## view again, which is a no-op when the marks it is made with are the same.
   template e: untyped = state.editsAt(path)
   let any = step.kind == skChange and step.traces.len == 0
   for j in 0 ..< state.panels.len:
@@ -5317,6 +5321,7 @@ proc editsChanged(state: var AppState; path: string; step = EditStep(kind: skCha
         state.resample(j, relevel = relevel)
       elif any or step.changedIn(traces):
         state.resample(j, relevel = relevel)
+  if any or step.auxOn.len > 0 or step.auxOff.len > 0: state.askCorrelateAgain(path)
 
 proc sayNotYetRemembered(state: var AppState; i: int) =
   ## Says once, when the user edits `remembered[i]`'s file before its
@@ -10577,8 +10582,6 @@ proc goToGather(state: var AppState; cmd: Command) =
   elif cmd.gather != shown.gather:
     state.show(cmd.panel, shown.file, cmd.gather)
 
-proc askCorrelateAgain(state: var AppState; path: string)
-
 proc editTraces(state: var AppState; cmd: Command) =
   ## `ckEdit`, `ckReverseAll`, `ckUndoEdit`, `ckRedoEdit`, `ckClearEdits`
   ## on the file `cmd.panel` shows: a step of its history, kept with the
@@ -10697,8 +10700,6 @@ proc editTraces(state: var AppState; cmd: Command) =
     if keep and at >= 0:
       state.hashFile(at) # its document will name every byte
       state.sayNotYetRemembered(at)
-    if changed.auxOn.len > 0 or changed.auxOff.len > 0:
-      state.askCorrelateAgain(s.diskPath) # an undo, redo or clear moved a mark
 
 # ---------------------------------------------------------------- changes --
 
@@ -11001,10 +11002,11 @@ const
     ## said when a project's auxiliary mark is set with no project open
 
 proc askCorrelateAgain(state: var AppState; path: string) =
-  ## A mark in force for the file at `path` changed: the correlated view of it on show, if
-  ## any, is asked for again, as a change of the reference is.
+  ## A mark in force for the file at `path` changed: the correlated view of it on show, or
+  ## the one being made, if any, is asked for again, as a change of the reference is.
   let oi = state.originIndex(path)
-  if oi >= 0 and state.correlateOn and state.derivedShown(state.sessions[oi].diskPath):
+  if oi >= 0 and state.correlateOn and (state.derivedShown(state.sessions[oi].diskPath) or
+      (not state.correlate.isNil and state.correlate.origin == state.sessions[oi].diskPath)):
     state.startCorrelate(oi, keepView = true)
 
 func auxMarkWords(position: int; state: AuxMarkState; ms: float64): string =
@@ -11044,7 +11046,6 @@ proc fileAuxMark(state: var AppState; cmd: Command) =
     if keep and at >= 0:
       state.hashFile(at)
       state.sayNotYetRemembered(at)
-    state.askCorrelateAgain(s.diskPath)
 
 proc projectAuxMark(state: var AppState; cmd: Command) =
   ## `ckProjectAuxMark`: the mark of an auxiliary position for every file of the project open,
