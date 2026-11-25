@@ -278,6 +278,10 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     mb = poAsRecorded
     if forceNote.len == 0: said.add "M and B as recorded (their automatic polarity is decided from the force " &
       "they make: it needs both, and both masses)"
+  if signature and made:
+    # the ground force the user's polarity choice reverses is the one judged: a signature file's
+    # made one takes it too (its M and B have no polarity of their own), so both choices agree
+    mb = unit.polarity[vsGroundForce]
   unit.polarity[vsMass] = mb
   unit.polarity[vsBaseplate] = mb
   var results: seq[UnitSignature[float32]] = @[]

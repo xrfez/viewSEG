@@ -16,7 +16,8 @@
 ##   says why it is not made and the recorded ground force is judged;
 ## - each made signal has its own 100 % force: not set, the force limits are not judged.
 ##
-## Seen to fail: with `vibratorOf` ignoring `roles.judge` for a signature file, the `.dat` and
+## Seen to fail: with the made signal of a signature file left out of the user's polarity, the
+## `.dat` and `.vib` blocks found the made phase 180 degrees from the recorded; with `vibratorOf` ignoring `roles.judge` for a signature file, the `.dat` and
 ## `.vib` blocks found no second signal; with the made signal's weights not scaled by the
 ## window's force scale the scaled block read another ground force; with the typed masses
 ## multiplying the roles' traces the other way round, the converter block's correlation fell
@@ -192,6 +193,22 @@ proc signatureBlocks() =
       # numbers are the same unit for both)
       doAssert abs(meanForce(scaled, "GF (M, B)") / meanForce(scaled, "GF") - 1) < 2e-3,
         kind & ": " & $scaled.table
+      # the user's ground force polarity applies to the ground force judged, made or recorded:
+      # the two choices agree with either polarity, and the choice is not lost on the way
+      var phases: array[Polarity, float64]
+      for pol in [poAsRecorded, poReversed]:
+        p.roles.groundForcePolarity = pol
+        p.roles.judge = joRecorded
+        st.change(w, p)
+        let inRecord = st.plots[w].result.qc.stats.avgPhaseDeg
+        p.roles.judge = joWeighted
+        st.change(w, p)
+        let made = st.plots[w].result.qc.stats
+        doAssert abs(made.avgPhaseDeg - inRecord) < 0.5,
+          kind & " " & $pol & ": " & $(inRecord, made.avgPhaseDeg)
+        phases[pol] = made.avgPhaseDeg
+      doAssert abs(phases[poAsRecorded] - phases[poReversed]) > 90,
+        kind & ": reversing changed nothing: " & $phases
       st.shutdown()
 
 proc converterFileBlock() =
