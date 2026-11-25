@@ -560,10 +560,12 @@ const
   actualTip = "Off by default. The fold of the traces recorded in the seismic files the Files " &
     "window lists (its subfolders' files when it includes them), over the same bins as the " &
     "pre-plot fold. Each trace is counted once, at the midpoint of its source and receiver " &
-    "(the project's survey and station moves applied in memory; the files are not changed); " &
+    "(the map's survey and the station moves applied in memory; the files are not changed); " &
     "traces that are not live, that you killed, that have no positions or that fall outside " &
-    "the grid are left out and counted. One fold layer is drawn at a time: ticking one " &
-    "unticks the others."
+    "the grid are left out and counted. A file reached twice through a link is counted once, " &
+    "but copies of one recording in the folder (a converted copy beside its original) are " &
+    "counted twice. Files are read with the default options, also one opened with Reopen " &
+    "with options. One fold layer is drawn at a time: ticking one unticks the others."
   differenceTip = "Off by default. The pre-plot fold less the recorded fold, per bin: " &
     "positive is short of the plan (blue), negative is more than planned (red), 0 is white. " &
     "The files are those of the recorded fold layer. One fold layer is drawn at a time: " &

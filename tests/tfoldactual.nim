@@ -10,7 +10,9 @@
 ## - The count is the same on 1, 2, 4 and 8 item threads.
 ## - A file that gives no positions and that the survey does not place is reported, not
 ##   dropped; when all of them are, the layer says so and holds no counts; a file that cannot
-##   be read is skipped with its reason.
+##   be read is skipped with its reason; a recording of receivers alone is said to have no
+##   source positions, and every trace outside the grid is said as the reason; a file listed
+##   twice (a link to a file of a subfolder) is counted once, and the totals say so.
 ## - The key names the files, their sizes, the edits and the moves: a file added, a kill or
 ##   a move gives another key; the follower keeps the recorded fold and the difference of one
 ##   count (switching between them starts no job) and keeps at most three results.
@@ -36,7 +38,10 @@
 ## another" failed. With no part lent, "a file added: only it is read" found all 6 read; with
 ## the map dropped at every new count, "the last map stays" failed; with the time of the file
 ## in whole seconds, "a file changed: only it is read" found none read; with a count cancelled
-## when the files change, "a count of the same grid is not cancelled" failed.
+## when the files change, "a count of the same grid is not cancelled" failed; before the
+## reasons were told apart, the receivers-only file was "gives no source or receiver
+## positions" and the far file an empty map; with no look for files listed twice, the linked
+## files were counted twice (8 files).
 
 import std/[algorithm, atomics, locks, math, os, sequtils, strutils, tables]
 import parseSEG
@@ -64,11 +69,13 @@ proc readStations(): tuple[sources, receivers: Table[(int, int), Spot]] =
       result.receivers[(int(parseFloat(t[1])), int(parseFloat(t[2])))] =
         (parseFloat(t[4]), parseFloat(t[5]))
 
-proc shotFile(path: string; shot: int; coordinates: bool; dead = -1; stationless = false) =
+proc shotFile(path: string; shot: int; coordinates: bool; dead = -1; stationless = false;
+    receiversOnly = false; scale = 1.0) =
   ## Shot `shot` (1 to 6) of the sample: 96 traces, one per receiver, with the station numbers
-  ## and, with `coordinates`, the positions in the headers. Trace `dead` (0-based) is marked
-  ## dead; `stationless` leaves the stations and coordinates out and gives the record a number
-  ## the X records do not list, so the survey cannot place it either.
+  ## and, with `coordinates`, the positions in the headers (times `scale`). Trace `dead`
+  ## (0-based) is marked dead; `stationless` leaves the stations out and gives the record a
+  ## number the X records do not list, so the survey cannot place it either; `receiversOnly`
+  ## is that with the receivers' stations and positions alone (a recording with no source).
   let table = readStations()
   var w = openSeismicWriter(path, SegyOutputOptions(traceSorting: 1, measurementSystem: 2))
   var ch = 0
@@ -76,14 +83,16 @@ proc shotFile(path: string; shot: int; coordinates: bool; dead = -1; stationless
     for point in 101 .. 148:
       inc ch
       var k = initTraceKeys()
-      k.record = float64(if stationless: 9000 + shot else: shot)
+      k.record = float64(if stationless or receiversOnly: 9000 + shot else: shot)
       k.channel = float64(ch)
       if not stationless:
-        (k.srcLine, k.srcPoint, k.srcIndex) = (2001.0, float64(100 + shot), 1'i16)
+        if not receiversOnly:
+          (k.srcLine, k.srcPoint, k.srcIndex) = (2001.0, float64(100 + shot), 1'i16)
         (k.rcvLine, k.rcvPoint, k.rcvIndex) = (float64(line), float64(point), 1'i16)
-        if coordinates:
-          let (s, r) = (table.sources[(2001, 100 + shot)], table.receivers[(line, point)])
-          (k.srcX, k.srcY, k.rcvX, k.rcvY) = (s.x, s.y, r.x, r.y)
+      if coordinates:
+        let (s, r) = (table.sources[(2001, 100 + shot)], table.receivers[(line, point)])
+        if not receiversOnly: (k.srcX, k.srcY) = (s.x * scale, s.y * scale)
+        (k.rcvX, k.rcvY) = (r.x * scale, r.y * scale)
       (k.intervalUs, k.status) = (2000.0, if ch - 1 == dead: tsDead else: tsLive)
       w.writeTrace(k, @[0'f32, 0, 0, 0])
   doAssert w.close().len == 0, "shot file was not written: " & path
@@ -267,6 +276,44 @@ proc main*() =
         none.result.reason, none.result.reason
       let nothing = st.count(inputsOf(@["gone.sgy"]))
       doAssert not nothing.result.ok and "could be read" in nothing.result.reason
+      # receivers alone (a continuous recording): no source positions, so no fold
+      let receivers = fx.dir / "receivers.sgy"
+      shotFile(receivers, 1, coordinates = true, receiversOnly = true)
+      let lone = st.count(inputsOf(@[receivers]))
+      doAssert not lone.result.ok and lone.result.reason == "None of the 1 file gives source " &
+        "positions (a recording of receivers alone, as a continuous one is), so they have no " &
+        "fold.", lone.result.reason
+      # every trace outside the grid: said as the reason, not an empty map
+      let far = fx.dir / "far.sgy"
+      shotFile(far, 1, coordinates = true, stationless = true, scale = 0.3048)
+      let away = st.count(inputsOf(@[far]))
+      doAssert not away.result.ok and away.result.reason == "Every trace fell outside the " &
+        "grid: the files' coordinates may be in another unit or frame than the survey.",
+        away.result.reason & " " & $(away.result.outside, away.result.binned)
+
+    block linkedTwice:
+      # links to files of a subfolder, listed with the subfolders: each file counted once (a
+      # linked folder is not listed into)
+      let top = fx.dir / "top"
+      createDir top / "sub"
+      for s in 1 .. 6: shotFile(top / "sub" / ("shot" & $s & ".sgy"), s, coordinates = false)
+      createSymlink(top / "sub", top / "alias")
+      for s in 1 .. 2:
+        createSymlink(top / "sub" / ("shot" & $s & ".sgy"), top / ("link" & $s & ".sgy"))
+      var l = initAppState()
+      doAssert l.loaded(Land & ".s", Land & ".r", Land & ".x")
+      doAssert l.folder(top)
+      l.apply Command(kind: ckSubfolders, subfolders: true)
+      doAssert l.settle(not l.fileList.scanning and l.fileList.recursive)
+      let inp = actualInputs(l)
+      doAssert inp.files.len == 8, "the links are listed too: " & $inp.files.len
+      let once = l.count(inp)
+      doAssert once.result.ok and once.result.files == 6 and once.result.duplicates == 2 and
+        once.result.counts == planned, "a file reached through a link is counted twice: " &
+        $(once.result.files, once.result.duplicates)
+      doAssert "2 files are listed twice (through a link) and counted once." in
+        once.result.totalsText("ft"), once.result.totalsText("ft")
+      discard l.shutdown()
 
     block cancel:
       let inp = foldInputs(st.survey, NaN, NaN, fkActual, inputsOf(files))

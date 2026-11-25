@@ -111,7 +111,7 @@ type
     planned*: seq[int32]
       ## actual and difference only: the pre-plot count of each bin, `counts` is then the
       ## recorded count or planned less recorded
-    files*, traces*, notLive*, killed*, unplaced*: int
+    files*, traces*, notLive*, killed*, unplaced*, duplicates*: int
       ## actual and difference only: files read, traces in them, left out as not live and as
       ## killed, and files that gave no position
     skipped*: seq[tuple[path, why: string]] ## files that could not be read
@@ -470,6 +470,7 @@ proc foldWork*(inp: FoldInputs; sink: FoldSink): JobWork =
             (r.files, r.traces, r.notLive, r.killed, r.unplaced, r.skipped) =
               (tally.files, tally.traces, tally.notLive, tally.killed, tally.unplaced,
                tally.skipped)
+            r.duplicates = tally.duplicates
             (r.binned, r.outside, r.noCoordinates) = (tally.binned, tally.outside,
               tally.noCoordinates)
             r.otherSurvey = files.otherSurvey
@@ -479,9 +480,17 @@ proc foldWork*(inp: FoldInputs; sink: FoldSink): JobWork =
               else: "None of the " & plural(files.files.len, "file") & " could be read."
             made.actual = FoldResult(kind: fkActual, reason: why)
             made.difference = FoldResult(kind: fkDifference, reason: why)
-          elif tally.unplaced == tally.files:
-            let why = "None of the " & plural(tally.files, "file") & " gives source or " &
-              "receiver positions, and the survey does not place them."
+          elif tally.unplaced == tally.files or (tally.binned == 0 and tally.outside > 0):
+            let why =
+              if tally.unplaced < tally.files:
+                "Every trace fell outside the grid: the files' coordinates may be in another " &
+                  "unit or frame than the survey."
+              elif tally.noSource == tally.noCoordinates:
+                "None of the " & plural(tally.files, "file") & " gives source positions (a " &
+                  "recording of receivers alone, as a continuous one is), so they have no fold."
+              else:
+                "None of the " & plural(tally.files, "file") & " gives source or receiver " &
+                  "positions, and the survey does not place them."
             made.actual = FoldResult(kind: fkActual, reason: why)
             made.difference = FoldResult(kind: fkDifference, reason: why)
           if kind == fkActual: (res, other) = (made.actual, made.difference)

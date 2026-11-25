@@ -115,6 +115,9 @@ func totalsText*(r: FoldResult; unit: string): string =
       result.add " " & plural(r.unplaced, "file") & " give no source or receiver positions " &
         "and the survey does not place them."
     if r.skipped.len > 0: result.add " " & plural(r.skipped.len, "file") & " could not be read."
+    if r.duplicates > 0:
+      result.add " " & plural(r.duplicates, "file") & (if r.duplicates == 1: " is" else: " are") &
+        " listed twice (through a link) and counted once."
     if r.otherSurvey:
       result.add " The survey on the map, not the project's stored one, placed the traces."
     result.add " Bins " & sizeText(r.binAlong) & " x " & sizeText(r.binAcross) & " " & unit &

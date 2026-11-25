@@ -1249,7 +1249,15 @@ says so. Left out, and counted in the line under the ticks: traces
 that are not live (dead or auxiliary), traces you killed, traces with no coordinates and no
 midpoint, and traces outside the grid. A file that gives no source or receiver positions, and
 that the survey does not place, is named in that line; when no file gives any, the layer says
-so and draws nothing; a file that cannot be read is skipped with its reason. The legend is
+so and draws nothing (a recording of receivers alone, as a continuous one is, has no source
+positions and so no fold, and the layer says that), and when every trace falls outside the
+grid it says the files' coordinates may be in another unit or frame than the survey; a file
+that cannot be read is skipped with its reason. A file listed twice (a link to a file of a
+subfolder) is counted once and the line says so; copies of one recording in the folder (a
+converted copy beside its original) are different files and are counted twice. Each file is
+read with the default options: one opened with **Reopen with options** is counted as the
+defaults read it. A file changed is counted again even within the same second (its time is
+compared as finely as the file system gives it). The legend is
 titled "Actual fold" (0 to the highest fold, Viridis), and the description of a bin adds
 "recorded 10 (planned 12) at inline 3, crossline 41". **Fold difference** draws the pre-plot
 fold less the recorded fold in each bin: red to white to blue, centred on 0 (white: as

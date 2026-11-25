@@ -19,7 +19,9 @@
 ## own tallies and the bins it fills, as a sparse list in bin order); the job's thread adds
 ## them into the one dense count in file order, so the counts are the same on any number of
 ## threads. The survey and the inputs are reached read-only through pointers the job keeps
-## alive until every item has returned; no `ref` is shared between threads. A file that cannot
+## alive until every item has returned; no `ref` is shared between threads. A file listed twice
+## (the same file reached through a linked folder) is counted once; copies of one recording
+## (a converted copy beside its original) are two files, and counted twice. A file that cannot
 ## be read or has no keys is skipped with the reason and the count goes on; a file that gives
 ## no positions and that the survey does not place is counted as such (`unplaced`), not
 ## dropped silently. A cancel stops the count and leaves nothing.
@@ -68,15 +70,18 @@ type
     ## What reading one file came to. `skip`: the file could not be read, or has no keys.
     skip*: string
     traces*, notLive*, killed*, noCoordinates*, outside*, binned*: int
+    noSource*: int             ## of `noCoordinates`: a receiver position and no source
     unplaced*: bool
       ## the file has live traces and none has a position: the survey did not place them
     bins*, counts*: seq[int32] ## the bins the file fills, ascending, and its traces in each
 
   ActualTally* = object
     ## What the count came to over all the files.
-    files*: int    ## files read
+    files*: int      ## files read
     traces*, notLive*, killed*, noCoordinates*, outside*, binned*: int
-    unplaced*: int ## files read that gave no position
+    noSource*: int   ## of `noCoordinates`: a receiver position and no source
+    unplaced*: int   ## files read that gave no position
+    duplicates*: int ## files listed twice (one reached through a link), counted once
     skipped*: seq[tuple[path, why: string]]
 
   ActualItems = object
@@ -92,11 +97,13 @@ func finite(x: float64): bool {.inline.} = x.classify notin {fcNan, fcInf, fcNeg
 
 func binOfTrace(grid: Binning; k: TraceKeys): int {.inline.} =
   ## The bin of trace `k`, -1 when it falls in none, -2 when it has no midpoint and no
-  ## source and receiver coordinates (what the library's `addFold` decides).
+  ## source and receiver coordinates (what the library's `addFold` decides), -3 when of those
+  ## it has the receiver's alone.
   var (x, y) = (k.cmpX, k.cmpY)
   if not (finite(x) and finite(y)):
-    if not (finite(k.srcX) and finite(k.srcY) and finite(k.rcvX) and finite(k.rcvY)):
-      return -2
+    let receiver = finite(k.rcvX) and finite(k.rcvY)
+    if not (finite(k.srcX) and finite(k.srcY) and receiver):
+      return if receiver and not (finite(k.srcX) or finite(k.srcY)): -3 else: -2
     (x, y) = ((k.srcX + k.rcvX) * 0.5, (k.srcY + k.rcvY) * 0.5)
   grid.binAt(x, y)
 
@@ -149,7 +156,9 @@ proc readActual(it: ItemContext; a: ptr ActualItems; k: int): ActualPart {.nimca
             elif nextKill < f.kills.len and f.kills[nextKill] == at: inc result.killed
             else:
               let bin = a.grid.binOfTrace(keys[j])
-              if bin == -2: inc result.noCoordinates
+              if bin <= -2:
+                inc result.noCoordinates
+                if bin == -3: inc result.noSource
               elif bin < 0: inc result.outside
               else:
                 inc result.binned
@@ -185,6 +194,7 @@ proc add(tally: var ActualTally; raw: ptr UncheckedArray[int32]; path: string;
   tally.notLive += r.notLive
   tally.killed += r.killed
   tally.noCoordinates += r.noCoordinates
+  tally.noSource += r.noSource
   tally.outside += r.outside
   tally.binned += r.binned
   for k, bin in r.bins: raw[bin] += r.counts[k]
@@ -202,8 +212,18 @@ proc countActual*(ctx: JobContext; inp: ptr ActualInputs; known: openArray[ptr A
   ## caller drops it.
   let total = inp.files.len
   var args = ActualItems(inp: inp, survey: survey, grid: grid)
+  # a file reached twice (a linked folder among the subfolders) is counted once
+  ctx.setPhase "looking for files listed twice"
+  var twice = newSeq[bool](total)
+  var seen = initHashSet[string]()
   for i in 0 ..< total:
-    if i >= known.len or known[i].isNil: args.order.add i
+    if i mod 256 == 0: ctx.checkCancelled()
+    var real = inp.files[i].path
+    try: real = fs.expandFilename(real)
+    except OSError: discard
+    if seen.containsOrIncl(real): twice[i] = true
+  for i in 0 ..< total:
+    if not twice[i] and (i >= known.len or known[i].isNil): args.order.add i
   let reads = args.order.len
   ctx.setPhase "counting " & $reads & (if reads == 1: " file" else: " files")
   var sizes = newSeq[int64](reads)
@@ -224,7 +244,8 @@ proc countActual*(ctx: JobContext; inp: ptr ActualInputs; known: openArray[ptr A
   var cells = actual.fold # the map's own counts (a tensor shares its storage)
   let raw = cast[ptr UncheckedArray[int32]](cells.unsafe_raw_offset(aligned = false))
   for i in 0 ..< total:
-    if i < known.len and not known[i].isNil: result.add(raw, inp.files[i].path, known[i][])
+    if twice[i]: inc result.duplicates
+    elif i < known.len and not known[i].isNil: result.add(raw, inp.files[i].path, known[i][])
     else: result.add(raw, inp.files[i].path, got[i])
   fresh = move got
 
