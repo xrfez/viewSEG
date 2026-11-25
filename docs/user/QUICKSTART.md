@@ -1784,7 +1784,7 @@ that does not name Units loads as Metric.
 | Wide plot, Side by side, Plot and map | the presets that ship with viewSEG |
 | Load, Save layout as..., Import layout..., Export layout... | your own layouts: saved under a name, loaded again, written to a file and read from one |
 
-The **View** menu ticks each window (Seismic, Files, Records, Map, Headers, Jobs, Messages, Spectrum, Aux, Missing traces, Trace quality, Vibrator QC, Output, Import survey, Shot log): a click on a window in sight hides it, on one hidden (or behind another tab) shows it in front; the Seismic window is always shown. A window's close button (the X on its tab or in its title bar) does the same as unticking it here, and its entry brings it back. It also holds the theme.
+The **View** menu ticks each window (Seismic, Files, Records, Map, Headers, Jobs, Messages, Spectrum, Aux, Missing traces, Trace quality, Vibrator QC, Output, Imported Survey, Shot log): a click on a window in sight hides it, on one hidden (or behind another tab) shows it in front; the Seismic window is always shown. A window's close button (the X on its tab or in its title bar) does the same as unticking it here, and its entry brings it back. It also holds the theme.
 
 A layout saved before a window existed (before the map came, say) docks that window beside
 its neighbours, and shows it. A window a layout puts off every screen (left on a monitor

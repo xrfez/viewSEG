@@ -490,7 +490,7 @@ proc drawNewPlot(input: MenuInput; res: var MenuResult) =
     igEndMenu()
 
 proc drawWindowTicks(input: MenuInput; res: var MenuResult) =
-  ## View's window ticks: each window, then Import survey and Shot log.
+  ## View's window ticks: each window, then Imported Survey and Shot log.
   igSeparatorText("Windows")
   for w in AppWindow:
     let name = if w == awSeismic and input.seismicName.len > 0: input.seismicName
@@ -501,7 +501,7 @@ proc drawWindowTicks(input: MenuInput; res: var MenuResult) =
     tip(if w in AlwaysShown: "Always shown: a click brings it forward"
         else: "Ticked while shown. A click shows it in front when it is hidden or behind " &
           "another tab, and hides it when it is in sight")
-  if igMenuItem_Bool((IconSurvey & "  Import survey").cstring, nil, input.joinShown, true):
+  if igMenuItem_Bool((IconSurvey & "  Imported Survey").cstring, nil, input.joinShown, true):
     res.toggleJoin = true
   if marked != nil: marked[].mark("menu.window.join")
   tip("Ticked while open: a click opens it in front, or closes it")
