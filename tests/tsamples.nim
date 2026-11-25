@@ -313,18 +313,15 @@ proc checkSet(ss: SetSpec; scratch: string) =
       scanMissing(dir / "shots", paths, relations, sink))
     let r = sink.result
     doAssert r.ok, r.reason
-    let t = r.report.totals
+    let t = r.shot.stats
     doAssert t.files == SetShots and t.records == SetShots, $t
-    doAssert t.expected == SetShots * SetReceivers and t.missing == 2 and
-      t.present == SetShots * SetReceivers - 2, $t
-    doAssert t.duplicates == 0 and t.extras == 0 and t.xpsWithoutData.len == 0, $t
-    doAssert r.report.points.len == 2, "stations missing: " & $r.report.points.len
-    for i, p in r.report.points:
-      doAssert p.line == 20 and p.point == float64([1004, 1009][i]) and p.missingIn == 1, $p
-    doAssert r.report.records.len == SetShots
-    for row in r.report.records:
-      doAssert row.missing == (if row.file == "ffid_" & $(ss.ffid0 + SetMissingShot) & ".sgd":
-        2 else: 0), $row
+    doAssert t.expectedInRecords == SetShots * SetReceivers and t.missingInRecords == 2 and
+      t.presentInRecords == SetShots * SetReceivers - 2, $t
+    doAssert t.inTemplate == SetReceivers and t.missing == 2, $t
+    doAssert r.unmatched.len == 0 and r.skipped.len == 0, $r.unmatched
+    doAssert r.shot.rows.len == 2, "stations missing: " & $r.shot.rows.len
+    for i, p in r.shot.rows:
+      doAssert p.line == 20 and p.point == float64([1004, 1009][i]) and p.missing == 1, $p
 
   block missing_stations_are_the_x_records:
     for ext in [".sgd", ".sgy"]:
