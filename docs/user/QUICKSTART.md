@@ -1259,11 +1259,17 @@ changed**. The **Import survey** window goes in the order of the work:
   asks for a file (it starts at the X file's name with `.ops`), then writes, on a job, one
   gather per receiver station, its traces the source points that station recorded, in the X
   file's SPS revision and layout and with its H records. The O records are made from the
-  X records, also when the survey holds O records already. Messages says how many O
-  records, receivers, source points and pairs were written and what O records cannot hold
-  (a station's channels beyond its first component, X records without receiver stations;
-  none is left out unsaid). The file is new: one of the survey's own files, or an open file,
-  is refused and nothing is written over it; an existing file of another name is replaced.
+  X records, also when the survey holds O records already. With several X files, all of
+  them are used, and they give what one file of all their X records would: a shot point
+  shot again on another day is one more trace, as a repeat in one file is. When the
+  numbers do not fit the X file's SPS 1.0, the file is SPS 2.1. A receiver gather is never
+  cut in two: a receiver with more traces than SPS 2.1 numbers (99999) is named, and
+  nothing is written. Messages names the X files and says how many O records, receivers,
+  source points and pairs were written and what O records cannot hold (a station's
+  channels beyond its first component; stations of an X record whose channels an earlier
+  X record of the same shot gives; none is left out unsaid). The file is new: one of the
+  survey's own files, or an open file, is refused and nothing is written over it; an
+  existing file of another name is replaced.
   The file is not imported: add it with **Add files...** to use it.
 - **Seismic file**: the file whose traces the survey is matched to, the one the plot
   shows (or another open file), the units its headers give its coordinates in, and its
