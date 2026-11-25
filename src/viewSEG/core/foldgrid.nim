@@ -26,7 +26,9 @@
 import std/math
 import colourmaps, foldjobs, geometry, spatial
 
-const MinBinPixels* = 2.0 ## the smallest bin, in pixels, a level draws
+const
+  MinBinPixels* = 3.0 ## the smallest bin, in pixels, a level draws
+  MaxCells* = 4096    ## the most blocks a level has along either axis (a GPU texture's size)
 
 type
   FoldLevel* = object
@@ -62,10 +64,14 @@ func factorFor*(g: FoldGrid; perPixel: float64): int =
   ## The block size that makes the bins at least `MinBinPixels` wide on a
   ## screen showing `perPixel` map units a pixel: 1 when they are.
   result = 1
-  if g.res.isNil or not (perPixel > 0): return
+  if g.res.isNil: return
+  let pp = if perPixel > 0: perPixel else: 1e-300
   let bin = min(g.res.binAlong, g.res.binAcross)
   let most = max(g.res.inlines, g.res.crosslines)
-  while float64(result) * bin / perPixel < MinBinPixels and result < most: result *= 2
+  while (float64(result) * bin / pp < MinBinPixels and result < most) or
+      (g.res.crosslines + result - 1) div result > MaxCells or
+      (g.res.inlines + result - 1) div result > MaxCells:
+    result *= 2
 
 func levelIndex(factor: int): int =
   while (1 shl result) < factor: inc result
@@ -113,19 +119,52 @@ func foldText*(r: FoldResult; bin: int): string =
   "fold " & $r.counts[bin] & " (inline " & $(r.firstInline + float64(i)).int &
     ", crossline " & $(r.firstCrossline + float64(j)).int & ")"
 
-func visibleRows*(r: FoldResult; factor: int; area: Bounds): Slice[int] =
-  ## The block rows (of `factor`) the map area `area` can touch: the rows
-  ## spanned by its corners along the inline axis. Empty when none.
+type
+  FoldSpan* = tuple[row, first, last: int] ## blocks `first .. last` of block row `row`
+
+proc visibleSpans*(r: FoldResult; factor: int; area: Bounds; spans: var seq[FoldSpan]) =
+  ## The blocks (of `factor`) that map area `area` can touch, as one run of
+  ## blocks for each block row: the area's corners are turned into grid
+  ## coordinates, and each row's band is cut out of that rectangle, so a
+  ## rotated grid draws only the blocks along the diagonal of a zoomed view.
+  ## `spans` is emptied first; its room is kept from frame to frame.
+  spans.setLen 0
   let (ux, uy) = (sin(degToRad(r.azimuthDeg)), cos(degToRad(r.azimuthDeg)))
-  var lo, hi = 0.0
-  var first = true
-  for (x, y) in [(area.minX, area.minY), (area.maxX, area.minY), (area.minX, area.maxY),
-      (area.maxX, area.maxY)]:
-    let i = ((x - r.x0) * uy - (y - r.y0) * ux) / r.binAcross
-    if first or i < lo: lo = i
-    if first or i > hi: hi = i
-    first = false
-  let blocks = (r.inlines + factor - 1) div factor
-  let a = max(0, int(floor((lo + 0.5) / float64(factor))))
-  let b = min(blocks - 1, int(floor((hi + 0.5) / float64(factor))))
-  a .. b
+  var pu, pv: array[4, float64] # the corners in bins along and across
+  var k = 0
+  for (x, y) in [(area.minX, area.minY), (area.maxX, area.minY), (area.maxX, area.maxY),
+      (area.minX, area.maxY)]:
+    pu[k] = ((x - r.x0) * ux + (y - r.y0) * uy) / r.binAlong
+    pv[k] = ((x - r.x0) * uy - (y - r.y0) * ux) / r.binAcross
+    inc k
+  var (vLo, vHi) = (pv[0], pv[0])
+  for q in 1 .. 3:
+    vLo = min(vLo, pv[q])
+    vHi = max(vHi, pv[q])
+  let rows = (r.inlines + factor - 1) div factor
+  let cols = (r.crosslines + factor - 1) div factor
+  let first = max(0, int(floor((vLo + 0.5) / float64(factor))))
+  let last = min(rows - 1, int(floor((vHi + 0.5) / float64(factor))))
+  for row in first .. last:
+    let (b0, b1) = (float64(row * factor) - 0.5, float64((row + 1) * factor) - 0.5)
+    var (lo, hi) = (Inf, -Inf)
+    for e in 0 .. 3:
+      let (a, b) = (e, (e + 1) mod 4)
+      # the part of edge a-b with its v between b0 and b1
+      let dv = pv[b] - pv[a]
+      var (t0, t1) = (0.0, 1.0)
+      if dv == 0:
+        if pv[a] < b0 or pv[a] > b1: t0 = 2
+      else:
+        let (ta, tb) = ((b0 - pv[a]) / dv, (b1 - pv[a]) / dv)
+        t0 = max(t0, min(ta, tb))
+        t1 = min(t1, max(ta, tb))
+      if t0 <= t1:
+        for t in [t0, t1]:
+          let u = pu[a] + t * (pu[b] - pu[a])
+          lo = min(lo, u)
+          hi = max(hi, u)
+    if lo <= hi:
+      let c0 = max(0, int(floor((lo + 0.5) / float64(factor))))
+      let c1 = min(cols - 1, int(floor((hi + 0.5) / float64(factor))))
+      if c0 <= c1: spans.add (row, c0, c1)

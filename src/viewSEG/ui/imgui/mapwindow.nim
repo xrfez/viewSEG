@@ -199,6 +199,7 @@ type
     foldGrid: FoldGrid ## `fold.shown` with the levels made for it
     foldFor: int ## the `fold.revision` `foldGrid` is of
     foldBin: int ## the fold bin under the pointer; -1 for none
+    foldSpans: seq[FoldSpan] ## the runs of fold blocks the view touches (kept between frames)
     foldLabel: string ## the layer's line in the Layers popover, as drawn last
     foldBufs: tuple[along, across: array[24, char]]
     foldBufsFor: tuple[along, across: float64] ## the settings the text boxes show
@@ -1474,15 +1475,16 @@ proc foldFrame(mu: var MapUi; st: AppState; area: Bounds; perPixel: float64): Fo
     mu.foldGrid = initFoldGrid(r)
     mu.foldFor = mu.fold.revision
   let factor = mu.foldGrid.factorFor(perPixel)
-  let rows = r[].visibleRows(factor, area)
+  r[].visibleSpans(factor, area, mu.foldSpans)
   let key = mu.fold.revision * 64 + factor.countTrailingZeroBits + 1
-  if mu.renderer.foldKey != key:
-    mu.renderer.setFoldCells(key, mu.foldGrid.level(factor).colours)
   let l = mu.foldGrid.level(factor)
-  FoldDraw(on: rows.a <= rows.b, key: key, x0: r.x0, y0: r.y0, azimuthDeg: r.azimuthDeg,
+  if mu.renderer.foldKey != key:
+    mu.renderer.setFoldCells(key, l.cols, l.rows, l.colours)
+  let named = mu.renderer.setFoldSpans(mu.foldSpans)
+  FoldDraw(on: named.count > 0, key: key, x0: r.x0, y0: r.y0, azimuthDeg: r.azimuthDeg,
     binAlong: r.binAlong, binAcross: r.binAcross, crosslines: r.crosslines,
-    inlines: r.inlines, factor: factor, cols: l.cols, rows: l.rows, firstRow: rows.a,
-    rowCount: max(0, rows.b - rows.a + 1))
+    inlines: r.inlines, factor: factor, cols: l.cols, rows: l.rows, spans: named.count,
+    spansSum: named.sum)
 
 proc drawFoldLegend(mu: MapUi; pos, size: ImVec2_c; ink: MapInk; marks: var Marks) =
   ## The fold's colour bar in the plot's bottom-right corner: 0 to the highest fold.

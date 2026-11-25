@@ -28,7 +28,7 @@
 ## current. Objects are freed explicitly (`free`), never by a destructor.
 
 import std/math
-import ../core/[geometry, mapview, maplod, survey]
+import ../core/[foldgrid, geometry, mapview, maplod, survey]
 import density, gl, mapfold, textures
 export mapfold.FoldDraw
 
@@ -234,10 +234,15 @@ proc newMapRenderer*(): (MapRenderer, string) =
   r.ready = true
   (r, "")
 
-proc setFoldCells*(r: var MapRenderer; key: int; colours: openArray[uint32]) =
+proc setFoldCells*(r: var MapRenderer; key, cols, rows: int; colours: openArray[uint32]) =
   ## Gives the fold layer the colours of its blocks, named `key` (what
   ## `MapFrame.fold.key` says to draw).
-  r.fold.setCells(key, colours)
+  r.fold.setCells(key, cols, rows, colours)
+
+proc setFoldSpans*(r: var MapRenderer; spans: openArray[FoldSpan]): tuple[count, sum: int] =
+  ## The runs of fold blocks the next images draw (`FoldDraw.spans` and
+  ## `spansSum` are what this returns, so the frame notices a change).
+  r.fold.setSpans(spans)
 
 func foldKey*(r: MapRenderer): int {.inline.} = r.fold.key
   ## The name of the cells the fold layer holds (0 for none).

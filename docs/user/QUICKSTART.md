@@ -1137,6 +1137,21 @@ receiver. With no relation file loaded, give the template there (lines × statio
 distance box along and across the receiver lines): the spreads are generated from it and
 the box says **Generated**.
 
+Under the Preplot, **Pre-plot fold** (off until you tick it; dim, with the reason, when the
+survey has no relation (X) records or no stations with coordinates) draws a heat map of the
+fold the survey planned: for each bin of a grid laid on the midpoints of the source and receiver
+pairs the X records list, how many pairs fall in it, from none (left clear) to the highest
+fold in the Viridis colours, under the points, with a legend in the bottom-right corner. The
+grid follows the receiver lines; its bin is half the receiver interval along them by half the
+source interval across them, unless you type a size under **Bin along the receiver lines** or
+**Bin across them** (in the survey's unit; empty is the natural bin), which counts again.
+It is counted in the background ("computing" beside the tick) and kept for a bin size you
+used before, until the survey files change. Under the tick: how many pairs fell in how many
+bins, the highest fold, the pairs outside the grid (a station far from the rest) and those
+without coordinates. Point at a bin and the description adds "fold 12 (inline 3, crossline
+41)". Zoomed far out, a block of bins is drawn as one, in the highest fold of the block.
+A size that would make too many bins is refused with a sentence, not counted.
+
 Under the Recorded, **Shots in the folder** rings the survey's sources whose record is in a
 file of the folder listed in Files (read in the background, while a survey file with
 sources is loaded): point at one and its description names the file; click it and the plot
