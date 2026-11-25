@@ -135,6 +135,10 @@ type
     foldLayer*: bool
       ## the pre-plot fold of the survey's X records is drawn as a heat map under
       ## the points (off by default)
+    foldActual*, foldDifference*: bool
+      ## the fold of the traces recorded in the files the Files window lists, and the
+      ## difference (planned less recorded), drawn in place of the pre-plot's: one fold layer
+      ## at a time (off by default)
     foldAlong*, foldAcross*: float64
       ## its bin sizes along the receiver lines and across them, in the survey's
       ## unit; 0: the natural bin (half the receiver interval, half the source interval)

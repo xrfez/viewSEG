@@ -496,6 +496,8 @@ proc settingsDocument*(s: Settings): string =
   w.value("templateBox", s.map.templateBox)
   w.value("folderShots", s.map.folderShots)
   if s.map.foldLayer: w.value("foldLayer", true)
+  if s.map.foldActual: w.value("foldActual", true)
+  if s.map.foldDifference: w.value("foldDifference", true)
   if s.map.foldAlong > 0: w.value("foldAlong", s.map.foldAlong)
   if s.map.foldAcross > 0: w.value("foldAcross", s.map.foldAcross)
   w.open("filters")
@@ -1223,6 +1225,8 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
           elif k.isTree("templateBox"): r.flag(k, result.map.templateBox)
           elif k.isTree("folderShots"): r.flag(k, result.map.folderShots)
           elif k.isTree("foldLayer"): r.flag(k, result.map.foldLayer)
+          elif k.isTree("foldActual"): r.flag(k, result.map.foldActual)
+          elif k.isTree("foldDifference"): r.flag(k, result.map.foldDifference)
           elif k.isTree("foldAlong"): r.number(k, 1e-6, 1e12, result.map.foldAlong)
           elif k.isTree("foldAcross"): r.number(k, 1e-6, 1e12, result.map.foldAcross)
           elif k.isTree("filters"):
