@@ -26,7 +26,8 @@
 import std/[os, strutils]
 import parseSEG
 import processSEG/qc/record
-import viewSEG/core/[jobs, join, recordqc, session, settingsnif, spread]
+import viewSEG/core/[jobs, join, missingjobs, missingreport, recordqc, session, settingsnif,
+  spread]
 import viewSEG/core/state
 import utils/waiting
 
@@ -174,10 +175,10 @@ proc main*() =
       doAssert "X record 7" in hits[mfMissing].note, what & ": " & hits[mfMissing].note
 
   block sourceWithTwoIndices:
-    # Receiver 2's O record 1 has shots 5 to 7 (index 1), O record 2 shot 7 (index 2): four
-    # sources; the data has 5, 6, 7 of index 1. The Records window and the shown record keep
-    # the index as Missing traces' receiver check does (`sourceAlternatives`): 4 planned,
-    # 1 missing; the hover box draws the same 4 stations.
+    # Receiver 2's O record 1 has shots 5 to 7 (index 1), O record 2 shot 7 (index 2): a
+    # station is its line and point, so three sources; the data has 5, 6, 7 of index 1. The
+    # Records window, the shown record, the box and the Missing traces report all say 3
+    # planned, 0 missing.
     let two = dir / "twoindices.o"
     surveyFile(two, @[oRecord(1, 2, 5, 7), oRecord(2, 2, 7, 7, srcIndex = 2)])
     var st = initAppState()
@@ -185,11 +186,21 @@ proc main*() =
     doAssert st.settle(st.sessions[0].checkedAgainst.len > 0 and st.jobs.active.len == 0 and
       st.filtersDone)
     let row = st.sessions[0].records[0]
-    doAssert row.planned == 4 and row.plannedMissing == 1, $row.planned & " planned, " &
+    doAssert row.planned == 3 and row.plannedMissing == 0, $row.planned & " planned, " &
       $row.plannedMissing & " missing"
-    doAssert st.filterHits[mfMissing].count == 1, st.filterHits[mfMissing].note
-    doAssert st.shownSpread.stations == 4, $st.shownSpread.stations
+    doAssert st.filterHits[mfMissing].count == 0, st.filterHits[mfMissing].note
+    doAssert st.shownSpread.stations == 3, $st.shownSpread.stations
     st.shutdown()
+    var g = SurveyGeometry()
+    g.addSps(parseSps(readFile(two)), rdReceiver)
+    var geo = new SurveyGeometry
+    geo[] = g
+    let jobs = initJobs()
+    let sink = MissingSink()
+    let id = jobs.submit(missingSpec(dir, @[rcv]), scanMissing(dir, @[rcv], geo, sink, ""))
+    doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled})
+    let r = sink.result.receiver.stats
+    doAssert r.inTemplate == 3 and r.missing == 0, $r.inTemplate & " " & $r.missing
 
   block oRecordsOnly:
     # Only an O file loaded: its receiver gathers are checked against it; its shots have

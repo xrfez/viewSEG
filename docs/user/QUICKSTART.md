@@ -349,7 +349,8 @@ records, and **Missing** for a source is the number of receivers that lack it. A
 with two O records is checked against the sources of both at once: the record number
 does not choose between them. Traces of one receiver point with index 0 and index 1 are
 one receiver; the index makes two receivers only where the survey has the point at two
-indices.
+indices. A source point a receiver's O records call for at two indices is one station: it
+counts once, and is missing only when every entry of it is.
 A record is never matched to the survey by its record (file) number alone: one whose trace
 headers hold no source station (no receiver station, for a receiver gather) is not checked
 and is listed under **Unmatched**.

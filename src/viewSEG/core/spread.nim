@@ -161,7 +161,7 @@ proc recordsSpread*(s: Survey; g: SurveyGeometry; records: openArray[int64];
   ## and the box round them. `record` is the first of them; -1 for none.
   result = PlannedSpread(domain: domain, record: if records.len > 0: records[0] else: -1)
   let role = plannedRole(domain)
-  var seen: HashSet[StationKey]
+  var seen: HashSet[(float64, float64)] # a station is its line and point
   var best = (count: 0, first: mapPoint(NaN, NaN), last: mapPoint(NaN, NaN))
   for record in records:
     for run in g.relationRuns(record, domain):
@@ -169,7 +169,7 @@ proc recordsSpread*(s: Survey; g: SurveyGeometry; records: openArray[int64];
       var placed = (count: 0, first: mapPoint(NaN, NaN), last: mapPoint(NaN, NaN))
       for i in 0 ..< run.stations:
         let st = run.station(i)
-        if not seen.containsOrIncl(st):
+        if not seen.containsOrIncl((st.line, st.point)):
           inc result.stations
           let p = s.placeOf(role, st)
           if p.x.isNaN: inc result.unplaced
