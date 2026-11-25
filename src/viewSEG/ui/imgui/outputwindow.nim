@@ -359,6 +359,10 @@ proc importWork(path: string; note: ImportNote; gen: int): JobWork =
     ctx.setPhase ImportReading
     note.why = ""
     try:
+      if not fs.isRegularFile(path):
+        note.why = ImportNotFile
+        note.gen = gen
+        return
       note.size = fs.getFileSize(path)
       let want = int(min(note.size, int64(ImportLimit + 1)))
       var bytes = newString(want)

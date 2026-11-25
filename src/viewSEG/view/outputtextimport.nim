@@ -28,6 +28,7 @@ const
   ImportUtf16* = "The file is UTF-16 text, which is not read: save it as UTF-8 or Latin-1 " &
     "and import it again."
   ImportEmpty* = "The file holds no text."
+  ImportNotFile* = "That is not a plain file (a folder, a pipe or a device), so it was not read."
   ImportUnreadable* = "The file could not be read."
 
 type

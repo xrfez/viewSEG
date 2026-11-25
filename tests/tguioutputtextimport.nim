@@ -6,7 +6,10 @@
 ## that is refused with a sentence and changes nothing. Whatever is chosen, the
 ## file's bytes and modification time are the same afterwards.
 ##
-## Seen to fail: with the over-limit check removed, "a file over 1 MiB is refused
+## A pipe and a folder are refused with a sentence, not opened.
+##
+## Seen to fail: with the pipe check removed, the read waits for a writer and
+## "a pipe is refused, not waited on" did not happen; with the over-limit check removed, "a file over 1 MiB is refused
 ## did not happen" (the file was taken in as text). The cut is seen to fail in
 ## toutputtextimport.
 ##
@@ -14,6 +17,9 @@
 ## With VIEWSEG_SCREENSHOTS set, the editor after an import is saved as PNG.
 
 import std/[math, monotimes, options, os, strutils, times]
+when defined(posix):
+  from std/posix import mkfifo
+
 import parseSEG
 import viewSEG/core/[geometry, state]
 import viewSEG/view/outputtextimport
@@ -143,6 +149,12 @@ proc main*() =
     step("the start of a SEG-Y file is taken in", importing(field / "shots.sgy"),
       said("The text header was read as", ""))
     step("a file over 1 MiB is refused", importing(big), said(ImportTooBig, ""))
+
+    when defined(posix):
+      let pipe = inbox / "pipe.txt"
+      doAssert mkfifo(pipe.cstring, 0o600) == 0, "cannot make a pipe"
+      step("a pipe is refused, not waited on", importing(pipe), said(ImportNotFile, ""))
+    step("a folder is refused", importing(inbox), said(ImportNotFile, ""))
 
     var at = 0
     var started = false

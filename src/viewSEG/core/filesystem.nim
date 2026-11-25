@@ -44,6 +44,8 @@
 ## from the program's folder and the configuration folder.
 
 import std/[atomics, monotimes, os, strutils, times]
+when not defined(windows):
+  from std/posix import nil
 
 export FileInfo, PathComponent, FileMode, MonoTime
 
@@ -131,6 +133,20 @@ proc getFileSize*(_: FileSystem; path: string): int64 {.raises: [OSError].} =
     os.getFileInfo(path).size
   else:
     os.getFileSize(path)
+
+proc isRegularFile*(_: FileSystem; path: string): bool {.raises: [].} =
+  ## Whether `path`, followed through links, is a plain file: not a folder, a
+  ## pipe, a socket or a device (opening a pipe waits for a writer, forever).
+  ## False also when it is not there or the drive does not answer.
+  try:
+    enter(foStat, path)
+    when defined(windows):
+      result = os.getFileInfo(path).kind == pcFile
+    else:
+      var st: posix.Stat
+      result = posix.stat(path.cstring, st) == 0 and posix.S_ISREG(st.st_mode)
+  except OSError:
+    result = false
 
 proc getLastModificationTime*(_: FileSystem; path: string): Time {.raises: [OSError].} =
   ## `os.getLastModificationTime`.
@@ -313,8 +329,6 @@ proc tryRemoveFile*(_: FileSystem; path: string): bool {.raises: [].} =
 when defined(windows):
   proc c_commit(fd: cint): cint {.importc: "_commit", header: "<io.h>".}
   proc c_fileno(f: File): cint {.importc: "_fileno", header: "<stdio.h>".}
-else:
-  proc c_fsync(fd: cint): cint {.importc: "fsync", header: "<unistd.h>".}
 
 proc syncToDisk*(f: File) =
   ## Asks the OS to put what was written to `f` on the disk (`fsync` on POSIX,
@@ -323,7 +337,7 @@ proc syncToDisk*(f: File) =
   when defined(windows):
     discard c_commit(c_fileno(f))
   else:
-    discard c_fsync(getFileHandle(f))
+    discard posix.fsync(getFileHandle(f))
 
 proc writeTextAtomic*(_: FileSystem; path, text: string) {.raises: [IOError, OSError, Exception].} =
   ## `text` written to `path` through a temporary file beside it, flushed and
