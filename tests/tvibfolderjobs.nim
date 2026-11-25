@@ -11,16 +11,22 @@
 ## finds no hold-down words. With the unit guessed as newtons, `emptyUnitRefused`
 ## names "N". With `controllerNote` left out, `setBWarning` finds no
 ## "follows set A (probable)". With the archive citation left out,
-## `archiveCited` finds no "Measured against the project reference".
+## `archiveCited` finds no "Measured against the project reference". With the
+## list ignoring `subfolders`, `choiceListed` finds `deep.dat` without the tick. With
+## the profile stored only by a button (the `showPlot` store left out),
+## `settingsReachQc` finds "the window's settings were not kept". With the profile's
+## reference used instead of the chosen one, `chosenReferenceWins` names the stored id.
+## With the stored force scale used, `scaleInForce` finds NaN. With `withShots` left out,
+## `shotLogMatch` finds no FFID.
 
-import std/[math, os, strutils]
+import std/[math, options, os, strutils]
 import parseSEG
 import parseSEG/common/diagnostics
 import parseSSDAT
-import viewSEG/core/[analysis, jobs, project, references, session, settings, signatures, sigjudge,
-  sigtypes, sweepinfo, threads, units, vibanalysis, vibfolderjobs, vibfolderqc, vibjudge,
-  vibprofile]
-import utils/[sigfiles, waiting]
+import viewSEG/core/[analysis, jobs, persist, project, references, session, settings,
+  signatures, sigjudge, sigtypes, state, sweepinfo, threads, units, vibanalysis, vibfolderconf,
+  vibfolderjobs, vibfolderqc, vibjudge, vibprofile]
+import utils/[chosenref, fixtures, sigfiles, waiting]
 
 const Samples = 6000
 
@@ -473,6 +479,182 @@ proc main*() =
     doAssert sink.result.rows[1].outcome == foSkipped, $sink.result.rows[1].outcome
     doAssert sink.result.rows[2].outcome == foSkipped
     doAssert sink.result.totals.skipped == 2
+
+  block choiceListed:
+    ## What is listed is what was chosen, and nothing else: a folder (its subfolders only
+    ## when asked), single files, or both. No choice lists nothing.
+    let tree = dir / "tree"
+    discard datFile(tree, "top.dat", SynthDat(samples: Samples, fileNumber: 7101))
+    discard datFile(tree / "sub", "deep.dat", SynthDat(samples: Samples, fileNumber: 7102))
+    writeFile(tree / "notes.txt", "not a signature\n")
+    proc names(c: FolderChoice): seq[string] =
+      let jobs = initJobs()
+      let sink = FolderListSink()
+      let id = jobs.submit(folderListSpec(c), folderListWork(c, sink))
+      doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}),
+        "the list job did not finish"
+      doAssert jobs.state(id) == jsDone, jobs.info(id).get.error
+      result = @[]
+      for f in sink.files: result.add f.path.extractFilename
+    doAssert not FolderChoice().hasChoice
+    doAssert names(FolderChoice()).len == 0, "nothing chosen listed something"
+    doAssert names(FolderChoice(folder: tree)) == @["top.dat"], $names(FolderChoice(folder: tree))
+    let deep = names(FolderChoice(folder: tree, subfolders: true))
+    doAssert deep == @["deep.dat", "top.dat"], $deep
+    let one = names(FolderChoice(files: @[tree / "sub" / "deep.dat"]))
+    doAssert one == @["deep.dat"], $one
+    let both = names(FolderChoice(folder: tree, files: @[tree / "sub" / "deep.dat"]))
+    doAssert both == @["deep.dat", "top.dat"], $both
+    doAssert names(FolderChoice(files: @[tree / "notes.txt"])).len == 0,
+      "a text file was listed"
+    let sink = FolderListSink()
+    let jobs = initJobs()
+    let gone = FolderChoice(folder: tree / "missing")
+    let id = jobs.submit(folderListSpec(gone), folderListWork(gone, sink))
+    doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled})
+    doAssert jobs.state(id) == jsDone and sink.files.len == 0, "a missing folder listed files"
+
+  block rowIdentity:
+    ## Each row names the electronics number, the vibrator and the trigger time of its
+    ## sweep, and what a shot log is asked.
+    let files = @[listed(plain), listed(other)]
+    let got = runJob(files, ask)
+    let first = rowOf(got.table, plain)
+    doAssert first.controller == 4321 and first.vibrator == 12, $(first.controller, first.vibrator)
+    doAssert first.triggerNs == files[0].info.triggerNs and first.triggerNs != 0
+    doAssert rowOf(got.table, other).vibrator == 13
+    doAssert first.query.fileNumber == some(7001'i64)
+    let corrupt = runJob(@[listed(bad)], ask)
+    doAssert corrupt.table.rows[0].outcome == foProblem
+
+  withFixtures fx:
+    let sigs = fx.dir / "sigs"
+    let good = datFile(sigs, "good.dat", SynthDat(samples: Samples, fileNumber: 7001))
+    let lone = datFile(sigs, "lone.dat", SynthDat(samples: Samples, fileNumber: 7050,
+      line: 300, station: 4000, trigger: DatTime(year: 2001, month: 2, day: 3, hour: 5,
+      minute: 30, second: 1, nanosecond: 250_000_000)))
+    let configDir = fx.dir / "config"
+    createDir(configDir)
+    proc started(): AppState =
+      result = initAppState()
+      result.keepSettingsIn(configDir, loadSettings(configDir / "settings.nif"))
+    proc openWindow(st: var AppState; path: string): int =
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+      var at = -1
+      doAssert st.settle((at = -1; (for i, s in st.sessions: (if s.path == path: at = i));
+        at >= 0) and st.panel(MainPanel).laidOut and
+        st.shownFile(st.findPanel(MainPanel)) == at), path
+      var base = 0
+      for s in st.sessions:
+        if s.path == path: base = s.base
+      st.apply Command(kind: ckOpenPlot, plotView: avVibrator, plotTraces: @[base])
+      result = st.plots.high
+      doAssert st.settle(st.plots[result].result.gen > 0 and not st.plots[result].waiting)
+    proc change(st: var AppState; w: int; p: AnalysisParams; origin = coWindow) =
+      st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p,
+        origin: origin)
+      doAssert st.settle(not st.plots[w].waiting)
+
+    block notConfigured:
+      var st = started()
+      doAssert not vibQcConfig(st).configured, "configured without a project"
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job-a", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      doAssert not vibQcConfig(st).configured, "configured without a profile"
+      let w = st.openWindow(good)
+      doAssert not vibQcConfig(st).configured, "opening a window stored a profile"
+      discard w
+
+    block settingsReachQc:
+      ## What the user sets in the Vibrator signature window is the configuration the QC
+      ## reads: no other button.
+      var st = started()
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job-b", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      let w = st.openWindow(good)
+      var p = st.plots[w].params
+      p.targetPct = 60
+      p.qc.avgPhaseDeg = 33
+      st.change(w, p)
+      let cfg = vibQcConfig(st)
+      doAssert cfg.configured, "the window's settings were not kept"
+      doAssert cfg.ask.options.targetPct == 60, $cfg.ask.options.targetPct
+      doAssert cfg.ask.options.qc.avgPhaseDeg == 33
+      doAssert cfg.profile.fromFile == "good.dat", cfg.profile.fromFile
+      doAssert ForceNotJudged notin cfg.ask.problems, $cfg.ask.problems
+      p.targetPct = 70
+      st.change(w, p, coAgent)
+      doAssert vibQcConfig(st).ask.options.targetPct == 60, "an agent's change was stored"
+      # a change that is no setting of the profile (the unfolded roles) stores nothing
+      var q = st.plots[w].params
+      q.details = not q.details
+      st.change(w, q)
+      doAssert vibQcConfig(st).ask.options.targetPct == 60
+      var weights = st.project.doc.vibJobWeights
+      weights.holdDownKg = 1200
+      st.apply Command(kind: ckVibWeights, vibWeights: weights)
+      doAssert vibQcConfig(st).weights.holdDownKg == 1200
+
+    block scaleInForce:
+      ## The force scale is the one set now, not the one in the stored profile.
+      var st = started()
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job-c", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      let w = st.openWindow(good)
+      var p = st.plots[w].params
+      p.targetPct = 60
+      st.change(w, p)
+      var s = st.settings
+      s.forceScale = ForceScale(datCountsPerLbf: 12.5)
+      st.apply Command(kind: ckSettings, settings: s)
+      doAssert vibQcConfig(st).ask.forceScale.datCountsPerLbf == 12.5,
+        $vibQcConfig(st).ask.forceScale
+
+    block chosenReferenceWins:
+      ## The project's chosen reference is the one measured against; the profile's own is
+      ## the fallback when none is chosen.
+      var st = started()
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job-d", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      let w = st.openWindow(good)
+      let base = st.sessions[0].base
+      let first = st.chooseStored(fx.dir / "refs", base, "first")
+      var p = st.plots[w].params
+      p.targetPct = 60
+      st.change(w, p)
+      doAssert vibQcConfig(st).profile.referenceId == first, "the window's reference was lost"
+      let second = st.chooseStored(fx.dir / "refs", base, "second")
+      doAssert second != first
+      var cfg = vibQcConfig(st)
+      doAssert cfg.profile.referenceId == second, "the stored reference was used: " &
+        cfg.profile.referenceId
+      doAssert cfg.ask.referenceId == second and cfg.referenceName == "second"
+      st.apply Command(kind: ckSelectReference, refId: "")
+      cfg = vibQcConfig(st)
+      doAssert cfg.profile.referenceId == first, "no fallback to the stored reference"
+
+    block shotLogMatch:
+      ## The sweep's row in a loaded shot log: its FFID and source line and point. With no
+      ## log, or no row for the sweep, nothing: never a guess.
+      var st = started()
+      let files = @[listed(good), listed(lone)]
+      var table = runJob(files, ask).table
+      table.rows.withShots(st)
+      for row in table.rows:
+        doAssert not row.shot.found and row.shot.ffid.len == 0, "a match with no shot log"
+      let us = files[0].info.triggerNs div 1000
+      let logPath = fx.dir / "shots.csv"
+      writeFile(logPath, "UTC microseconds,file number,source line,shot point\n" &
+        $us & ",7001,100.00,1010.00\n" & $(us + 1_000_000_000) & ",7099,100.00,1011.00\n")
+      st.apply Command(kind: ckImportShotLog, logPath: logPath)
+      doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0), "the log did not load"
+      table.rows.withShots(st)
+      let hit = rowOf(table, good)
+      doAssert hit.shot.found and hit.shot.ffid == "7001", $hit.shot
+      doAssert hit.shot.line == "100" and hit.shot.point == "1010", $hit.shot
+      let miss = rowOf(table, lone)
+      doAssert not miss.shot.found and miss.shot.ffid.len == 0 and miss.shot.point.len == 0,
+        "a guess for a sweep the log does not have: " & $miss.shot
 
   echo "tvibfolderjobs: ok"
 

@@ -44,6 +44,15 @@ proc click(f: FrameInfo; mark: string) =
   f.pressMouse(c, true)
   f.pressMouse(c, false)
 
+proc clickAtLeft(f: FrameInfo; mark: string) =
+  ## A click at the left end of `mark`, away from a popover the settings wheel opens under
+  ## the right (which grows with the groups it holds).
+  let r = f.markOf(mark)
+  let c = vec2(r.pos.x + 4, r.pos.y + r.size.y / 2)
+  f.moveMouse(c)
+  f.pressMouse(c, true)
+  f.pressMouse(c, false)
+
 type Step = object
   name: string
   act: proc (f: FrameInfo)
@@ -277,7 +286,7 @@ proc main*() =
         f.shoot("sigvib-fleet-wheel.png")
       do: true
       list.step "the wheel closed":
-        f.click(W & ".verdict")
+        f.clickAtLeft(W & ".verdict")
       do: not f.shown(W & ".fleet")
       list.step "told in a second window":
         f.apply Command(kind: ckOpenPlot, plotView: avVibrator,

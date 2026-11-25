@@ -72,13 +72,17 @@ proc main*() =
     doAssert "not in the archive" in gone.problems[0], gone.problems[0]
     doAssert "r1" in gone.problems[0]
     let none = applied(profileOf(limits, 400.0, 4, asB, scale, NaN, 90.0, "", NaN), ["r1"])
-    doAssert none.problems.len == 2, $none.problems
+    # a typed drive level lets each file give its own 100 % force: not "no 100 % force"
+    doAssert none.problems.len == 1, $none.problems
     doAssert "not in the archive" in none.problems[0]
-    doAssert none.problems[1] == ForceNotJudged
+    let bare = applied(profileOf(limits, 400.0, 4, asB, ForceScale(), NaN, NaN, "", NaN),
+      ["r1"])
+    doAssert bare.problems.len == 2, $bare.problems
+    doAssert bare.problems[1] == ForceNotJudged
     doAssert none.options.forceHundredPct.isNaN
     doAssert none.options.qc.avgPhaseDeg == 3 and none.options.qc.peakForcePct == 110
     doAssert none.options.qc.peakPhaseDeg.isNaN
-    let both = applied(profileOf(limits, 400.0, 4, asB, scale, 0.0, NaN, "missing", NaN), [])
+    let both = applied(profileOf(limits, 400.0, 4, asB, ForceScale(), 0.0, NaN, "missing", NaN), [])
     doAssert both.problems.len == 2
     doAssert "not in the archive" in both.problems[0]
     doAssert both.problems[1] == ForceNotJudged

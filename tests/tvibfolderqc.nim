@@ -2,7 +2,8 @@
 ## problems and skips, sorts stably, and filters without dropping the
 ## profile's problems. A paired file keeps that verdict and names its
 ## partner. Header weights that differ from the job's are words; nothing
-## is rescaled.
+## is rescaled. The Results columns name the electronics number, vibrator number, time
+## and the shot log's FFID and source point, and a shot log's row is never guessed.
 ##
   ## Seen to fail: with the measure columns untitled, `textAndCsv` does not
   ## find "Average phase (°)". With the totals always saying "files" and
@@ -10,11 +11,15 @@
   ## sentence left empty, `problemSentence` does not find the reason. With
   ## Kind still the shared "vibrator .dat" prefix, `kindLabels` cannot tell
   ## a `.dat` from a `.vib`. With the empty-reference problem left as the
-  ## archive sentence, `recordedReference` still finds that fault.
+  ## archive sentence, `recordedReference` still finds that fault. With the FFID
+  ## cell left empty, `shotLogMatch` finds no "7001"; with a row taken when none
+  ## fits, `shotOf` indexes past the log.
 
-import std/[math, strutils]
-import viewSEG/core/[sigtypes, units, vibfolderqc, vibjudge]
+import std/[math, options, strutils]
+import viewSEG/core/[shotfollow, shotlog, sigtypes, units, vibfolderqc, vibjudge]
 import viewSEG/view/vibfolderwords
+
+const TriggerNs = 981_173_106_789_000_000'i64 ## 2001-02-03 04:05:06.789 UTC
 
 func row(path: string; outcome: FolderOutcome; verdict: QcVerdict; kind = sgDat;
     pair = ""; sentence = ""; polarity = ""; problem = ""): FolderRow =
@@ -134,16 +139,16 @@ proc main*() =
 
   block problemSentence:
     let bad = row("corrupt.dat", foProblem, qvNotJudged, problem = "it cannot be read")
-    doAssert rowCells(bad)[4] == "it cannot be read", rowCells(bad)[4]
+    doAssert rowCells(bad)[10] == "it cannot be read", rowCells(bad)[10]
     let judged = row("good.dat", foJudged, qvPass, sentence = "PASS: within limits")
-    doAssert rowCells(judged)[4] == "PASS: within limits", rowCells(judged)[4]
+    doAssert rowCells(judged)[10] == "PASS: within limits", rowCells(judged)[10]
 
   block kindLabels:
     let dat = row("a.dat", foJudged, qvPass, kind = sgDat, sentence = "PASS")
     let vib = row("a.vib", foJudged, qvFail, kind = sgVib, sentence = "FAIL")
-    doAssert rowCells(dat)[1] != rowCells(vib)[1], rowCells(dat)[1] & " / " & rowCells(vib)[1]
-    doAssert ".dat" in rowCells(dat)[1] and "vibrator" notin rowCells(dat)[1], rowCells(dat)[1]
-    doAssert ".vib" in rowCells(vib)[1] and rowCells(vib)[1] != "vibrator", rowCells(vib)[1]
+    doAssert rowCells(dat)[7] != rowCells(vib)[7], rowCells(dat)[7] & " / " & rowCells(vib)[7]
+    doAssert ".dat" in rowCells(dat)[7] and "vibrator" notin rowCells(dat)[7], rowCells(dat)[7]
+    doAssert ".vib" in rowCells(vib)[7] and rowCells(vib)[7] != "vibrator", rowCells(vib)[7]
 
   block recordedReference:
     var table = FolderTable(problems: @[
@@ -180,6 +185,71 @@ proc main*() =
     let csv = resultsCsv(table)
     doAssert "\"a, \"\"quote\"\"\"" in csv, csv
     doAssert "No 100 % force" in csv
+
+  block identityColumns:
+    ## The columns after File: electronics number, vibrator number, time, then the
+    ## shot log's FFID, source line and source point; File is the name only.
+    doAssert headers()[0 .. 6] == @[ColFile, ColController, ColVibrator, ColTime, ColFfid,
+      ColSourceLine, ColSourcePoint], $headers()
+    doAssert headers()[7 .. 10] == @[ColKind, ColPair, ColVerdict, ColSentence]
+    let info = SweepInfo(kind: sgDat, controller: 4321, vibrator: 12, triggerNs: TriggerNs,
+      fileNumber: 7001, line: 100, station: 1010)
+    let r = stamped(row("/some/dir/a.dat", foJudged, qvPass), info, SweepInfo(), "")
+    let cells = rowCells(r)
+    doAssert cells[0] == "a.dat", cells[0]
+    doAssert cells[1] == "4321" and cells[2] == "12", $cells
+    doAssert cells[3] == "2001-02-03 04:05:06.789", cells[3]
+    doAssert cells[4].len == 0 and cells[5].len == 0 and cells[6].len == 0, $cells
+    let missing = rowCells(row("b.dat", foProblem, qvNotJudged))
+    doAssert missing[1].len == 0 and missing[2].len == 0 and missing[3].len == 0, $missing
+
+  block vibTakesItsPartner:
+    ## A `.vib` has neither serial nor vibrator: the `.dat` of its sweep gives them, and
+    ## the time and the query come from it too.
+    let vib = SweepInfo(kind: sgVib, triggerNs: TriggerNs - 2_000_000_000, timeIsStart: true)
+    let dat = SweepInfo(kind: sgDat, controller: 99, vibrator: 7, triggerNs: TriggerNs,
+      fileNumber: 7001)
+    let paired = stamped(row("a.vib", foJudged, qvPass, kind = sgVib), vib, dat, "a.dat")
+    doAssert paired.controller == 99 and paired.vibrator == 7
+    doAssert paired.triggerNs == TriggerNs and not paired.timeIsStart
+    doAssert paired.query.fileNumber == some(7001'i64)
+    let lone = stamped(row("c.vib", foJudged, qvPass, kind = sgVib), vib, SweepInfo(), "")
+    doAssert lone.controller == 0 and lone.triggerNs == vib.triggerNs and lone.timeIsStart
+    doAssert rowCells(lone)[3].startsWith("began "), rowCells(lone)[3]
+
+  block shotLogMatch:
+    ## The row of the shot log found for the sweep: its FFID, line and point as the log has
+    ## them; none when the log has no such shot, and never a guess.
+    let view = ShotView(rows: @[
+      Shot(fileNumber: some(7001'i64), sourceLine: 100.0, shotPoint: 1010.0,
+        timeUtcUs: some(TriggerNs div 1000)),
+      Shot(fileNumber: some(7002'i64), sourceLine: 100.0, shotPoint: 1011.5,
+        timeUtcUs: some(TriggerNs div 1000 + 20_000_000))])
+    let ix = buildShotIndex(view)
+    let info = SweepInfo(kind: sgDat, controller: 1, vibrator: 2, triggerNs: TriggerNs,
+      fileNumber: 7001, line: 100, station: 1010)
+    let hit = stamped(row("a.dat", foJudged, qvPass), info, SweepInfo(), "")
+    let found = shotOf(hit.query, ix, view)
+    doAssert found.found and found.ffid == "7001", $found
+    doAssert found.line == "100" and found.point == "1010", $found
+    var second = info
+    second.triggerNs = TriggerNs + 20_000_000_000
+    second.fileNumber = 7002
+    second.station = 1011
+    let other = shotOf(stamped(hit, second, SweepInfo(), "").query, ix, view)
+    doAssert other.found and other.ffid == "7002" and other.point == "1011.5", $other
+    var elsewhere = info
+    elsewhere.triggerNs = TriggerNs + 3_600_000_000_000
+    elsewhere.fileNumber = 9999
+    elsewhere.station = 5000
+    let none = shotOf(stamped(hit, elsewhere, SweepInfo(), "").query, ix, view)
+    doAssert not none.found and none.ffid.len == 0 and none.point.len == 0, $none
+    var shown = hit
+    shown.shot = found
+    let cells = rowCells(shown)
+    doAssert cells[4] == "7001" and cells[5] == "100" and cells[6] == "1010", $cells
+    doAssert "7001" in resultsText(FolderTable(rows: @[shown]))
+    doAssert "7001" in resultsCsv(FolderTable(rows: @[shown]))
 
   echo "tvibfolderqc: ok"
 
