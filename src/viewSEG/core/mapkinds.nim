@@ -37,6 +37,7 @@
 ## cannot tell the colours apart), with a symbol inside for the filter
 ## within the kind (`FlagSymbol`), so no two filters mark alike.
 
+import std/math
 import parseSEG
 
 export StationKey
@@ -91,10 +92,6 @@ type
       ## traces outside the exclusion area far above those either side of them on their line
     mfNotJudged = "not judged for noise"
       ## traces inside the exclusion area, or whose sensor or station is unknown
-    mfOffsetOff = "offset disagrees with the positions"
-      ## traces whose header offset is not the distance between their source and receiver
-    mfMidpointOff = "midpoint disagrees with the positions"
-      ## traces whose header midpoint is not halfway between their source and receiver
     mfPositionOff = "header position disagrees with the survey"
       ## traces whose own header receiver or source position is not the survey's station's
 
@@ -156,7 +153,7 @@ const
     (ffAmplitude, syPlus), (ffFailed, syRing), (ffFailed, syCross), (ffSpread, syNone),
     (ffSpread, syPlus), (ffSpread, syRing), (ffSpread, syBar), (ffSpread, syUpright),
     (ffEdited, syNone), (ffSpread, syCross), (ffAmplitude, syDot), (ffAmplitude, syDash),
-    (ffSpread, syDot), (ffSpread, syDash), (ffSpread, syBackslash)]
+    (ffSpread, syBackslash)]
     ## each filter's mark, in `MapFilter`'s order: no two alike, and the
     ## filters most used plain outlines (dead a square, noisy a circle,
     ## missing from the template a triangle, reversed a diamond; killed an X
@@ -164,9 +161,9 @@ const
     ## position are counted, not marked
   TraceFilters* = {mfDead, mfUndecodable, mfNoisy, mfClipped, mfSpiky, mfConstant, mfWeak,
     mfDcOffset, mfAllZero, mfNotANumber, mfMissing, mfUnlisted, mfDuplicate, mfAuxiliary,
-    mfLouder, mfNotJudged, mfOffsetOff, mfMidpointOff, mfPositionOff}
+    mfLouder, mfNotJudged, mfPositionOff}
     ## the filters found by reading the record shown on a job (`core/recordqc`)
-  GeometryFilters* = {mfOffsetOff, mfMidpointOff, mfPositionOff}
+  GeometryFilters* = {mfPositionOff}
     ## those found from the trace keys and the file's own headers (`core/geometryqc`)
   MinPositionTolerance* = 0.1
     ## the least tolerance of "header position disagrees with the survey" that can be set
@@ -176,6 +173,13 @@ const
     ## Seismic window marks the exclusion area while one is on
   MaxTemplateLines* = 1000 ## a patch's lines, at most
   MaxTemplateChannels* = 100_000 ## a patch's stations on a line, at most
+
+func boundedTolerance*(setting: float64): float64 =
+  ## `setting` as the settings keep it: 0 (the default) stays 0; a value from
+  ## `MinPositionTolerance` to `MaxPositionTolerance` stays; one outside is brought to the
+  ## nearer end; NaN, a negative or an infinite one is the default (0).
+  if setting.isNaN or setting <= 0 or setting == Inf: 0.0
+  else: clamp(setting, MinPositionTolerance, MaxPositionTolerance)
 
 func shapeOf*(f: MapFilter): FlagShape {.inline.} = FamilyShapes[FilterMarks[f].family]
   ## The outline filter `f`'s marks are drawn with: its kind's.

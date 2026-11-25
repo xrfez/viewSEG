@@ -282,6 +282,7 @@ type OwnOpen* = object
   choice*: OpenChoice
   cache*: string ## its index cache file; "" for none
   limit*: int64 = OwnReadLimit
+  vendors*: int  ## the vendor maps' load in force (`AppState.vendorGen`): said with the rows
 
 proc ownRowsOf*(file: ptr SeismicFile; path: string; traces: Slice[int]; how: OwnOpen;
     cancelled: proc (): bool {.gcsafe, raises: [].}; rows: var seq[OwnHeader]): string =
@@ -325,30 +326,7 @@ proc ownRowsOf*(file: ptr SeismicFile; path: string; traces: Slice[int]; how: Ow
     return OwnRecordUnreadableWhy
   rows = newSeq[OwnHeader](keys.len)
   for i, k in keys:
-    rows[i] = OwnHeader(rcvX: k.rcvX, rcvY: k.rcvY, srcX: k.srcX, srcY: k.srcY,
-      offset: k.offset, cmpX: k.cmpX, cmpY: k.cmpY)
-
-const
-  OwnOffsetFields = ["trace.offset", "ext1.extOffset"]
-    ## the fields a SEG-Y trace header gives its offset in (Extension 1's when there is one)
-  OwnMidpointFields = ["trace.cdpX", "trace.cdpY", "ext1.extCdpX", "ext1.extCdpY"]
-    ## and its midpoint
-
-proc givenOf*(file: ptr SeismicFile; path: string; traces: Slice[int]): seq[set[OwnField]] =
-  ## Whether the SEG-Y trace headers of `traces` of open file `file` (at `path`) give their
-  ## offset and their midpoint themselves: a field that is not 0 (parseSEG's keys fill an
-  ## empty one from the positions). Read from the file's own header bytes, which no join or
-  ## move changes. Worker only. Raises `IOError`, `OSError` or `ValueError` when the headers
-  ## cannot be read.
-  result = newSeq[set[OwnField]](traces.len)
-  if file[].kind != skSegy: return
-  if not file[].inMemory: fs.mappedRead(path, headers = true)
-  var column = newSeq[float64](traces.len)
-  for (field, names) in [(ofOffset, @OwnOffsetFields), (ofMidpoint, @OwnMidpointFields)]:
-    for name in names:
-      file[].traceFieldColumnInto(name, traces, column)
-      for i, x in column:
-        if not x.isNaN and x != 0: result[i].incl field
+    rows[i] = OwnHeader(rcvX: k.rcvX, rcvY: k.rcvY, srcX: k.srcX, srcY: k.srcY)
 
 proc ownPositionWork*(file: ptr SeismicFile; path: string; session: SessionId; index: int;
     choice: OpenChoice; cache: string; to: Poster; limit = OwnReadLimit): JobWork =

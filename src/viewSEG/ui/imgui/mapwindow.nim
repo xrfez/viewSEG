@@ -867,10 +867,6 @@ const filterTips: array[MapFilter, string] = [
     " line (a station that is loud against its neighbours, not noisy against the record)",
   "Traces whose noise was not judged: inside the exclusion area, whose sensor or station is" &
     " not known, or of a node with a component missing. They are not shown as good",
-  "Traces whose header offset is not the distance between their source and receiver positions" &
-    " (coordinates and offsets in one unit; a trace with no offset or no position is not judged)",
-  "Traces whose header midpoint is not halfway between their source and receiver positions" &
-    " (a processed file's midpoint is often its bin's centre: expect some)",
   "Traces whose own header receiver or source position is not where the survey puts their" &
     " station (a station that moved, or a survey that is not the file's). Any format. In the" &
     " station-move menu, \"Move this station to the position in this trace's headers\"" &
@@ -879,10 +875,9 @@ const filterTips: array[MapFilter, string] = [
 const NoiseWrapEm = 30'f32 ## the words' lines wrap at this many font sizes
 
 func geometryShown(st: AppState): seq[string] =
-  ## The lines the geometry checks' words take under "Filters": why a filter that is on is
-  ## not judged, and the traces not judged (none while no geometry filter is on).
-  let on = st.settings.map.filters
-  st.recordQc.geometry.geometryLines(mfOffsetOff in on, mfMidpointOff in on, mfPositionOff in on)
+  ## The lines the position filter's words take under "Filters": why it is not judged, what
+  ## the header positions share (none while it is off).
+  if mfPositionOff in st.settings.map.filters: st.recordQc.geometry.geometryLines else: @[]
 
 func noiseLines(st: AppState): seq[string] =
   ## The lines the noisy-trace test's words take under "Filters" (none while no
@@ -894,8 +889,7 @@ func noiseLines(st: AppState): seq[string] =
 
 const FilterOrder = [mfDead, mfUndecodable, mfKilled, mfNoisy, mfLouder, mfWeak, mfNotJudged,
   mfClipped, mfSpiky, mfConstant, mfDcOffset, mfAllZero, mfNotANumber, mfMissing, mfUnlisted,
-  mfDuplicate, mfAuxiliary, mfNoPosition, mfReversed, mfSpreadDiffers, mfOffsetOff,
-  mfMidpointOff, mfPositionOff]
+  mfDuplicate, mfAuxiliary, mfNoPosition, mfReversed, mfSpreadDiffers, mfPositionOff]
   ## the order the filters are listed in: the noisy-trace test's findings together
 static: doAssert FilterOrder.len == ord(high(MapFilter)) + 1, "a filter is not listed"
 
@@ -924,7 +918,8 @@ proc toleranceRow(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOut
     "(the survey's, or a station move's) before it is marked, in the survey's unit: from " &
     $MinPositionTolerance & " to " & $MaxPositionTolerance & ". Empty: " &
     lengthWords(DefaultMetres, suMetres) & ", or " & lengthWords(DefaultFeet, suFeet) &
-    " when the survey is in feet.")
+    " when the survey is in feet. A number typed is kept as typed: when a survey in another " &
+    "unit is loaded it is read in that unit, not converted.")
   igSameLine(0, -1)
   let words = if unit.abbreviation.len > 0: unit.abbreviation & " from the survey"
               else: "from the survey (in its unit)"
@@ -984,9 +979,9 @@ proc drawFilters(mu: var MapUi; st: AppState; hits: array[MapFilter, FilterHits]
     igPopTextWrapPos()
     igPopStyleColor(1)
     marks.mark("map.geometry")
-    tip("The header offset and midpoint are compared with the source and receiver positions, " &
-      "and the header positions with the positions in force. A trace with no offset, no " &
-      "midpoint or no position cannot be compared." & (if st.recordQc.geometry.projectSurvey:
+    tip("The file's own header positions are compared with the positions in force: the " &
+      "survey's stations, or their station moves. A trace with no position, or whose station " &
+      "the survey lacks, cannot be compared." & (if st.recordQc.geometry.projectSurvey:
       " This file is not joined to the project's survey: its headers are compared with it " &
       "by the stations they name." else: ""))
 

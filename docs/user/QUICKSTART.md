@@ -1346,37 +1346,31 @@ for noise** (below), **clipped**, spiky, constant, DC offset, all zero, not a nu
 the template** (planned in the X file, no trace in the record), traces **not in the
 template**, stations **recorded twice**; auxiliary traces, traces **without a position**,
 **reversed** ones; the shots whose X record stands out from its template (**spread not
-the template**); and three geometry checks, read from the headers only:
-**offset disagrees with the positions** and **midpoint disagrees with the positions** (the
-header's own against the distance and the halfway point of the source and receiver positions
-in force, more than 1 unit or 1% of the distance off, the larger, in the survey's unit; a
-processed file's midpoint is often its bin's centre, so expect some), and **header position
-disagrees with the survey** (the file's own header receiver position against its position in
-force: the station's in the survey it was joined to, or the station move that applies; any
-format). Beside it, the tolerance: "more than [ 5 ] m from the survey", in the survey's unit
-(5 m by default, 16 ft when the survey is in feet; 0.1 to 1000; empty the box for the
-default), kept with the settings. A marked trace is the one to move the station for: "Move
-this station to the position in this trace's headers", after which it is no longer marked
-and the list says "1 station moved to agree with the headers". A source that is off marks
-its source point on the map, not the receivers' traces, and the list names it ("The source
-1/1001 is 25 m from the survey."). When most of the record's stations sit the same distance
-and bearing from the survey, they are marked and the list says so ("30 stations sit about
-50 m east of the survey (the same shift for all: check the survey file or the coordinate
-frame)."). Each says "not checked" and why, never a count of 0, when it could not compare:
-the offset and midpoint of a SEG-D or SEG-2 file (they are computed from the positions), of a
-SEG-Y file whose own headers cannot be read after a survey import replaced its coordinates,
-where the coordinates are angles (degrees, arc seconds), where the offsets are in another unit
-than the coordinates or are all about 3.28 or 0.3048 times the distance; and the header
-position with no survey joined, with no station or header position to compare, where the
-file's own headers cannot be read without walking a large file again (no usable index for
-it), or where the header positions are the survey's times 3.2808 or 0.3048 (feet against
-metres). A file not joined to the project's survey is compared with it by the stations its
-headers name, and the list says so. The file's own headers of a record are read once while
-it is open. A trace whose header gives no offset or no midpoint (the field is 0: what the
-viewer shows there is worked out from the positions), or whose positions are not known,
-cannot be compared, and a trace whose station the survey does not have is not judged: the
-list says how many ("N traces give no offset; M give no midpoint: not judged", "12 traces'
-stations are not in the survey: not judged") and does not mark them. Hover a filter for what it counts; **Select** selects its traces in the
+the template**); and **header position disagrees with the survey**: the file's own header
+receiver position (read from the file, not what an import or a station move made of it)
+against its position in force, the station's in the survey it was joined to or the station
+move that applies; any format. Beside it, the tolerance: "more than [ 5 ] m from the survey",
+in the survey's unit (5 m by default, 16 ft when the survey is in feet; 0.1 to 1000; empty the
+box for the default), kept with the settings; a number typed is kept as typed, so a survey in
+another unit loaded later reads it in that unit. A marked trace is the one to move the station
+for: "Move this station to the position in this trace's headers", after which it is no longer
+marked and the list says "1 station moved to agree with the headers". A source that is off
+marks its source point on the map, not the receivers' traces, and the list names it ("The
+source 1/1001 is 25 m from the survey."). When most of the record's stations sit the same
+distance and bearing from the survey, they are marked and the list says so, with the stations
+off by more than that counted apart ("26 stations sit about 50 m east of the survey (the same
+shift for all of them: check the survey file or the coordinate frame); 4 more are further
+off."). It says "not checked" and why, never a count of 0, when it could not compare: with no
+survey joined, where the coordinates are angles (degrees, arc seconds), with no station or
+header position to compare, where the file's own headers cannot be read without walking a
+large file again (no usable index for it: tried again for the next record shown, so an index
+made meanwhile is used), or where the header positions are the survey's times 3.2808 or
+0.3048 (feet against metres: most stations so, or every station of a small record). A file
+not joined to the project's survey is compared with it by the stations its headers name, and
+the list says so. The file's own headers of a record are read once while it is open (and
+again after the vendor maps are loaded again). A trace whose station the survey does not have
+is not judged: the list says how many ("12 traces' stations are not in the survey: not
+judged") and does not mark them. Hover a filter for what it counts; **Select** selects its traces in the
 plot; point at a ringed receiver and its description says which filters mark it.
 
 **Noisy traces and the area left out.** With a relation file, **noisy** and **weak** are

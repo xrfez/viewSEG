@@ -84,7 +84,7 @@ proc awaitQc(box: Inbox; session: SessionId): Msg =
     var msgs: seq[Msg]
     box.drainInto(msgs)
     for m in msgs:
-      if m.kind == mkRecordQc and m.qcSession == session:
+      if m.kind == mkRecordQc and m.qcSession == session and not m.qcGeometryOnly:
         result = m
         got = true
     got

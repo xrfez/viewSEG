@@ -1,54 +1,51 @@
-## The geometry filters ("offset disagrees with the positions", "midpoint disagrees with the
-## positions", "header position disagrees with the survey") and the trace table's computed
-## columns (`keys.distance`, `keys.offsetError`), in `core`, without a window.
+## The geometry filter "header position disagrees with the survey" and the trace table's
+## computed columns (`keys.distance`, `keys.offsetError`, the position error), in `core`,
+## without a window.
 ##
 ## On SEG-Y files made here (24 traces of one record, the source at (1000, 5000), the receivers
 ## 100 apart east of it):
-## - correct geometry: nothing flagged, the filters done; no survey: the position filter is not
-##   judged and says so;
+## - no survey: the position filter is not judged and says so;
 ## - one trace's offset header 50 off, one receiver moved 30 in its coordinates and not its
-##   offset, one midpoint 40 off: those traces, and no other, flagged; the counts and the
-##   traces equal processSEG's `checkGeometryInto` on the same keys; the table's columns give
-##   the offset error and the distance of each trace;
-## - no offsets and no coordinates: no filter has a trace to compare, the line says how many
-##   traces were not judged, and no "(0)" stands for a comparison never made;
-## - coordinates in degrees: not judged, the table's columns empty; offsets that are all the
-##   distance times 3.28084 (feet against metres): not judged, with the sentence.
-## On `mapSps`'s survey and a SEG-Y shot of it (a trace's offset 50 over, a receiver's header
-## position 30 east):
-## - joined in fill mode, and in replace mode: the offset is still compared with the file's own
-##   header (the keys' were computed), the position filter flags the moved receiver;
-## - a second join over the first: the file's own headers are compared again;
-## - coordinates in feet against a survey in metres: the position and offset filters are not
-##   judged, with the sentences, instead of flagging every trace;
-## On a SEG-D file joined to a survey whose receivers sit 50 m from its headers: the offset and
-## midpoint filters are not judged (the format has no offset of its own), and the position
+##   offset: the table's columns give the offset error and the distance of each trace;
+## - coordinates in degrees: not judged, the table's columns empty.
+## On `mapSps`'s survey and a SEG-Y shot of it (a receiver's header position 30 east):
+## - joined in fill mode, and in replace mode: the position filter flags the moved receiver;
+## - coordinates in feet against a survey in metres: not judged, with the sentence, instead of
+##   flagging every trace.
+## On a SEG-D file joined to a survey whose receivers sit 50 m from its headers: the position
 ## filter flags the 12 receivers, 50 m off, and says they share one shift; its one source,
-## 25 m from the survey's, is said and marked at the source, never on the receivers' traces.
+## 25 m from the survey's, is said and marked at the source, never on the receivers' traces;
+## a second join over the first compares the file's own headers again.
 ## On a survey of one source and a line of receivers, and a SEG-Y shot of it:
 ## - receivers laid 2 to 3 m from the pre-plot (30 of them, or 15): none marked at the default
 ##   tolerance (5 m), all at a tolerance of 1;
 ## - every receiver 50 m east: all marked, and the shift said with its bearing;
+## - 26 receivers 50 m east and 4 at 170 m: the shift said for the 26, the 4 counted apart as
+##   further off, all 30 marked and the 4 known (`furtherTraces`);
+## - a record of 3 receivers whose every coordinate is in feet against a survey in metres: not
+##   judged with the units sentence, never a source said millions of metres off;
 ## - one receiver 5.5 m off: marked, the trace table's position error says 5.5; moved to its
 ##   header position, not marked, and counted as moved;
-## - headers with no offset and no midpoint after a replace join: neither invented: not given;
-## - a stale index cache: the header positions are not judged, the file is not walked;
-## - the record's own headers read once across filter toggles;
-## - a record whose samples cannot be read, or whose read hangs, keeps its geometry filters.
+## - a stale index cache: the header positions are not judged, the file is not walked; once the
+##   cache is current again, the next check reads them (the "no index" is not kept);
+## - the record's own headers read once across filter toggles, and again after the vendor maps
+##   are loaded again;
+## - a record whose samples cannot be read, or whose read hangs, keeps its geometry filter.
 ##
-## Seen to fail: with the offset of a joined SEG-Y file compared as the keys give it, a replace
-## join showed 0; with the units guard returning `judged` for degrees, every trace of the
-## degrees file was flagged; with a SEG-D file's offsets compared, 0 was shown for it; with
-## the positions compared with the keys' (the survey's) and not the file's own, a join over a
-## join flagged nothing. With the tolerance back at 1 and the rule that a record whose stations
-## nearly all differ is not judged, the 30 and the 15 receivers laid 2 to 3 m off failed
-## (not judged; all marked), and so did the line 50 m east (not judged); with the survey's
-## position compared and not the move's, the moved station stayed marked; with a source's
-## error put on every trace, the SEG-D record marked 24; with the keys' offset compared where
-## the header gives none, the replace join invented an offset error; with the stale cache
-## followed by a walk, the read was judged; with no cache of the own headers, a toggle read
-## them again; with the geometry posted with the samples' result, a hung read left it
-## computing.
+## Seen to fail: with the units guard returning `judged` for degrees, every trace of the
+## degrees file was flagged; with the positions compared with the keys' (the survey's) and not
+## the file's own, a join over a join flagged nothing. With the tolerance back at 1 and the
+## rule that a record whose stations nearly all differ is not judged, the 30 and the 15
+## receivers laid 2 to 3 m off failed (not judged; all marked), and so did the line 50 m east
+## (not judged); with the survey's position compared and not the move's, the moved station
+## stayed marked; with a source's error put on every trace, the SEG-D record marked 24; with
+## the stale cache followed by a walk, the read was judged; with no cache of the own headers, a
+## toggle read them again; with the geometry posted with the samples' result, a hung read left
+## it computing. With the stations off the shift not counted, "4 more are further off" was
+## missing; with the scale test only for 5 stations and more, the 3-receiver record said "The
+## source 1/1001 is 1155306 m from the survey"; with the "no index" answer kept, the record
+## stayed not judged after its cache was made current; with the own headers kept over a load
+## of the vendor maps, they were not read again.
 
 import std/[math, options, os, strutils]
 import parseSEG
@@ -124,12 +121,10 @@ proc shown(st: var AppState; path: string) =
   doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
 
 template checked(st: AppState): bool =
-  st.recordQc.job == NoJob and st.recordQc.hits[mfOffsetOff].state != fsComputing and
-    st.recordQc.hits[mfMidpointOff].state != fsComputing and
-    st.recordQc.hits[mfPositionOff].state != fsComputing
+  st.recordQc.job == NoJob and st.recordQc.hits[mfPositionOff].state != fsComputing
 
 proc withGeometry(st: var AppState) =
-  st.on({mfOffsetOff, mfMidpointOff, mfPositionOff})
+  st.on({mfPositionOff})
   doAssert st.settle(st.checked), "the geometry check did not end"
 
 proc table(st: var AppState; view: TableView): TableAnswer =
@@ -232,47 +227,26 @@ proc onLine(fx: Fixtures; off: openArray[tuple[dx, dy: float64]]; mode = hcRepla
 
 proc main*() =
 
-  block correctGeometry:
+  block noSurvey:
     withFixtures fx:
       var st = initAppState()
       st.shown fx.geometrySegy("right.sgy")
       st.withGeometry
       let h = st.filterHits
-      for f in [mfOffsetOff, mfMidpointOff]:
-        doAssert h[f].state == fsDone and h[f].count == 0 and h[f].traces.len == 0,
-          $f & ": " & $h[f]
-      doAssert "1 m or 1%" in h[mfOffsetOff].note,
-        "the tolerance in the survey's unit: " & h[mfOffsetOff].note
-      doAssert st.recordQc.geometry.ready and st.recordQc.geometry.traces == Traces
-      doAssert st.recordQc.geometry.geometryLines(true, true, false) == @[],
-        $st.recordQc.geometry.geometryLines(true, true, false)
+      doAssert st.recordQc.geometry.ready
       # no survey is joined: the position filter says so, and shows no count
       doAssert h[mfPositionOff].state == fsNotChecked and
         "no survey is imported" in h[mfPositionOff].note, $h[mfPositionOff]
+      doAssert st.recordQc.geometry.geometryLines ==
+        @["Header positions not judged: no survey is imported."],
+        $st.recordQc.geometry.geometryLines
       st.shutdown()
 
-  block plantedTraces:
+  block offsetErrorColumn:
     withFixtures fx:
       let path = fx.geometrySegy("planted.sgy", planted = true)
       var st = initAppState()
       st.shown path
-      st.withGeometry
-      let base = st.sessions[0].base
-      let h = st.filterHits
-      doAssert h[mfOffsetOff].traces == @[base + BadOffset, base + Moved],
-        "offset: " & $h[mfOffsetOff].traces
-      doAssert h[mfOffsetOff].count == 2 and h[mfOffsetOff].state == fsDone
-      doAssert h[mfMidpointOff].traces == @[base + Moved, base + BadMidpoint],
-        "midpoint: " & $h[mfMidpointOff].traces
-      # the library's own, on the same keys
-      let f = st.sessions[0].filePtr
-      var checks = newSeq[GeometryCheck](Traces)
-      checkGeometryInto(f[].rowsOf(0 ..< Traces), checks)
-      var offset, midpoint: seq[int]
-      for t in flaggedRows(checks, {gfOffsetMismatch}): offset.add base + t
-      for t in flaggedRows(checks, {gfMidpointMismatch}): midpoint.add base + t
-      doAssert offset == h[mfOffsetOff].traces and midpoint == h[mfMidpointOff].traces,
-        "not the library's: " & $offset & " " & $midpoint
       # the table's columns: the offset error (offset less distance) and the distance
       let a = st.table(TableView(fields: @["keys.distance", "keys.offsetError"],
         scope: tsRecord, rows: 0 ..< Traces))
@@ -284,31 +258,12 @@ proc main*() =
       doAssert keyLabel("keys.offsetError").len > 0 and keyLabel("keys.distance").len > 0
       st.shutdown()
 
-  block noOffsetsNoPositions:
-    withFixtures fx:
-      var st = initAppState()
-      st.shown fx.geometrySegy("bare.sgy", coordinates = false)
-      st.withGeometry
-      let h = st.filterHits
-      for f in [mfOffsetOff, mfMidpointOff]:
-        doAssert h[f].state == fsNotChecked, "no comparison was made, and " & $f & " says (0)"
-      let lines = st.recordQc.geometry.geometryLines(true, true, true)
-      doAssert "24 traces give no offset; 24 give no midpoint; 24 give no positions: " &
-        "not judged." in lines, $lines
-      doAssert lines.len == 4 and lines[0].startsWith("Offset not judged"), $lines
-      st.shutdown()
-
   block coordinatesInDegrees:
     withFixtures fx:
       var st = initAppState()
       st.shown fx.geometrySegy("degrees.sgy", units = 3)
       st.withGeometry
       let h = st.filterHits
-      for f in [mfOffsetOff, mfMidpointOff]:
-        doAssert h[f].state == fsNotChecked and h[f].traces.len == 0 and h[f].count == 0, $h[f]
-        doAssert "degrees" in h[f].note, h[f].note
-      let lines = st.recordQc.geometry.geometryLines(true, true, true)
-      doAssert lines[0].startsWith("Offset not judged:") and "degrees" in lines[0], $lines
       doAssert h[mfPositionOff].state == fsNotChecked and "degrees" in h[mfPositionOff].note
       # the table's columns are empty, not the mismatch of every trace
       let a = st.table(TableView(fields: @["keys.distance", "keys.offsetError", "keys.offset"],
@@ -330,10 +285,6 @@ proc main*() =
     doAssert not g.judged and "metres" in g.why and "feet" in g.why, g.why
 
   block wordsAndColumns:
-    var g = GeometrySummary(ready: true, noOffset: 1, noPositions: 1)
-    doAssert g.geometryLines(true, true, false) ==
-      @["1 trace gives no offset; 1 gives no positions: not judged."],
-      $g.geometryLines(true, true, false)
     # a length without a unit, and the bearings
     doAssert lengthWords(1, suNotGiven) == "1 unit" and lengthWords(5, suNotGiven) == "5 units"
     doAssert lengthWords(5, suMetres) == "5 m" and lengthWords(16, suFeet) == "16 ft" and
@@ -342,8 +293,11 @@ proc main*() =
       bearingWords(-30, -30) == "south-west" and bearingWords(-50, 1) == "west"
     doAssert positionTolerance(0, suMetres) == 5 and positionTolerance(0, suFeet) == 16 and
       positionTolerance(0, suNotGiven) == 5 and positionTolerance(2, suFeet) == 2
-    g.noOffset = 0
-    doAssert g.geometryLines(true, true, false) == @["1 trace gives no positions: not judged."]
+    # the settings keep a tolerance in its range, the default for one that is no number
+    doAssert boundedTolerance(0) == 0 and boundedTolerance(2.5) == 2.5 and
+      boundedTolerance(0.01) == MinPositionTolerance and
+      boundedTolerance(5000) == MaxPositionTolerance and boundedTolerance(NaN) == 0 and
+      boundedTolerance(-3) == 0 and boundedTolerance(Inf) == 0
     # where the units differ the distance is still a length; where the coordinates are angles
     # it is not
     var k = keysOf(3, false)
@@ -356,41 +310,21 @@ proc main*() =
     (k.rcvX, k.rcvY) = (k.srcX, k.srcY)
     doAssert near(k.keyValue("keys.offsetError"), 0)
 
-  block offsetsInFeet:
-    # every offset is the distance times 3.28084: feet against metres, not 24 mismatches
-    withFixtures fx:
-      var st = initAppState()
-      st.shown fx.geometrySegy("feet.sgy", offsetScale = 3.28084, count = 40)
-      st.withGeometry
-      let h = st.filterHits
-      doAssert h[mfOffsetOff].state == fsNotChecked and h[mfOffsetOff].traces.len == 0, $h[mfOffsetOff]
-      doAssert "look like feet and the positions like metres" in h[mfOffsetOff].note,
-        h[mfOffsetOff].note
-      doAssert h[mfMidpointOff].state == fsDone, "the midpoint does not use the offset's unit"
-      st.shutdown()
-
   block joinedSegy:
-    # `surveySps`'s survey and a SEG-Y shot of it: channel 8's offset 50 over, channel 12's
-    # receiver position 30 east of its station
+    # `surveySps`'s survey and a SEG-Y shot of it: channel 12's receiver position 30 east of
+    # its station
     for mode in [hcFill, hcReplace]:
       withFixtures fx:
         let sps = fx.surveySps()
-        let shot = fx.surveyShotSegy("shot.sgy", badOffset = 7, movedReceiver = 11)
+        let shot = fx.surveyShotSegy("shot.sgy", movedReceiver = 11)
         var st = initAppState(indexCache = fx.dir / "cache")
         st.shown shot
         st.withGeometry
         let base = st.sessions[0].base
-        doAssert 7 + base in st.filterHits[mfOffsetOff].traces
         doAssert st.filterHits[mfPositionOff].state == fsNotChecked and
           "no survey is imported" in st.filterHits[mfPositionOff].note
         st.joinTo(sps, mode)
         let h = st.filterHits
-        # the file's own header offset is compared, whatever the join did to the keys'
-        doAssert h[mfOffsetOff].state == fsDone, $h[mfOffsetOff]
-        if mode == hcFill: # the positions in force are the header's: the moved one's offset too
-          doAssert h[mfOffsetOff].traces == @[7 + base, 11 + base], $h[mfOffsetOff].traces
-        else: # the survey's positions are in force
-          doAssert h[mfOffsetOff].traces == @[7 + base], $mode & ": " & $h[mfOffsetOff].traces
         doAssert h[mfPositionOff].state == fsDone and h[mfPositionOff].traces == @[11 + base],
           $mode & ": " & $h[mfPositionOff]
         doAssert st.recordQc.geometry.receiversOff == 1 and
@@ -412,9 +346,6 @@ proc main*() =
       doAssert h[mfPositionOff].state == fsNotChecked and h[mfPositionOff].traces.len == 0 and
         "look like feet and the survey's like metres" in h[mfPositionOff].note,
         $h[mfPositionOff]
-      doAssert h[mfOffsetOff].state == fsNotChecked and
-        "look like metres and the positions like feet" in h[mfOffsetOff].note,
-        $h[mfOffsetOff]
       st.shutdown()
 
   block segdAndASecondJoin:
@@ -439,10 +370,6 @@ proc main*() =
       doAssert st.filterHits[mfPositionOff].state == fsNotChecked, "no survey is imported"
       st.join(far.s, far.r, far.x)
       var h = st.filterHits
-      # SEG-D has no offset of its own: not judged, never "(0)"
-      for f in [mfOffsetOff, mfMidpointOff]:
-        doAssert h[f].state == fsNotChecked and "computed from the positions" in h[f].note,
-          $f & ": " & $h[f]
       # the 12 receivers of line 100, 50 m off, marked and said to share the shift; the one
       # source, 25 m off, said and marked at the source; line 101 is not in the survey
       doAssert h[mfPositionOff].state == fsDone and h[mfPositionOff].count == 12, $h[mfPositionOff]
@@ -450,9 +377,9 @@ proc main*() =
       doAssert g.receiversOff == 12 and g.sourcesOff == 1 and
         near(g.positionDistance[2], 50.0), $g.positionDistance
       doAssert h[mfPositionOff].sources.len == 1, $h[mfPositionOff].sources
-      var lines = g.geometryLines(false, false, true)
-      doAssert "12 stations sit about 50 m west of the survey (the same shift for all: check " &
-        "the survey file or the coordinate frame)." in lines, $lines
+      var lines = g.geometryLines
+      doAssert "12 stations sit about 50 m west of the survey (the same shift for all of them: " &
+        "check the survey file or the coordinate frame)." in lines, $lines
       doAssert "The source 1/1001 is 25 m from the survey." in lines, $lines
       doAssert "12 traces' stations are not in the survey: not judged." in lines, $lines
       # a second join over the first compares the file's own headers again: none off, then
@@ -466,7 +393,7 @@ proc main*() =
         @[stationKey(SrcLine, FirstSrcPoint, 1)], $h[mfPositionOff]
       doAssert "1 source off" in h[mfPositionOff].note and "0 receivers off" in
         h[mfPositionOff].note, h[mfPositionOff].note
-      lines = g.geometryLines(false, false, true)
+      lines = g.geometryLines
       doAssert lines == @["The source 1/1001 is 25 m from the survey.",
         "12 traces' stations are not in the survey: not judged."], $lines
       st.join(far.s, far.r, far.x)
@@ -498,9 +425,49 @@ proc main*() =
       let h = st.filterHits
       doAssert h[mfPositionOff].state == fsDone and h[mfPositionOff].traces.len == 30,
         $h[mfPositionOff]
-      let lines = st.recordQc.geometry.geometryLines(false, false, true)
-      doAssert "30 stations sit about 50 m east of the survey (the same shift for all: check " &
-        "the survey file or the coordinate frame)." in lines, $lines
+      let lines = st.recordQc.geometry.geometryLines
+      doAssert "30 stations sit about 50 m east of the survey (the same shift for all of them: " &
+        "check the survey file or the coordinate frame)." in lines, $lines
+      doAssert st.recordQc.geometry.furtherOff == 0
+      st.shutdown()
+
+  block aShiftAndFurther:
+    # 26 receivers 50 m east, 4 at 170 m: the shift said for the 26, the 4 counted apart;
+    # all 30 marked, the 4 known
+    withFixtures fx:
+      const Far = [3, 10, 17, 24]
+      var off = shifted(30, 50, 0)
+      for i in Far: off[i] = (170.0, 0.0)
+      var st = fx.onLine(off)
+      let base = st.sessions[0].base
+      let h = st.filterHits
+      let g = st.recordQc.geometry
+      doAssert h[mfPositionOff].state == fsDone and h[mfPositionOff].traces.len == 30,
+        $h[mfPositionOff]
+      doAssert g.shift.stations == 26 and g.furtherOff == 4, $g.shift & " " & $g.furtherOff
+      var further: seq[int] = @[]
+      for i in Far: further.add base + i
+      doAssert g.furtherTraces == further, $g.furtherTraces
+      doAssert "26 stations sit about 50 m east of the survey (the same shift for all of them: " &
+        "check the survey file or the coordinate frame); 4 more are further off." in
+        g.geometryLines, $g.geometryLines
+      st.shutdown()
+
+  block aSmallRecordInFeet:
+    # 3 receivers and the source, every coordinate 3.28084 times the survey's: too few for a
+    # share, but each is scaled: not judged with the units, no source said far off
+    withFixtures fx:
+      let sps = fx.lineSurvey("small", 3)
+      var st = initAppState(indexCache = fx.dir / "cache")
+      st.shown fx.lineShot("small.sgy", shifted(3, 0, 0), scale = 3.28084)
+      st.withGeometry
+      st.joinTo(sps, hcFill)
+      let h = st.filterHits
+      doAssert h[mfPositionOff].state == fsNotChecked and h[mfPositionOff].sources.len == 0 and
+        "look like feet and the survey's like metres (4 of 4 stations)" in
+        h[mfPositionOff].note, $h[mfPositionOff]
+      for line in st.recordQc.geometry.geometryLines:
+        doAssert not line.startsWith("The source"), line
       st.shutdown()
 
   block movedToItsHeaders:
@@ -523,26 +490,8 @@ proc main*() =
         st.recordQc.geometry.movedAgree == 1), "the move did not clear the station: " &
         $st.recordQc.geometry
       doAssert st.filterHits[mfPositionOff].traces.len == 0, $st.filterHits[mfPositionOff]
-      let lines = st.recordQc.geometry.geometryLines(false, false, true)
+      let lines = st.recordQc.geometry.geometryLines
       doAssert "1 station moved to agree with the headers." in lines, $lines
-      st.shutdown()
-
-  block noOffsetGiven:
-    # headers that give no offset and no midpoint, after a replace join with a receiver 5.5 m
-    # off: its position marked, the offset and midpoint not given, none invented
-    withFixtures fx:
-      var off = shifted(24, 0, 0)
-      off[4] = (5.5, 0.0)
-      var st = fx.onLine(off, offsets = false)
-      let base = st.sessions[0].base
-      let h = st.filterHits
-      doAssert h[mfPositionOff].traces == @[base + 4], $h[mfPositionOff]
-      for f in [mfOffsetOff, mfMidpointOff]:
-        doAssert h[f].state == fsNotChecked and h[f].traces.len == 0, $f & ": " & $h[f]
-      let g = st.recordQc.geometry
-      doAssert g.noOffset == 24 and g.noMidpoint == 24 and g.offsetCompared == 0, $g
-      let lines = g.geometryLines(true, true, false)
-      doAssert "24 traces give no offset; 24 give no midpoint: not judged." in lines, $lines
       st.shutdown()
 
   block staleIndexCache:
@@ -582,6 +531,14 @@ proc main*() =
       doAssert st.filterHits[mfPositionOff].state == fsNotChecked and
         "the file's own headers could not be read (no index for this file)" in
         st.filterHits[mfPositionOff].note, $st.filterHits[mfPositionOff]
+      # the cache current again: the next check reads the headers (the answer was not kept)
+      let s = st.sessions[0]
+      var disk = openSeismic(s.path, keys = true)
+      disk.saveIndex(indexCacheFile(st.indexCache, s.path))
+      disk.close()
+      st.tolerance(2)
+      doAssert st.filterHits[mfPositionOff].state == fsDone and
+        st.filterHits[mfPositionOff].traces.len == 0, $st.filterHits[mfPositionOff]
       st.shutdown()
 
   # ---- with the file system's calls counted, and failing where asked
@@ -593,11 +550,18 @@ proc main*() =
       let path = st.sessions[0].path
       let before = calls(foHeaders, path)
       for round in 0 ..< 3:
-        for filters in [{mfPositionOff}, {mfOffsetOff, mfMidpointOff, mfPositionOff}]:
+        for filters in [{mfPositionOff}, {mfDead, mfPositionOff}]:
           st.on(filters)
           doAssert st.settle(st.checked and st.recordQc.geometry.ready)
       doAssert calls(foHeaders, path) == before, "the own headers read again: " &
         $(calls(foHeaders, path) - before)
+      doAssert st.filterHits[mfPositionOff].state == fsDone
+      # the vendor maps loaded again: what was read with the others is read again
+      let gen = st.vendorGen
+      st.apply Command(kind: ckReloadVendors)
+      doAssert st.settle(st.vendorGen > gen and st.checked and st.recordQc.geometry.ready and
+        st.jobs.active.len == 0)
+      doAssert calls(foHeaders, path) > before, "the own headers kept over a load of the maps"
       doAssert st.filterHits[mfPositionOff].state == fsDone
       st.shutdown()
 

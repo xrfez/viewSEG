@@ -119,7 +119,9 @@ const
   MapFilterNames: array[MapFilter, string] = ["dead", "undecodable", "killed", "noisy",
     "clipped", "spiky", "constant", "weak", "dcOffset", "allZero", "notANumber", "missing",
     "unlisted", "duplicate", "auxiliary", "noPosition", "reversed", "spreadDiffers", "louder",
-    "notJudged", "offsetOff", "midpointOff", "positionOff"]
+    "notJudged", "positionOff"]
+  RetiredFilterNames = ["offsetOff", "midpointOff"]
+    ## filters there are no more: a settings file that names them reads without a problem
   CoordinateNames: array[HeaderCoordinates, string] = ["fill", "replace"]
   TraceMatchNames: array[TraceMatch, string] = ["auto", "station", "channel"]
   MaxLineNames = 1000  ## line names mapped to numbers, kept
@@ -1258,7 +1260,8 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
             var on: set[MapFilter]
             for v in k.kids:
               var f = mfDead
-              if r.pick(v, MapFilterNames, "filters", f): on.incl f
+              if v.kind == nkIdent and v.text in RetiredFilterNames: discard
+              elif r.pick(v, MapFilterNames, "filters", f): on.incl f
             result.map.filters = on
           elif k.isTree("template"):
             template t: untyped = result.map.spreadTemplate

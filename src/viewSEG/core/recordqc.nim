@@ -37,9 +37,8 @@
 ##   station with its index, index 0 any; one component counted once), so
 ##   that the map can place them. Without stations in the headers (traces
 ##   matched by channel) the counts are given and the traces not placed.
-## - **The geometry** of the keys (`core/geometryqc`): the traces whose header offset
-##   or midpoint disagrees with their positions, from the keys alone, so a join or a station
-##   move changes them; not judged where the coordinates are not lengths of the offsets' unit.
+## - **The geometry** (`core/geometryqc`): the traces whose own header receiver position (the
+##   file's, read from disk) is not where the survey's station, or its station move, puts it.
 ##
 ## The job reads the file (it is in its `reads`) and the relation records in
 ## place: the caller keeps them alive and unchanged until it ends.
@@ -71,10 +70,11 @@ type
     key*: tuple[file: SessionId; gather, keys: int; relations: pointer; domain: RelationDomain;
         traceMatch: TraceMatch; placed: Placed; samples: bool;
         own: string; noise: NoiseSettings; breaks: BreakKey; share: int;
-        geometry: GeometryAsk]
+        geometry: GeometryAsk; vendors: int]
       ## what the job, or `hits`, were made from (`noise`, `breaks` and `share` only when the
       ## noisy-trace test runs: `share` 0 finds the first breaks itself, 1 waits for the
-      ## overlay's job to end, 2 takes the overlay's result)
+      ## overlay's job to end, 2 takes the overlay's result; `vendors` the vendor maps' load the
+      ## file's own headers are read with)
     hits*: array[MapFilter, FilterHits] ## of the filters in `TraceFilters`
     record*: int64 = -1
       ## the relation record (X: a shot's; O: the first of a receiver's) the job
@@ -389,8 +389,9 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
   ## When `view` is set, the samples are that view's listen time, not the raw
   ## record, and `path` (the virtual path) is not mapped. `geometry` says what the geometry
   ## filters are given (`core/geometryqc`): they are found from the keys and from the file's
-  ## own headers (`cachedOwn`, what an earlier job read of them; what it lacks is read, the
-  ## positions by opening the file again with `ownOpen` when `geometry.own`), and posted
+  ## own header positions (`cachedOwn`, what an earlier job read of them; else read by opening
+  ## the file again with `ownOpen` when `geometry.own`, tried again by every job until read),
+  ## and posted
   ## first, on their own (`qcGeometryOnly`, with what was read), so a record whose samples
   ## cannot be read, or whose read hangs, still has them.
   result = proc (ctx: JobContext) {.gcsafe.} =
@@ -411,17 +412,11 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
       revision = f.keysRevision
       var ownHeaders = cachedOwn
       var fresh = false
-      if geometry.given and ownHeaders.given.len != traces.len:
-        ctx.setPhase "reading the record's own headers"
-        try:
-          ownHeaders.given = givenOf(file, path, traces)
-          fresh = true
-        except CatchableError:
-          ownHeaders.given.setLen 0 # (the offsets are then said not judged)
-      if geometry.own and ownHeaders.rows.len != traces.len and ownHeaders.why.len == 0:
+      if geometry.own and ownHeaders.rows.len != traces.len:
         ctx.setPhase "reading the record's own header positions"
         ownHeaders.why = ownRowsOf(file, path, traces, ownOpen,
           proc (): bool {.gcsafe, raises: [].} = ctx.cancelled, ownHeaders.rows)
+        ownHeaders.vendors = ownOpen.vendors
         fresh = true
       var geometrySummary = checkGeometryOf(f, traces, base, geometry, ownHeaders, hits)
       var first: array[MapFilter, FilterHits]

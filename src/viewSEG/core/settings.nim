@@ -404,7 +404,8 @@ func cleaned*(s: Settings): (Settings, int) =
   ## and finite, a monitor calibrated twice: the last one counts, a field
   ## listed twice, a sort preset without a name or keys, or named twice, a
 ## display preset that cannot be named so, or named twice),
-  ## and how many entries were dropped. A recent file listed twice, or a
+  ## and how many entries were dropped. A position tolerance out of its range is brought into
+  ## it (`boundedTolerance`), uncounted. A recent file listed twice, or a
   ## sort key given twice in one order, is kept once without counting.
   var r = s
   r.calibrations.setLen 0
@@ -435,6 +436,7 @@ func cleaned*(s: Settings): (Settings, int) =
   if not (r.window.width > 0 and r.window.height > 0):
     r.window = WindowPlacement()
   r.map.spreadTemplate = bounded(s.map.spreadTemplate)
+  r.map.positionTolerance = boundedTolerance(s.map.positionTolerance)
   r.noise = bounded(s.noise)
   r.itemThreads = clamp(s.itemThreads, 0, MaxItemThreads)
   r.displayPresets = cleaned(s.displayPresets)

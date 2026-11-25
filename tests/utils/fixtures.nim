@@ -842,7 +842,7 @@ func mapWave(offset: float64; i: int): float32 =
   sample(offset, float64(i) * DtMs / 1000)
 
 proc mapTrace(w: var SeismicWriter; record: int64; channel: int; sl, sk, rl, rk: int;
-    ensemble = 0.0; status = tsLive; scale = 1.0; offsetOver = 0.0) =
+    ensemble = 0.0; status = tsLive; scale = 1.0) =
   ## One trace of field record `record` from `mapSps`'s source `sk` of source
   ## line `sl` to receiver `rk` of receiver line `rl` (0-based), with
   ## coordinates (and stations, which SEG-Y does not keep) in its keys.
@@ -857,15 +857,13 @@ proc mapTrace(w: var SeismicWriter; record: int64; channel: int; sl, sk, rl, rk:
   (k.t0Ms, k.intervalUs, k.status) = (0.0, DtMs * 1000, status)
   var buf = newSeq[float32](Samples)
   for i in 0 ..< Samples: buf[i] = float32(scale * float64(mapWave(k.offset, i)))
-  k.offset += offsetOver # (the samples are of the true offset)
   w.writeTrace(k, buf)
 
-proc surveyShotSegy*(fx: Fixtures; name: string; badOffset = -1; movedReceiver = -1;
+proc surveyShotSegy*(fx: Fixtures; name: string; movedReceiver = -1;
     coordScale = 1.0): string =
   ## Shot 0 of `surveySps`'s survey as a SEG-Y file (its headers name no station: the join
-  ## finds them by the field record number); channel `badOffset` + 1's offset is 50 over its
-  ## distance, channel `movedReceiver` + 1's receiver position 30 east of its station, every
-  ## coordinate `coordScale` times the survey's.
+  ## finds them by the field record number); channel `movedReceiver` + 1's receiver position
+  ## 30 east of its station, every coordinate `coordScale` times the survey's.
   result = fx.dir / name
   var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1, measurementSystem: 1,
     text: @["C01 viewSEG test fixture: a shot of the survey"]))
@@ -875,7 +873,6 @@ proc surveyShotSegy*(fx: Fixtures; name: string; badOffset = -1; movedReceiver =
     (k.record, k.channel, k.srcPoint) = (float64(FirstRecord), float64(i + 1), FirstSrcPoint)
     (k.t0Ms, k.intervalUs, k.status) = (0.0, DtMs * 1000, tsLive)
     k.offset = abs(rcvX(i + 1) - srcX(0))
-    if i == badOffset: k.offset += 50
     let east = if i == movedReceiver: 30.0 else: 0.0
     (k.srcX, k.srcY, k.rcvX, k.rcvY) = (srcX(0) * coordScale, OriginY * coordScale,
       (rcvX(i + 1) + east) * coordScale, OriginY * coordScale)
@@ -889,8 +886,7 @@ const MapFfid* = 1000
   ## record is found by the source's station, as a recorder numbers its
   ## files its own way
 
-proc mapShotSegy*(fx: Fixtures; line, k: int; name = ""; measurementSystem = 1'i16;
-    badOffset = -1): string =
+proc mapShotSegy*(fx: Fixtures; line, k: int; name = ""; measurementSystem = 1'i16): string =
   ## The shot record of `mapSps`'s source `k` of source line `line` (0-based;
   ## FFID `MapFfid + mapRecord`): a trace for each of its 63 receivers, line
   ## by line, with coordinates in the headers (SEG-Y keeps no stations
@@ -903,9 +899,7 @@ proc mapShotSegy*(fx: Fixtures; line, k: int; name = ""; measurementSystem = 1'i
     text: @["C01 viewSEG test fixture: a shot of the map's spread"]))
   for rl in 0 ..< MapRcvLines.len:
     for rk in 0 ..< MapRcvPoints:
-      let n = rl * MapRcvPoints + rk
-      w.mapTrace(MapFfid + mapRecord(line, k), n + 1, line, k, rl, rk,
-        offsetOver = (if n == badOffset: 50.0 else: 0.0))
+      w.mapTrace(MapFfid + mapRecord(line, k), rl * MapRcvPoints + rk + 1, line, k, rl, rk)
   w.checkClose()
 
 proc mapReceiverSegy*(fx: Fixtures; line, k: int): string =
