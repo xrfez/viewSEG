@@ -59,7 +59,7 @@ import parseSEG/model/traceindex
 import processSEG
 import correlatejobs, edits, filekinds, filesystem, jobs, outputnames, outputnamevalues,
     outputrevision,
-  outputbinary, outputtext, panels, processing, reader, references, session, signatures, sorting,
+  outputbinary, outputtext, panels, plancache, processing, reader, references, session, signatures, sorting,
   vendorlines, vendormaps
 
 export outputrevision
@@ -69,6 +69,11 @@ var correlateInBlocks* = true
   ## trace per call, as it did before the pooled call; the bytes written are the
   ## same either way, so that path is the reference the tests compare against.
   ## It is read once per write, on the job thread, when the write starts.
+
+var planCacheBytes* = 64 shl 20
+  ## Test only: the bytes of correlation plans a pilot write keeps, one per record, so
+  ## that traces of several records written in turn do not rebuild a plan each.
+  ## Read once per write, on the job thread, when the write starts.
 
 const
   TraceBlock = 64 ## traces read, then written, between two cancel checks
@@ -657,6 +662,8 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
       var corrDtMs = 0.0
       let blocked = correlateInBlocks ## the pool, or the one-row call (tests)
       var pool: ProcessPool ## joined when this proc ends, on every path
+      var planCache = initPlanCache(planCacheBytes) ## blocked pilot writes: plans by record
+      var blockSlot: seq[int] = @[] ## each row's place in the block, grouped by plan
       var blockSrc: seq[float32] = @[] ## up to TraceBlock traces of a record, as read
       var blockDst: seq[float32] = @[]
       var blockKeys: seq[TraceKeys] = @[]
@@ -716,12 +723,14 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
         corrDst = newSeq[float32](listen)
         if blocked:
           pool = newProcessPool(workerCount())
+          discard planCache.put(0, corrPlans[0]) # the first record's plan, as built above
           blockSrc = newSeq[float32](TraceBlock * recordSamples)
           blockDst = newSeq[float32](TraceBlock * listen)
           blockKeys = newSeq[TraceKeys](TraceBlock)
           for k in blockKeys.mitems: k = initTraceKeys()
           blockCounts = newSeq[int](TraceBlock)
           for c in blockCounts.mitems: c = recordSamples
+          blockSlot = newSeq[int](TraceBlock)
           rowShifted = newSeq[bool](TraceBlock)
           rowKeeps = newSeq[bool](TraceBlock)
         corrDtMs = ready.dtMs
@@ -1161,40 +1170,65 @@ proc writeOutput*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           finishOne(t, shifted)
         template writeCorrelated(list: openArray[int]) =
           ## The correlated path for up to TraceBlock traces: each read and
-          ## prepared as writeOne does, then the rows of one plan correlated
-          ## together on the pool, then each written in order.
+          ## prepared as writeOne does and placed with the rows of its plan, then
+          ## each plan's rows correlated together on the pool, then each written
+          ## in the order given.
           let rows = list.len
+          var kinds: seq[int] = @[] ## the plans in the block, as first met
+          var fill: seq[int] = @[] ## rows of each, counted, then the next free slot
+          for i in 0 ..< rows:
+            let want = planFor(list[i])
+            var g = kinds.find(want)
+            if g < 0:
+              g = kinds.len
+              kinds.add want
+              fill.add 0
+            inc fill[g]
+            blockSlot[i] = g
+          var next = 0
+          for g in 0 ..< kinds.len:
+            let count = fill[g]
+            fill[g] = next
+            next += count
+          var starts = fill ## where each plan's rows begin
+          for i in 0 ..< rows:
+            let g = blockSlot[i]
+            blockSlot[i] = fill[g]
+            inc fill[g]
           for i in 0 ..< rows:
             let t = list[i]
+            let slot = blockSlot[i]
             readSamples(t)
             fitRecord()
             var dead, keeps = false
-            rowShifted[i] = false
-            prepareCorrelation(t, rowShifted[i], dead, keeps)
-            blockKeys[i].status = if dead: tsDead else: tsLive
-            rowKeeps[i] = keeps
-            copyMem(addr blockSrc[i * recordSamples], addr samples[0],
+            rowShifted[slot] = false
+            prepareCorrelation(t, rowShifted[slot], dead, keeps)
+            blockKeys[slot].status = if dead: tsDead else: tsLive
+            rowKeeps[slot] = keeps
+            copyMem(addr blockSrc[slot * recordSamples], addr samples[0],
               recordSamples * sizeof(float32))
-          var from0 = 0
-          while from0 < rows:
-            let want = planFor(list[from0])
-            var upTo = from0 + 1
-            while upTo < rows and planFor(list[upTo]) == want: inc upTo
-            ensurePlan(want)
+          for g in 0 ..< kinds.len:
+            let from0 = starts[g]
+            let upTo = if g + 1 < kinds.len: starts[g + 1] else: rows
+            var at = planCache.find(kinds[g])
+            if at < 0:
+              let got = loadSweep(file, source, pilotLoads[kinds[g]].load)
+              at = planCache.put(kinds[g],
+                storedSweepPlan(got.samples, planDt, corrDtMs, recordSamples))
             let meta = initChunkMeta(rowsOf(blockKeys.toOpenArray(from0, upTo - 1),
               blockCounts.toOpenArray(from0, upTo - 1)), corrDtMs)
-            pool.correlateInto(corrPlans[0],
+            pool.correlateInto(planCache.plan(at),
               rowBlock(blockSrc, TraceBlock, recordSamples).sub(from0 ..< upTo),
               rowBlock(blockDst, TraceBlock, listen).sub(from0 ..< upTo), meta)
-            from0 = upTo
           for i in 0 ..< rows:
+            let slot = blockSlot[i]
             samples.setLen recordSamples
-            copyMem(addr samples[0], addr blockSrc[i * recordSamples],
+            copyMem(addr samples[0], addr blockSrc[slot * recordSamples],
               recordSamples * sizeof(float32))
-            if not rowKeeps[i]:
-              for j in 0 ..< listen: samples[j] = blockDst[i * listen + j]
+            if not rowKeeps[slot]:
+              for j in 0 ..< listen: samples[j] = blockDst[slot * listen + j]
             samples.setLen(listen)
-            finishOne(list[i], rowShifted[i])
+            finishOne(list[i], rowShifted[slot])
         template writeList(list: openArray[int]) =
           if list.len > 0:
             if stopAsked(ctx): abort(sink, dest, part, claimed, "Cancelled.", true)
