@@ -507,7 +507,9 @@ how many; **Unread** opens that list, each with the reason.
 
 **Reports > Vibrator QC of a folder** judges the vibrator signature files you choose, with
 the project's vibrator QC configuration. The item is always active; nothing is listed or run
-until you choose a folder or files and press **Run**.
+until you choose a folder or files and press **Run**. The files are judged several at a time
+(up to eight, fewer on a machine with fewer cores), so the progress counts the files done and
+names the one just finished; the table is the same, in the same order, as one file at a time.
 
 The **Vibrator QC** window stays closed until you ask for it. It opens as a tab beside
 the **Seismic** window, and that tab is the one in front. The close button on its tab (or
