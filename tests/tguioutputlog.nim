@@ -224,8 +224,8 @@ proc main*() =
       let addTxt = exportTo(fx.dir / "logs-out" / "run1")
       step("an export over an existing file with .txt added is refused",
         proc (f: FrameInfo): bool =
-          if beforeOne.len == 0: beforeOne = readFile(log1)
-          addTxt(f), proc (f: FrameInfo): bool = said(f, ExportExists))
+        if beforeOne.len == 0: beforeOne = readFile(log1)
+        addTxt(f), proc (f: FrameInfo): bool = said(f, ExportExists))
       step("an export over a file the run read is refused", exportTo(sourceFile),
         proc (f: FrameInfo): bool = said(f, ExportIsData))
 
