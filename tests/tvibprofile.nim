@@ -13,7 +13,8 @@
 ## Seen to fail: with `applied` not naming a reference absent from the archive,
 ## `gone.problems.len == 1`; with the job's weights left out of the document,
 ## `"(vibWeights" in text`. With the typed force's unit left out of the
-## document, `unit` does not find `(forceHundredUnit "counts")`.
+## document, `unit` does not find `(forceHundredUnit "counts")`. With the accelerometer set
+## compared for every unit, `sameForce` found newtons of set A and of set B differing.
 ##
 ## What is kept: `vibProfile` on the project (`hasVibProfile` when one was stored);
 ## `vibWeights` for the job's weights (`jobWeights`).
@@ -170,6 +171,29 @@ proc main*() =
     doAssert problems.len == 0, $problems
     doAssert not read.vibProfile.forceHundredSetKnown
     doAssert read.vibProfile.forceHundredUnit == "pound-counts"
+
+  block sameForce:
+    ## Values an older document kept per vibrator agree only when they are the same force:
+    ## the same number in another unit is another force, and so are pound-counts of another
+    ## accelerometer set; newtons on set A and on set B are the same force.
+    func agree(a, b: VibHundred): bool =
+      var p = VibQcProfile(olderHundreds: @[a, b])
+      p.takeOlder
+      result = not p.forceHundredPct.isNaN and p.hundredConflict.len == 0
+    let n = VibHundred(vibrator: 11, pct: 5, unit: "N")
+    doAssert not agree(n, VibHundred(vibrator: 12, pct: 5, unit: "counts"))
+    let pcA = VibHundred(vibrator: 11, pct: 5, unit: "pound-counts", accelSet: asA,
+      setKnown: true)
+    var pcB = pcA
+    (pcB.vibrator, pcB.accelSet) = (12, asB)
+    doAssert not agree(pcA, pcB)
+    var nA = n
+    (nA.accelSet, nA.setKnown) = (asA, true)
+    var nB = n
+    (nB.vibrator, nB.accelSet, nB.setKnown) = (12, asB, true)
+    doAssert agree(nA, nB)
+    doAssert agree(nA, VibHundred(vibrator: 12, pct: 5, unit: "N"))
+    doAssert sameKind(nA, nB) and not sameKind(pcA, pcB)
 
   block weights:
     var d = ProjectDoc(name: "Land 2026")

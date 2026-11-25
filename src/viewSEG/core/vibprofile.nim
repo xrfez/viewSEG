@@ -162,10 +162,11 @@ func setHundred*(p: var VibQcProfile; h: VibHundred) =
   p.hundredFile = h.file
   p.hundredVibrator = h.vibrator
 
-func sameKind(a, b: VibHundred): bool =
-  ## Whether two values are the same force: the same number in the same unit and set.
-  sameFloat(a.pct, b.pct) and a.unit == b.unit and a.setKnown == b.setKnown and
-    (not a.setKnown or a.accelSet == b.accelSet)
+func sameKind*(a, b: VibHundred): bool =
+  ## Whether two values are the same force: the same number in the same unit and, in
+  ## pound-counts (the one unit that depends on the accelerometer set), the same set.
+  sameFloat(a.pct, b.pct) and a.unit == b.unit and (a.unit != "pound-counts" or
+    a.setKnown == b.setKnown and (not a.setKnown or a.accelSet == b.accelSet))
 
 func takeOlder*(p: var VibQcProfile) =
   ## Reads what an older document kept, in `forceHundredPct` and `olderHundreds` (a value per
