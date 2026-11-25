@@ -534,8 +534,8 @@ proc fail(sink: QualitySink; why: string; unread: seq[tuple[path, why: string]])
 proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: QualitySink;
     cacheDir = ""; noise = NoiseSettings();
     forced = initTable[string, RecordingKind](); untold = ukNotChecked;
-    folderRun = false; relations: ref SurveyGeometry = nil;
-    receivers: ref SurveyGeometry = nil; traceMatch = tmAuto): JobWork =
+    folderRun = false; relations: ptr SurveyGeometry = nil;
+    receivers: ptr SurveyGeometry = nil; traceMatch = tmAuto): JobWork =
   ## The work of a job that scans `paths` and fills `sink` (`qualitySpec`
   ## is the spec to submit it with). Worker-only. `edits` is keyed by the
   ## path strings in `paths`. A cancel raises `JobCancelledError` and leaves
@@ -554,8 +554,9 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
   ## the map's check finds them (`recordqc.leftOutOfTemplate`, `traceMatch` as the join's).
   ## They are not measured, not counted in a station or a total, and counted apart
   ## (`Totals.outside`). A record whose template is not found is measured whole; nil
-  ## `relations` or `receivers` leaves that side's records whole. The caller keeps them
-  ## alive and unchanged until the job ends.
+  ## `relations` or `receivers` leaves that side's records whole. They are read in place:
+  ## the work holds their addresses, never a `ref`, and the caller keeps them alive and
+  ## unchanged until the work is back (`Jobs.workingOn`; the app's `holdGeometry`).
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     var st = ScanState(builds: [initQualityBuild(), initQualityBuild()])
@@ -563,8 +564,7 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
       # the files, each path once (compared normalised)
       var args = QualityItems(cacheDir: cacheDir, noise: noise, untold: untold,
         folderRun: folderRun, traceMatch: traceMatch,
-        shotTemplate: (if relations.isNil: nil else: unsafeAddr relations[]),
-        receiverTemplate: (if receivers.isNil: nil else: unsafeAddr receivers[]))
+        shotTemplate: relations, receiverTemplate: receivers)
       var seen = initHashSet[string]()
       var at: seq[int] = @[]
       for path in paths:
@@ -626,19 +626,21 @@ proc editsFor(paths: openArray[string]; snap: EditsSnapshot): Table[string, File
 
 proc fileScan*(path, cacheDir: string; snap: EditsSnapshot; sink: QualitySink;
     noise: NoiseSettings; forced = initTable[string, RecordingKind](); untold = ukNotChecked;
-    relations: ref SurveyGeometry = nil; receivers: ref SurveyGeometry = nil;
+    relations: ptr SurveyGeometry = nil; receivers: ptr SurveyGeometry = nil;
     traceMatch = tmAuto): JobWork =
   ## The work of a job that scans the one file `path`, with the edits `snap` holds for it.
+  ## `relations` and `receivers` as `scanQuality` reads them.
   scanQuality(@[path], editsFor([path], snap), sink, cacheDir, noise, forced, untold,
     relations = relations, receivers = receivers, traceMatch = traceMatch)
 
 proc folderScan*(folder: string; subfolders: bool; cacheDir: string; snap: EditsSnapshot;
     sink: QualitySink; note: QualityNote; noise: NoiseSettings;
     forced = initTable[string, RecordingKind](); untold = ukNotChecked;
-    relations: ref SurveyGeometry = nil; receivers: ref SurveyGeometry = nil;
+    relations: ptr SurveyGeometry = nil; receivers: ptr SurveyGeometry = nil;
     traceMatch = tmAuto): JobWork =
   ## The work of a job that lists the seismic files of `folder`, its subfolders only
-  ## when `subfolders`, and scans them as `scanQuality` does. `note.capped` says the list
+  ## when `subfolders`, and scans them as `scanQuality` does (`relations` and `receivers`
+  ## read in place as it reads them). `note.capped` says the list
   ## stopped at the file limit.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()

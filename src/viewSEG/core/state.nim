@@ -883,8 +883,9 @@ type
     held: bool ## the derived view stays; the file is opened and correlated, not shown raw
 
   SurveyHolds = ref object
-    ## The project's survey a batch write joins from, kept alive for its job.
-    ## A ref so the window, which holds the state read-only, can add to it.
+    ## The geometries jobs read in place (the project's survey a batch write joins from, the
+    ## relation records and the survey a window's scan reads), kept alive for each job.
+    ## A ref so the windows, which hold the state read-only, can add to it.
     held: seq[tuple[job: JobId; geometry: ref SurveyGeometry]]
       ## per running job
     left: seq[tuple[job: JobId; geometry: ref SurveyGeometry]]
@@ -1369,7 +1370,8 @@ type
       ## each record panel's overlay as it shows it (`shownBreaks`), made when its result or
       ## its model changes rather than on every frame
     batchSurvey: SurveyHolds
-      ## the survey each batch write's job joins from (`holdSurvey`), until it ends
+      ## the geometries each job given their addresses reads (`holdSurvey`, `holdGeometry`),
+      ## until it ends
     qcHeld: seq[tuple[job: JobId; relations: ref SurveyGeometry]]
       ## the relation records each filters' job reads in place, kept until it ends
     unitsWarned: string
@@ -2359,7 +2361,7 @@ proc keepForStragglers(state: var AppState) =
   for c in state.checking: GC_ref(c.relations)
   for c in state.leftChecks: GC_ref(c.relations)
   for c in state.qcHeld: GC_ref(c.relations)
-  for c in state.batchSurvey.held: GC_ref(c.geometry) # a batch write joins from it
+  for c in state.batchSurvey.held: GC_ref(c.geometry) # a batch write or a scan reads it
   for c in state.batchSurvey.left: GC_ref(c.geometry)
   if not state.joining.geometry.isNil: GC_ref(state.joining.geometry) # `joinApplyWork` reads it
   if not state.joining.relations.isNil: GC_ref(state.joining.relations)
@@ -2653,15 +2655,23 @@ func projectTableOnly*(state: AppState): bool =
   ## the table alone (`applyGeometry`), as the session decides it.
   state.project.doc.survey.len > 0 and state.project.doc.survey.allIt(it.kind == jkCsv)
 
+proc holdGeometry*(state: AppState; job: JobId; geometry: ref SurveyGeometry) =
+  ## Keeps `geometry` alive until `job` has ended, whatever the state does with its own
+  ## `ref` meanwhile (a layer unloaded, a survey cleared): a job given its address reads it in
+  ## place, and so shares no `ref` with this thread. Released here when the job is seen
+  ## finished or cancelled, and, for one abandoned, when its work is back (`Jobs.workingOn`);
+  ## at the quit, kept to the end of the process. Nil holds nothing.
+  assertUiThread()
+  if job != NoJob and not geometry.isNil:
+    state.batchSurvey.held.add (job, geometry)
+
 proc holdSurvey*(state: AppState; job: JobId) =
   ## Keeps the project's survey (the one `projectSurvey` gave when `job` was
   ## submitted, in the same frame) alive until `job` has ended, whatever the
   ## project does meanwhile: a close, a clear, an update or a new import
   ## frees the state's own copy. Released when the job is seen finished or
   ## cancelled, and, for one abandoned, when its work is back.
-  assertUiThread()
-  if job != NoJob and not state.project.geometry.isNil:
-    state.batchSurvey.held.add (job, state.project.geometry)
+  state.holdGeometry(job, state.project.geometry)
 
 func inProject*(state: AppState): bool {.inline.} =
   ## Whether a project is open.
@@ -10397,7 +10407,7 @@ proc finishO(state: var AppState; job: JobInfo) =
     state.log.add(sevError, "generate O file", state.oOutcome)
 
 proc releaseSurvey(state: AppState; job: JobInfo) =
-  ## Lets go of the survey a batch write's job joined from.
+  ## Lets go of the geometries `job` read (`holdGeometry`).
   for c in state.batchSurvey.held:
     if c.job == job.id and job.abandoned: state.batchSurvey.left.add c # its work still runs
   state.batchSurvey.held.keepItIf(it.job != job.id)

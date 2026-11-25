@@ -8,12 +8,18 @@
 ## clipped; 6 is dead in its header, 7 and 8 are clipped), and a receiver recording 5 sources
 ## whose O record lists the first 3 (source 3 is clipped, 4 is dead, 5 clipped).
 ##
+## The job reads the relation records by address: the app keeps them for it until its work is
+## back (`holdGeometry`), so the state letting go of its own `ref` meanwhile changes nothing.
+##
 ## Seen to fail: with the leaving out switched off in the scan (`measure` never asking
-## `leftOutOfTemplate`), `a_shot_s_unlisted_*` saw 8 traces where 5 were expected.
+## `leftOutOfTemplate`), `a_shot_s_unlisted_*` saw 8 traces where 5 were expected. With the
+## `holdGeometry` call left out of `the_relations_are_held_*`, the records were freed under the
+## job and another geometry took their place: it left out 0 traces where 3 were expected.
 
-import std/[math, os, strutils, tables]
+import std/[atomics, math, os, strutils, tables]
 import parseSEG
-import viewSEG/core/[edits, jobs, state, noisearea, qualityjobs, qualityreport, recordingkind, reportside]
+import viewSEG/core/[edits, filesystem, jobs, state, noisearea, qualityjobs, qualityreport,
+  recordingkind, reportside]
 import utils/[fixtures, qualityfolders, waiting]
 
 const H00 = "H00 SPS format version number   SPS 2.1;"
@@ -103,13 +109,33 @@ proc run(work: JobWork; paths: seq[string]; sink: QualitySink; threads = 0) =
     "the scan did not finish"
   doAssert sink.result.ok, sink.result.reason
 
+func addrOf(g: ref SurveyGeometry): ptr SurveyGeometry =
+  if g.isNil: nil else: addr g[]
+
 proc scanOne(path: string; kind: RecordingKind; relations, receivers: ref SurveyGeometry;
     templateOnly = true; threads = 0): QualityJobResult =
   let sink = QualitySink()
   run(scanQuality(@[path], initTable[string, FileEdits](), sink, "",
     NoiseSettings(templateOnly: templateOnly), forcedKinds([path], kind),
-    relations = relations, receivers = receivers), @[path], sink, threads)
+    relations = relations.addrOf, receivers = receivers.addrOf), @[path], sink, threads)
   sink.result
+
+var gate: Gate
+var reached: Atomic[bool]
+var mainThread: int
+
+proc holdOpen(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
+  {.cast(gcsafe).}:
+    if op in {foOpen, foMapped} and path.endsWith("held.sgd") and getThreadId() != mainThread:
+      reached.store(true)
+      var waited = 0
+      while not gate.isOpen and waited < 60_000:
+        sleep 1
+        inc waited
+
+template settle(st: var AppState; cond: untyped): bool =
+  waitUntil((discard st.drainInbox(); st.persist(); cond) and
+    (discard st.drainInbox(); st.persist(); cond))
 
 proc main*() =
   block a_shot_s_unlisted_traces_are_left_out_and_counted_apart:
@@ -130,7 +156,8 @@ proc main*() =
       doAssert digest(scanOne(path, rkShotGather, x, nil, threads = 4)) == same
       let sink = QualitySink()
       run(folderScan(fx.dir, false, "", EditsSnapshot(), sink, QualityNote(),
-        NoiseSettings(), forcedKinds([path], rkShotGather), relations = x), @[path], sink, 4)
+        NoiseSettings(), forcedKinds([path], rkShotGather), relations = x.addrOf), @[path],
+        sink, 4)
       doAssert sink.result.receivers.totals == r.totals
       doAssert stationsCsv(sink.result.receivers.stations) == stationsCsv(r.stations)
 
@@ -158,6 +185,36 @@ proc main*() =
       doAssert r.totals.outside == 2, "outside " & $r.totals.outside
       let all = scanOne(path, rkReceiverSliced, nil, rec, templateOnly = false).sources
       doAssert all.totals.traces == 5 and all.totals.outside == 0, $all.totals
+
+  block the_relations_are_held_for_the_job_until_its_work_is_back:
+    mainThread = getThreadId()
+    withFixtures fx:
+      let path = fx.dir / "held.sgd"
+      shotFile(path)
+      var st = initAppState()
+      st.rememberFilesIn(fx.dir / "config")
+      var x = surveyOf(xRec(1, "1.00", "99.00", 1, 5, 10, 1, 5))
+      gate.close()
+      reached.store(false)
+      setFsHook(holdOpen)
+      let sink = QualitySink()
+      let id = st.jobs.submit(qualitySpec(@[path]), scanQuality(@[path],
+        initTable[string, FileEdits](), sink, "", NoiseSettings(),
+        forcedKinds([path], rkShotGather), relations = addr x[]))
+      st.holdGeometry(id, x)
+      doAssert waitUntil(reached.load), "the job did not reach its file"
+      x = nil # the state's own `ref` goes (a layer unloaded): only the hold keeps them
+      # a geometry made now takes the memory of one freed: one that lists every station
+      let other = surveyOf(xRec(1, "1.00", "99.00", 1, 8, 10, 1, 8))
+      gate.open
+      doAssert st.settle(st.jobs.info(id).get.state in {jsDone, jsFailed}),
+        "the scan did not finish"
+      setFsHook(nil)
+      doAssert sink.result.ok, sink.result.reason
+      doAssert sink.result.receivers.totals.outside == 3,
+        "outside " & $sink.result.receivers.totals.outside
+      doAssert other[].relationCount(rdSource) == 1
+      st.shutdown()
 
 when isMainModule:
   main()

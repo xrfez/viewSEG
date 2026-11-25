@@ -8,10 +8,12 @@
 ## its job is no longer running, and drops an answer that is no longer the one asked for
 ## (another file shown or edited, another folder or the subfolders tick changed): the job is
 ## cancelled and its result never read. Edits are copied on the UI thread (`editsSnapshot`)
-## before a job is submitted: the worker must not read `AppState`. Nothing here is looked up
-## by a record number.
+## before a job is submitted: the worker must not read `AppState`. The relation records a job
+## reads are given to it by address, never as a `ref`, and the state keeps them until the job's
+## work is back (`holdGeometry`). Nothing here is looked up by a record number.
 
 import std/[algorithm, os, strutils, tables]
+from parseSEG import SurveyGeometry
 import imguin/cimgui
 import ../../core/[edits, filesystem, jobs, qualityjobs, qualityreport, settings, state]
 import ../../core/records as filerecs
@@ -284,15 +286,22 @@ proc templateKey(st: AppState): string =
   $st.settings.noise.templateOnly & "|" & $cast[int](x) & "|" & $cast[int](o) & "|" &
     $st.settings.join.traceMatch
 
+func addrOf(g: ref SurveyGeometry): ptr SurveyGeometry =
+  if g.isNil: nil else: addr g[]
+
 proc submitFile(ui: var QualityUi; st: AppState; key, path: string) =
   ui.file = Scan(key: key, running: true, status: Scanning, sink: QualitySink())
   var spec = qualitySpec(@[path])
   spec.title = "Trace quality in " & path.extractFilename
   spec.auto = true # started by the program as the file shown changes: its end is not announced
+  let (x, o) = (st.qcRelations(rdSource)[0], st.qcRelations(rdReceiver)[0])
   ui.file.job = st.jobs.submit(spec,
     fileScan(path, st.indexCache, st.editsSnapshot, ui.file.sink, st.settings.noise,
-      st.forcedKinds, relations = st.qcRelations(rdSource)[0],
-      receivers = st.qcRelations(rdReceiver)[0], traceMatch = st.settings.join.traceMatch))
+      st.forcedKinds, relations = x.addrOf, receivers = o.addrOf,
+      traceMatch = st.settings.join.traceMatch))
+  # the job reads them in place: the state keeps them until its work is back
+  st.holdGeometry(ui.file.job, x)
+  st.holdGeometry(ui.file.job, o)
 
 proc submitFolder(ui: var QualityUi; st: AppState; key: string) =
   let folder = st.settings.quality.folder
@@ -301,11 +310,14 @@ proc submitFolder(ui: var QualityUi; st: AppState; key: string) =
     note: QualityNote())
   var spec = qualitySpec(@[folder])
   spec.title = if name.len == 0: "Trace quality" else: "Trace quality in " & name
+  let (x, o) = (st.qcRelations(rdSource)[0], st.qcRelations(rdReceiver)[0])
   ui.folder.job = st.jobs.submit(spec,
     folderScan(folder, st.settings.quality.subfolders, st.indexCache, st.editsSnapshot,
       ui.folder.sink, ui.folder.note, st.settings.noise, st.forcedKinds,
-      st.settings.quality.untold, relations = st.qcRelations(rdSource)[0],
-      receivers = st.qcRelations(rdReceiver)[0], traceMatch = st.settings.join.traceMatch))
+      st.settings.quality.untold, relations = x.addrOf, receivers = o.addrOf,
+      traceMatch = st.settings.join.traceMatch))
+  st.holdGeometry(ui.folder.job, x)
+  st.holdGeometry(ui.folder.job, o)
 
 proc consider(ui: var QualityUi; st: AppState) =
   ## Polls the jobs, drops an answer that is stale, and starts the File computation for
