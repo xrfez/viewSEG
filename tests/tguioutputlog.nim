@@ -6,7 +6,10 @@
 ## An export to a folder that does not exist fails as a job, which Messages
 ## says, and leaves no half-written file.
 ##
-## Seen to fail: with the dim mark always "enabled", "Output is open, Export log dim
+## An export that would add .txt over an existing file, or write over a file the run
+## read, is refused and leaves that file as it was.
+##
+## Seen to fail: with the existing-file check removed, run1.txt was replaced; with the dim mark always "enabled", "Output is open, Export log dim
 ## did not happen". The notes and the skipped rows are seen to fail in toutputlog.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
@@ -214,6 +217,18 @@ proc main*() =
         said(f, ExportFailed)
       step("an export to a missing folder fails and says so", exportTo(log3), failedExport)
 
+      # "run1" gets ".txt" added and run1.txt is there: refused, and left as it was
+      var beforeOne = ""
+      let sourceFile = field / "a.sgy"
+      let beforeSource = readFile(sourceFile)
+      let addTxt = exportTo(fx.dir / "logs-out" / "run1")
+      step("an export over an existing file with .txt added is refused",
+        proc (f: FrameInfo): bool =
+          if beforeOne.len == 0: beforeOne = readFile(log1)
+          addTxt(f), proc (f: FrameInfo): bool = said(f, ExportExists))
+      step("an export over a file the run read is refused", exportTo(sourceFile),
+        proc (f: FrameInfo): bool = said(f, ExportIsData))
+
       var at = 0
       var started = false
       var failed = ""
@@ -271,6 +286,8 @@ proc main*() =
       doAssert two.count("  Result: skipped") == 2 and two.count("  Result: written") == 1, two
       doAssert not dirExists(fx.dir / "no such folder")
       for p in walkDirRec(fx.dir / "logs-out"): doAssert not p.endsWith(".tmp"), p
+      doAssert readFile(log1) == beforeOne, "run1.txt was replaced"
+      doAssert readFile(sourceFile) == beforeSource, "a source file was replaced by the log"
       echo "tguioutputlog: ", steps.len, " steps"
   finally:
     releaseFile2.open()

@@ -121,6 +121,7 @@ type
     record: RunRecord                          ## what the last run was asked
     exportJob: JobId = NoJob
     exportPath: string
+    exportAdded: bool                          ## ".txt" was added to the name the dialog gave
     wantExport: bool
     askLog: bool                               ## the Export log... dialog is wanted
     importJob: JobId = NoJob
@@ -189,7 +190,8 @@ proc setTextFile*(ui: var OutputUi; path: string) =
 
 proc setLogFile*(ui: var OutputUi; path: string) =
   ## The Export log... dialog's answer.
-  ui.exportPath = if path.splitFile.ext.len == 0: path & ".txt" else: path
+  ui.exportAdded = path.splitFile.ext.len == 0
+  ui.exportPath = if ui.exportAdded: path & ".txt" else: path
   ui.wantExport = true
 
 func slash(path: string): string =
@@ -379,12 +381,16 @@ proc importWork(path: string; note: ImportNote; gen: int): JobWork =
       note.why = ImportUnreadable
     note.gen = gen
 
-proc exportWork(path: string; rec: RunRecord; res: BatchResult): JobWork =
+proc exportWork(path: string; added: bool; taken: seq[string]; rec: RunRecord;
+    res: BatchResult): JobWork =
   ## Writes the run's log. The sizes of the files written are asked here, off the
-  ## UI thread.
+  ## UI thread. Not over a file in `taken` (the run's own, or open ones), and not
+  ## over a file that exists when ".txt" was added to the name the person gave.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     ctx.setPhase ExportPhase
+    if normalizedPath(path) in taken: raise newException(IOError, ExportIsData)
+    if added and fs.fileExists(path): raise newException(IOError, ExportExists)
     var sizes: seq[int64] = @[]
     for item in res.items:
       var n = -1'i64
@@ -439,8 +445,13 @@ proc startExport(ui: var OutputUi; st: AppState) =
   ## A failure is a job that failed, which Messages says with its reason.
   cancelJob(st, ui.exportJob)
   if not ui.haveResult: return
+  var taken: seq[string] = @[]
+  for item in ui.result.items:
+    taken.add normalizedPath(ui.record.source / item.relative)
+    if item.destination.len > 0: taken.add normalizedPath(item.destination)
+  for s in st.sessions: taken.add normalizedPath($s.path)
   ui.exportJob = st.jobs.submit(JobSpec(title: ExportTitle, lane: jlBackground),
-    exportWork(ui.exportPath, ui.record, ui.result))
+    exportWork(ui.exportPath, ui.exportAdded, taken, ui.record, ui.result))
 
 proc startImport(ui: var OutputUi; st: AppState) =
   cancelJob(st, ui.importJob)

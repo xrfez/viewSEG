@@ -31,6 +31,10 @@ const
     "and every file's row with all its notes. Available once a run has ended."
   ExportTitle* = "Export the output log"
   ExportPhase* = "writing the log"
+  ExportIsData* = "The log was not written: that file is one the run read or wrote, or one " &
+    "that is open in viewSEG."
+  ExportExists* = "The log was not written: a file of that name with .txt already exists. " &
+    "Choose that name with .txt to replace it."
   ExportFailed* = ExportTitle & " failed"
   FilterHint* = "Filter by file name"
   SourceLabel* = "Source"
