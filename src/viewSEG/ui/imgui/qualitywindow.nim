@@ -276,6 +276,14 @@ proc forcedKey(st: AppState; only = ""): string =
   forced.sort()
   forced.join(";")
 
+proc templateKey(st: AppState): string =
+  ## Which relation records the answers are read against (the loaded or made geometry, by
+  ## address) and whether only the traces in the template are measured: a change drops them.
+  let x = st.qcRelations(rdSource)[0]
+  let o = st.qcRelations(rdReceiver)[0]
+  $st.settings.noise.templateOnly & "|" & $cast[int](x) & "|" & $cast[int](o) & "|" &
+    $st.settings.join.traceMatch
+
 proc submitFile(ui: var QualityUi; st: AppState; key, path: string) =
   ui.file = Scan(key: key, running: true, status: Scanning, sink: QualitySink())
   var spec = qualitySpec(@[path])
@@ -283,7 +291,8 @@ proc submitFile(ui: var QualityUi; st: AppState; key, path: string) =
   spec.auto = true # started by the program as the file shown changes: its end is not announced
   ui.file.job = st.jobs.submit(spec,
     fileScan(path, st.indexCache, st.editsSnapshot, ui.file.sink, st.settings.noise,
-      st.forcedKinds))
+      st.forcedKinds, relations = st.qcRelations(rdSource)[0],
+      receivers = st.qcRelations(rdReceiver)[0], traceMatch = st.settings.join.traceMatch))
 
 proc submitFolder(ui: var QualityUi; st: AppState; key: string) =
   let folder = st.settings.quality.folder
@@ -295,7 +304,8 @@ proc submitFolder(ui: var QualityUi; st: AppState; key: string) =
   ui.folder.job = st.jobs.submit(spec,
     folderScan(folder, st.settings.quality.subfolders, st.indexCache, st.editsSnapshot,
       ui.folder.sink, ui.folder.note, st.settings.noise, st.forcedKinds,
-      st.settings.quality.untold))
+      st.settings.quality.untold, relations = st.qcRelations(rdSource)[0],
+      receivers = st.qcRelations(rdReceiver)[0], traceMatch = st.settings.join.traceMatch))
 
 proc consider(ui: var QualityUi; st: AppState) =
   ## Polls the jobs, drops an answer that is stale, and starts the File computation for
@@ -307,7 +317,7 @@ proc consider(ui: var QualityUi; st: AppState) =
   ui.poll(ui.folder, st)
   let path = st.shownPath
   let fileKey = if path.len > 0 and not st.shownIsSignature:
-      path & "|" & $st.shownRevision & "|" & st.forcedKey(path)
+      path & "|" & $st.shownRevision & "|" & st.forcedKey(path) & "|" & st.templateKey
     else: ""
   if fileKey != ui.file.key:
     ui.file.cancel(st)
@@ -316,7 +326,7 @@ proc consider(ui: var QualityUi; st: AppState) =
   let folder = st.settings.quality.folder
   let folderKey = if folder.len > 0:
       folder & "|" & $st.settings.quality.subfolders & "|" & $st.settings.quality.untold & "|" &
-        st.forcedKey
+        st.forcedKey & "|" & st.templateKey
     else: ""
   if ui.folder.key.len > 0 and ui.folder.key != folderKey:
     ui.folder.cancel(st)

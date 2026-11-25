@@ -198,13 +198,15 @@ func cutShortWhy(f: SeismicFile): string =
 
 proc judgeRecord(f: ptr SeismicFile; path: string; traces: Slice[int];
     amps: var seq[TraceAmplitude]; unread: openArray[int]; killed: HashSet[int];
-    noise: NoiseSettings; noisyJudged, weakJudged: var HashSet[int];
+    noise: NoiseSettings; outside: openArray[bool]; noisyJudged, weakJudged: var HashSet[int];
     workers: ptr ProcessPool; tick: BreakProgress): bool =
   ## The map's noisy and weak test on the record `traces`, whose statistics are `amps`
   ## (`unread`: rows left out). Sets the flags in `amps`, and puts in `noisyJudged` the
   ## traces the test judged for noisy (not those in the exclusion area, ungrouped, of an
   ## incomplete node or unusable) and in `weakJudged` those it judged for weak (the same and
-  ## those in the exclusion area). False when there is nothing to judge or the library
+  ## those in the exclusion area). The traces `outside` the record's template (none given:
+  ## empty) are not judged and are not in the statistics the others are judged against, as
+  ## the map's check treats them. False when there is nothing to judge or the library
   ## refuses.
   if unread.len >= traces.len: return false
   var off: seq[int] = @[]
@@ -215,7 +217,7 @@ proc judgeRecord(f: ptr SeismicFile; path: string; traces: Slice[int];
     {.cast(gcsafe).}:
       br = breaksOfRecord(f, path, traces, off, tick, shared = workers)
       result = true
-      let summary = noiseOfRecord(f[], traces, amps, unread, [], br, noise)
+      let summary = noiseOfRecord(f[], traces, amps, unread, outside, br, noise)
       for i in 0 ..< traces.len:
         if summary.state[i] == nsJudged: noisyJudged.incl traces.a + i
         if summary.state[i] in {nsJudged, nsInArea}: weakJudged.incl traces.a + i
@@ -225,7 +227,11 @@ proc judgeRecord(f: ptr SeismicFile; path: string; traces: Slice[int];
 proc measure(f: ptr SeismicFile; path: string; sides: set[StationSide]; killed: HashSet[int];
     b: var array[StationSide, QualityBuild];
     unread: var seq[tuple[path, why: string]]; gathers: seq[Gather];
-    noise: NoiseSettings; it: ItemContext; workers: ptr ProcessPool) =
+    noise: NoiseSettings; it: ItemContext; workers: ptr ProcessPool;
+    relation: ptr SurveyGeometry; domain: RelationDomain; traceMatch: TraceMatch) =
+  ## Measures the file into `b`. With a `relation` (the relation records of `domain`) and
+  ## `noise.templateOnly`, only the traces the record's template lists are measured: the
+  ## others are counted as left out (`leaveOut`), as the map's check marks them.
   let n = f[].len
   var first = 0
   var held: seq[TraceAmplitude] = @[] # statistics of the traces from `heldFrom` on
@@ -234,6 +240,7 @@ proc measure(f: ptr SeismicFile; path: string; sides: set[StationSide]; killed: 
   # traces of the records judged so far that the test judged for noisy, for weak
   var noisyAt = initHashSet[int]()
   var weakAt = initHashSet[int]()
+  var leftAt = initHashSet[int]() # traces of the records judged so far outside the template
   var nextGather = 0
   var noted = 0 # traces before it are in `b`
   template note(upTo: int) =
@@ -241,6 +248,13 @@ proc measure(f: ptr SeismicFile; path: string; sides: set[StationSide]; killed: 
     for t in noted .. upTo:
       if t in missedAll: continue
       let k = f[].index.keys[t]
+      if t in leftAt:
+        leftAt.excl t
+        noisyAt.excl t
+        weakAt.excl t
+        if k.isSeismic:
+          for side in sides: b[side].leaveOut(path)
+        continue
       let sampled = wantsSamples(k, t in killed)
       let flags = if sampled: held[t - heldFrom].flags else: {}
       noteTrace(b, path, k, sides, t in killed, flags, sampled and t in noisyAt,
@@ -298,10 +312,17 @@ proc measure(f: ptr SeismicFile; path: string; sides: set[StationSide]; killed: 
       for t in g:
         if t in missedAll or not wantsSamples(f[].index.keys[t], t in killed):
           skip.add t - g.a
+      var outside: seq[bool] = @[]
+      if relation != nil and noise.templateOnly:
+        {.cast(gcsafe).}:
+          outside = leftOutOfTemplate(f[], g, relation[], domain, traceMatch, it)
+        for i, o in outside:
+          if o: leftAt.incl g.a + i
       let tick = proc (done, total: int): bool {.closure, gcsafe.} =
         it.fileProgress((last + 1 + g.a + g.len * done div max(total, 1)) div 2, n)
         true
-      if judgeRecord(f, path, g, rec, skip, killed, noise, noisyAt, weakAt, workers, tick):
+      if judgeRecord(f, path, g, rec, skip, killed, noise, outside, noisyAt, weakAt, workers,
+          tick):
         for i in 0 ..< rec.len: held[g.a - heldFrom + i] = rec[i]
       note(g.b)
       it.fileProgress((last + 1 + noted) div 2, n)
@@ -323,13 +344,18 @@ type
     forcedKind: RecordingKind
 
   QualityItems = object
-    ## What every item of a batch reads, never writes. No `ref` is inside it.
+    ## What every item of a batch reads, never writes. No `ref` is inside it; the relation
+    ## records are reached by `ptr`.
     files: seq[QualityFile]
     cacheDir: string
     noise: NoiseSettings
+    shotTemplate, receiverTemplate: ptr SurveyGeometry
+      ## the relation records the shot gathers' X records and the receiver gathers' O records
+      ## are read from (nil for none); the job keeps them alive and unchanged
+    traceMatch: TraceMatch
     untold: UntoldKind
     folderRun: bool
-    sizes: seq[int64]   ## the file sizes: what an item can tell of what runs beside it
+    sizes: seq[int64] ## the file sizes: what an item can tell of what runs beside it
     budget: int64
     narrow, wide: int
       ## threads for the first-break passes of a file that runs beside others, and of one that
@@ -365,7 +391,7 @@ type
     takenAs: ReportSide
 
 static:
-  doAssert plainData(QualityItems) and plainData(QualityOne)
+  doAssert plainData(QualityOne) # (`QualityItems` holds two `ptr` to the relations, no `ref`)
 
 proc qualityFile(edits: Table[string, FileEdits]; forced: Table[string, RecordingKind];
     path: string): QualityFile =
@@ -415,8 +441,10 @@ proc qualityItem(it: ItemContext; a: ptr QualityItems; i: int): QualityOne
           if s.gathers.len > 0:
             let alone = a.files.len == 1 or a.sizes[i] * 2 > a.budget
             workers = newProcessPool(if alone: a.wide else: a.narrow)
+          let shot = fileSide.side == rsShot
           measure(s.filePtr, path, {side}, a.files[i].killed, part, partUnread, s.gathers,
-            a.noise, it, addr workers)
+            a.noise, it, addr workers, (if shot: a.shotTemplate else: a.receiverTemplate),
+            (if shot: rdSource else: rdReceiver), a.traceMatch)
           result.measured = true
           result.build = part[side]
           result.unread = partUnread
@@ -506,7 +534,8 @@ proc fail(sink: QualitySink; why: string; unread: seq[tuple[path, why: string]])
 proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: QualitySink;
     cacheDir = ""; noise = NoiseSettings();
     forced = initTable[string, RecordingKind](); untold = ukNotChecked;
-    folderRun = false): JobWork =
+    folderRun = false; relations: ref SurveyGeometry = nil;
+    receivers: ref SurveyGeometry = nil; traceMatch = tmAuto): JobWork =
   ## The work of a job that scans `paths` and fills `sink` (`qualitySpec`
   ## is the spec to submit it with). Worker-only. `edits` is keyed by the
   ## path strings in `paths`. A cancel raises `JobCancelledError` and leaves
@@ -519,14 +548,23 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
   ## those are of one (`takenNote` says so), else left out. Up to the item pool's threads of
   ## files are open at once, each measured into a build of its own that is merged in file
   ## order, so the report is the same on one thread and on eight; the files in hand hold at
-  ## most 256 MiB together (a file larger than that runs alone).
+  ## most 256 MiB together (a file larger than that runs alone). With `noise.templateOnly`
+  ## (the setting's default), the traces a record's template does not list are left out: a
+  ## shot's X record in `relations`, a receiver gather's O records in `receivers`, found as
+  ## the map's check finds them (`recordqc.leftOutOfTemplate`, `traceMatch` as the join's).
+  ## They are not measured, not counted in a station or a total, and counted apart
+  ## (`Totals.outside`). A record whose template is not found is measured whole; nil
+  ## `relations` or `receivers` leaves that side's records whole. The caller keeps them
+  ## alive and unchanged until the job ends.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     var st = ScanState(builds: [initQualityBuild(), initQualityBuild()])
     try:
       # the files, each path once (compared normalised)
       var args = QualityItems(cacheDir: cacheDir, noise: noise, untold: untold,
-        folderRun: folderRun)
+        folderRun: folderRun, traceMatch: traceMatch,
+        shotTemplate: (if relations.isNil: nil else: unsafeAddr relations[]),
+        receiverTemplate: (if receivers.isNil: nil else: unsafeAddr receivers[]))
       var seen = initHashSet[string]()
       var at: seq[int] = @[]
       for path in paths:
@@ -545,7 +583,8 @@ proc scanQuality*(paths: seq[string]; edits: Table[string, FileEdits]; sink: Qua
           st.takenAs = one
           st.taken = st.deferred.len
           var again = QualityItems(cacheDir: cacheDir, noise: noise, untold: untold,
-            folderRun: folderRun, round: 1, takenAs: one)
+            folderRun: folderRun, round: 1, takenAs: one, traceMatch: traceMatch,
+            shotTemplate: args.shotTemplate, receiverTemplate: args.receiverTemplate)
           for k in st.deferredAt: again.files.add args.files[k]
           st.deferred.setLen 0
           st.deferredAt.setLen 0
@@ -586,14 +625,18 @@ proc editsFor(paths: openArray[string]; snap: EditsSnapshot): Table[string, File
       result[path] = snap.byKey[key]
 
 proc fileScan*(path, cacheDir: string; snap: EditsSnapshot; sink: QualitySink;
-    noise: NoiseSettings; forced = initTable[string, RecordingKind](); untold = ukNotChecked):
-    JobWork =
+    noise: NoiseSettings; forced = initTable[string, RecordingKind](); untold = ukNotChecked;
+    relations: ref SurveyGeometry = nil; receivers: ref SurveyGeometry = nil;
+    traceMatch = tmAuto): JobWork =
   ## The work of a job that scans the one file `path`, with the edits `snap` holds for it.
-  scanQuality(@[path], editsFor([path], snap), sink, cacheDir, noise, forced)
+  scanQuality(@[path], editsFor([path], snap), sink, cacheDir, noise, forced, untold,
+    relations = relations, receivers = receivers, traceMatch = traceMatch)
 
 proc folderScan*(folder: string; subfolders: bool; cacheDir: string; snap: EditsSnapshot;
     sink: QualitySink; note: QualityNote; noise: NoiseSettings;
-    forced = initTable[string, RecordingKind](); untold = ukNotChecked): JobWork =
+    forced = initTable[string, RecordingKind](); untold = ukNotChecked;
+    relations: ref SurveyGeometry = nil; receivers: ref SurveyGeometry = nil;
+    traceMatch = tmAuto): JobWork =
   ## The work of a job that lists the seismic files of `folder`, its subfolders only
   ## when `subfolders`, and scans them as `scanQuality` does. `note.capped` says the list
   ## stopped at the file limit.
@@ -609,5 +652,6 @@ proc folderScan*(folder: string; subfolders: bool; cacheDir: string; snap: Edits
       raise newException(ValueError, CannotList)
     if note != nil: note.capped = capped
     ctx.checkCancelled()
-    let scan = scanQuality(paths, editsFor(paths, snap), sink, cacheDir, noise, forced, untold, true)
+    let scan = scanQuality(paths, editsFor(paths, snap), sink, cacheDir, noise, forced, untold,
+      true, relations, receivers, traceMatch)
     scan(ctx)

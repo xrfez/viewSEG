@@ -1,0 +1,163 @@
+## The Trace quality report judges and counts only the traces the record's template lists
+## (a shot's X record, a receiver gather's O records) when a relation file is loaded and the
+## noise setting `templateOnly` is on, and says how many traces it left out. The file tab
+## (one file), the folder tab (any number of threads) and the CSV give the same figures. With
+## `templateOnly` off, or no relation file, every trace is judged as before.
+##
+## Fixtures: a shot of 8 receiver stations whose X record lists the first 5 (station 5 is
+## clipped; 6 is dead in its header, 7 and 8 are clipped), and a receiver recording 5 sources
+## whose O record lists the first 3 (source 3 is clipped, 4 is dead, 5 clipped).
+##
+## Seen to fail: with the leaving out switched off in the scan (`measure` never asking
+## `leftOutOfTemplate`), `a_shot_s_unlisted_*` saw 8 traces where 5 were expected.
+
+import std/[math, os, strutils, tables]
+import parseSEG
+import viewSEG/core/[edits, jobs, state, noisearea, qualityjobs, qualityreport, recordingkind, reportside]
+import utils/[fixtures, qualityfolders, waiting]
+
+const H00 = "H00 SPS format version number   SPS 2.1;"
+
+proc put(line: var string; at: int; text: string) =
+  let i = at - 1
+  for j, c in text:
+    if i + j < line.len: line[i + j] = c
+
+proc xRec(record: int; srcLine, srcPoint: string; fromCh, toCh, rcvLine, fromR,
+    toR: int): string =
+  result = repeat(' ', 80)
+  result[0] = 'X'
+  put(result, 2, "T1")
+  put(result, 8, align($record, 8))
+  put(result, 16, "11")
+  put(result, 18, align(srcLine, 10))
+  put(result, 28, align(srcPoint, 10))
+  put(result, 38, "1")
+  put(result, 39, align($fromCh, 5))
+  put(result, 44, align($toCh, 5))
+  put(result, 49, "1")
+  put(result, 50, align($rcvLine & ".00", 10))
+  put(result, 60, align($fromR & ".00", 10))
+  put(result, 70, align($toR & ".00", 10))
+  put(result, 80, "1")
+
+proc surveyOf(line: string): ref SurveyGeometry =
+  var g = SurveyGeometry()
+  g.addSps(parseSps(H00 & "\n" & line))
+  result = new SurveyGeometry
+  result[] = g
+
+proc quiet(): seq[float32] =
+  result = newSeq[float32](40)
+  for i in 0 ..< 40: result[i] = float32(sin(float64(i) * 0.7) * (1.0 + float64(i) * 0.013))
+
+proc clipped(): seq[float32] =
+  result = quiet()
+  for i in 4 .. 6: result[i] = 1000
+  for i in 8 .. 10: result[i] = -1000
+  for i in 20 .. 22: result[i] = 1000
+  for i in 24 .. 26: result[i] = -1000
+
+proc writeFile(path: string; rows: openArray[tuple[rcvLine, rcvPoint, srcLine, srcPoint: float64;
+    dead, loud: bool]]; perTrace: bool) =
+  var w = openSeismicWriter(path, SegdOutputOptions(sampleIntervalUs: 2000,
+    numSamples: 40, time: 1_700_000_000.0))
+  for i, r in rows:
+    var k = initTraceKeys()
+    k.record = float64(if perTrace: i + 1 else: 7)
+    k.channel = float64(i + 1)
+    k.srcLine = r.srcLine
+    k.srcPoint = r.srcPoint
+    k.srcIndex = 1
+    k.rcvLine = r.rcvLine
+    k.rcvPoint = r.rcvPoint
+    k.rcvIndex = 1
+    k.intervalUs = 2000
+    k.component = 1
+    k.sensorType = 1
+    k.status = if r.dead: tsDead else: tsLive
+    w.writeTrace(k, if r.dead: newSeq[float32](40) elif r.loud: clipped() else: quiet())
+  doAssert w.close().len == 0, "file was not written: " & path
+
+proc shotFile(path: string) =
+  ## Shot 99 of line 1 at receivers 1 .. 8 of line 10; station 5 clipped, 6 dead, 7 and 8 clipped.
+  var rows: seq[tuple[rcvLine, rcvPoint, srcLine, srcPoint: float64; dead, loud: bool]]
+  for p in 1 .. 8:
+    rows.add (rcvLine: 10.0, rcvPoint: float64(p), srcLine: 1.0, srcPoint: 99.0,
+      dead: p == 6, loud: p in {5, 7, 8})
+  writeFile(path, rows, false)
+
+proc receiverFile(path: string) =
+  ## Receiver 90 of line 20 recording sources 1 .. 5 of line 5; 3 clipped, 4 dead, 5 clipped.
+  var rows: seq[tuple[rcvLine, rcvPoint, srcLine, srcPoint: float64; dead, loud: bool]]
+  for s in 1 .. 5:
+    rows.add (rcvLine: 20.0, rcvPoint: 90.0, srcLine: 5.0, srcPoint: float64(s),
+      dead: s == 4, loud: s in {3, 5})
+  writeFile(path, rows, true)
+
+proc run(work: JobWork; paths: seq[string]; sink: QualitySink; threads = 0) =
+  let jobs = initJobs()
+  if threads > 0: jobs.setItemThreads(threads)
+  let id = jobs.submit(qualitySpec(paths), work)
+  doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled}),
+    "the scan did not finish"
+  doAssert sink.result.ok, sink.result.reason
+
+proc scanOne(path: string; kind: RecordingKind; relations, receivers: ref SurveyGeometry;
+    templateOnly = true; threads = 0): QualityJobResult =
+  let sink = QualitySink()
+  run(scanQuality(@[path], initTable[string, FileEdits](), sink, "",
+    NoiseSettings(templateOnly: templateOnly), forcedKinds([path], kind),
+    relations = relations, receivers = receivers), @[path], sink, threads)
+  sink.result
+
+proc main*() =
+  block a_shot_s_unlisted_traces_are_left_out_and_counted_apart:
+    withFixtures fx:
+      let path = fx.dir / "shot.sgd"
+      shotFile(path)
+      let x = surveyOf(xRec(1, "1.00", "99.00", 1, 5, 10, 1, 5))
+      let r = scanOne(path, rkShotGather, x, nil).receivers
+      doAssert r.totals.traces == 5, "traces " & $r.totals.traces
+      doAssert r.totals.stations == 5 and r.stations.len == 5, "stations " & $r.stations.len
+      doAssert r.totals.bad == 1 and r.totals.counts[qfHeaderDead] == 0,
+        "bad " & $r.totals.bad & ", " & $r.totals
+      doAssert r.totals.outside == 3, "outside " & $r.totals.outside
+      for row in r.stations: doAssert row.point <= 5.0, "station " & $row.point
+      doAssert totalsCsv(r.totals).splitLines[1].endsWith(",3"), totalsCsv(r.totals)
+      # the file tab and the folder tab, on one thread and on four, are the same
+      let same = digest(scanOne(path, rkShotGather, x, nil))
+      doAssert digest(scanOne(path, rkShotGather, x, nil, threads = 4)) == same
+      let sink = QualitySink()
+      run(folderScan(fx.dir, false, "", EditsSnapshot(), sink, QualityNote(),
+        NoiseSettings(), forcedKinds([path], rkShotGather), relations = x), @[path], sink, 4)
+      doAssert sink.result.receivers.totals == r.totals
+      doAssert stationsCsv(sink.result.receivers.stations) == stationsCsv(r.stations)
+
+  block templateOnly_off_or_no_relation_file_judges_every_trace:
+    withFixtures fx:
+      let path = fx.dir / "shot.sgd"
+      shotFile(path)
+      let x = surveyOf(xRec(1, "1.00", "99.00", 1, 5, 10, 1, 5))
+      for r in [scanOne(path, rkShotGather, x, nil, templateOnly = false).receivers,
+                scanOne(path, rkShotGather, nil, nil).receivers]:
+        doAssert r.totals.traces == 8 and r.totals.outside == 0 and r.totals.bad == 4 and
+          r.totals.counts[qfHeaderDead] == 1, $r.totals
+
+  block a_receiver_gather_s_unlisted_sources_are_left_out:
+    withFixtures fx:
+      let path = fx.dir / "receiver.sgd"
+      receiverFile(path)
+      # an O record: the receiver is in the source columns, the sources in the receiver's
+      var o = xRec(1, "20.00", "90.00", 1, 3, 5, 1, 3)
+      o[0] = 'O'
+      let rec = surveyOf(o)
+      let r = scanOne(path, rkReceiverSliced, nil, rec).sources
+      doAssert r.totals.traces == 3, "traces " & $r.totals.traces
+      doAssert r.totals.bad == 1 and r.totals.counts[qfHeaderDead] == 0, $r.totals
+      doAssert r.totals.outside == 2, "outside " & $r.totals.outside
+      let all = scanOne(path, rkReceiverSliced, nil, rec, templateOnly = false).sources
+      doAssert all.totals.traces == 5 and all.totals.outside == 0, $all.totals
+
+when isMainModule:
+  main()

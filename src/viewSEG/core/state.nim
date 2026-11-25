@@ -9652,7 +9652,7 @@ proc takeShots(state: var AppState; m: sink Msg) =
           " not on the map.")
       x.unplacedSaid = n
 
-func qcRelations(state: AppState; domain: RelationDomain): (ref SurveyGeometry, string) =
+func qcRelations*(state: AppState; domain: RelationDomain): (ref SurveyGeometry, string) =
   ## The relation records the record shown is checked against: the first
   ## loaded survey file's of `domain`; else for a receiver gather the O records derived from
   ## the X file (`derivedReceivers`, as the Records window reads them); else those made

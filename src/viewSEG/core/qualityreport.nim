@@ -68,6 +68,7 @@ type
   Totals* = object
     ## Scan totals over the notes. Unread files are not counted.
     files*, traces*, killed*, bad*, stations*: int
+    outside*: int ## seismic traces left out as outside the record's template (not in `traces`)
     badStations*: int                             ## stations with at least one bad trace
     lacking*: int                                 ## stations that lacked a component in some file
     components*: int                              ## most components one file has
@@ -252,6 +253,7 @@ type
     ## the file (`closeFile`), working out which stations lacked a component in it.
     ## What is kept for a station does not grow with the number of files.
     files: int
+    outside: int ## traces left out (`leaveOut`)
     most: int ## the most components one file had
     serial: int ## the serial of the open file
     current: string ## the open file
@@ -333,6 +335,17 @@ proc closeFile(b: var QualityBuild) =
     b.inFile.setLen 0
   b.open = false
 
+proc leaveOut*(b: var QualityBuild; file: string) =
+  ## Counts one seismic trace of `file` left out as outside the template of its record: it
+  ## is no note, no station and no finding. The file counts as read.
+  if not b.open or file != b.current:
+    b.closeFile()
+    b.open = true
+    b.current = file
+    inc b.serial
+    inc b.files
+  inc b.outside
+
 proc addTrace*(b: var QualityBuild; note: TraceNote) =
   ## Counts `note`. A killed trace increments `killed` only, whatever
   ## `findings` holds. A trace with several findings increments each of
@@ -376,6 +389,7 @@ proc absorb*(b: var QualityBuild; part: sink QualityBuild) =
   done.closeFile()
   b.closeFile()
   b.files += done.files
+  b.outside += done.outside
   b.most = max(b.most, done.most)
   for key in done.stOrder:
     let src = done.stations[key]
@@ -413,7 +427,8 @@ proc tableOf(b: QualityBuild): QualityReport =
     weakTested += acc.weakTested
     weak += acc.weak
     for f in Finding: counts[f] += acc.counts[f]
-  result.totals = Totals(files: b.files, traces: traces, killed: killed, bad: bad,
+  result.totals = Totals(files: b.files, outside: b.outside, traces: traces, killed: killed,
+    bad: bad,
     stations: stations, badStations: badStations, lacking: lacking,
     components: b.most, counts: counts, noisyTested: noisyTested, noisy: noisy,
     weakTested: weakTested, weak: weak)
@@ -446,9 +461,10 @@ proc totalsCsv*(t: Totals): string =
   ## One header and one totals line.
   result = csvLine("files", "traces", "killed", "bad", "stations", "stations with a bad trace",
     "stations lacking a component", $qfHeaderDead, $qfAllZero, $qfConstant, $qfClipped,
-    $qfSpiky, $qfDcOffset, $qfNonFinite, NoisyTestedCsv, "noisy", WeakTestedCsv, "weak")
+    $qfSpiky, $qfDcOffset, $qfNonFinite, NoisyTestedCsv, "noisy", WeakTestedCsv, "weak",
+    "outside the template")
   result.add csvLine($t.files, $t.traces, $t.killed, $t.bad, $t.stations, $t.badStations,
     $t.lacking, $t.counts[qfHeaderDead], $t.counts[qfAllZero], $t.counts[qfConstant],
     $t.counts[qfClipped], $t.counts[qfSpiky], $t.counts[qfDcOffset],
     $t.counts[qfNonFinite], $t.noisyTested, noiseCell(t.noisyTested, t.noisy),
-    $t.weakTested, noiseCell(t.weakTested, t.weak))
+    $t.weakTested, noiseCell(t.weakTested, t.weak), $t.outside)

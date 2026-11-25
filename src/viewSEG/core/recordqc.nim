@@ -50,7 +50,7 @@ import processSEG/core/[rows, types, workspace]
 import processSEG/pipeline
 import processSEG/qc/[amplitude, exclusion, record]
 import components, correlateread, edits, filesystem, firstbreakjobs, firstbreaks, inbox, jobs,
-  mapkinds, noisearea, processing, relationcheck, session, threads
+  itempool, mapkinds, noisearea, processing, relationcheck, session, threads
 
 export mapkinds, relationcheck.placeTraces
 
@@ -199,21 +199,42 @@ proc completeness(hits: var array[MapFilter, FilterHits]; f: SeismicFile; base: 
   hits.placeTraces(f.index.keys, base, traces, g, result, domain)
 
 proc outsideTemplate*(keys: openArray[TraceKeys]; traces: Slice[int]; g: SurveyGeometry;
-    records: openArray[int64]; domain: RelationDomain): seq[bool] =
+    records: openArray[int64]; domain: RelationDomain; liveOnly = true): seq[bool] =
   ## Per trace of `traces`: whether it is outside the template, a live seismic trace at
   ## a station the relation `records` of `domain` do not plan (the traces of the
   ## `mfUnlisted` filter). A trace whose headers name no station is not outside: where
-  ## it stands is not known.
+  ## it stands is not known. With `liveOnly` false a header-dead seismic trace at a
+  ## station not planned is outside too.
   result = newSeq[bool](traces.len)
   let plan = g.plannedOf(records, domain)
   for i in 0 ..< traces.len:
     let k = keys[traces.a + i]
-    if k.isSeismic and k.status != tsDead:
+    if k.isSeismic and (not liveOnly or k.status != tsDead):
       let (line, point, index) = if domain == rdSource: (k.rcvLine, k.rcvPoint, k.rcvIndex)
                                  else: (k.srcLine, k.srcPoint, k.srcIndex)
       if hasStation(line, point):
         let st = stationKey(line, point, max(index, 0'i16))
         result[i] = not plan.lists(st.line, st.point)
+
+proc leftOutOfTemplate*[C: JobContext | ItemContext](f: SeismicFile; traces: Slice[int];
+    g: SurveyGeometry; domain: RelationDomain; traceMatch: TraceMatch; ctx: C): seq[bool] =
+  ## Per trace of the record `traces` (a gather of `f`): whether the record's template
+  ## does not list its station, found as the map's check finds it (a shot's X record by
+  ## its source station, a receiver gather's O records by its receiver station, a record
+  ## number never used). Empty when the template is not known for the record (no station
+  ## in the headers, no record at it, traces matched by channel): nothing is left out then.
+  var records: seq[int64] = @[]
+  if domain == rdSource:
+    if not f.namesSource(traces): return
+    let checked = g.shotCheck(f.rowsOf(traces), ctx, traceMatch)
+    if checked.why.len > 0 or checked.c.traceMatch != tmStation: return
+    records = @[checked.c.xpsRecord]
+  else:
+    let (found, rcv) = f.index.keys.gatherReceiver(traces)
+    if not found or f.hasNoSources(traces): return
+    records = g.receiverRecords(rcv).records
+    if records.len == 0: return
+  outsideTemplate(f.index.keys, traces, g, records, domain, liveOnly = false)
 
 proc negateQc(samples: var Tensor[float32]; part: Slice[int]; reversed: openArray[int]) =
   ## Multiplies each reversed trace of `part` by -1, before its own filter

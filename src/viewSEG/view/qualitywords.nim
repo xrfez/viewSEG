@@ -123,6 +123,9 @@ func statisticLines*(t: Totals; side: StationSide; folder: bool): seq[string] =
     ", constant: " & $t.counts[qfConstant] & ", clipped: " & $t.counts[qfClipped] &
     ", spiky: " & $t.counts[qfSpiky] & ", DC offset: " & $t.counts[qfDcOffset] &
     ", not finite: " & $t.counts[qfNonFinite]
+  if t.outside > 0:
+    result.add "Left out as outside the template: " & plural(t.outside, "trace", "traces") &
+      " (not counted above)"
   if t.noisyTested > 0:
     result.add "Noisy: " & $t.noisy & " of " & $t.noisyTested & " tested (" &
       percentOf(t.noisy, t.noisyTested) & "%)"
