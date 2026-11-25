@@ -424,7 +424,7 @@ proc checkSet(ss: SetSpec; scratch: string) =
       scanQuality(paths, initTable[string, FileEdits](), sink))
     doAssert sink.result.ok, sink.result.reason
     var found = false
-    for st in sink.result.report.stations:
+    for st in sink.result.receivers.stations:
       if st.line == 10 and st.point == 1005:
         found = true
         doAssert st.counts[qfHeaderDead] == 1 and st.noisy == 1, $st

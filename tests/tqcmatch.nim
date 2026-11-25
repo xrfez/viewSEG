@@ -129,6 +129,10 @@ proc scanAll(paths: seq[string]; edits: Table[string, FileEdits]): QualityJobRes
   doAssert sink.result.ok, sink.result.reason
   sink.result
 
+func report(r: QualityJobResult): QualityReport =
+  ## The side the scan's files were on: these fixtures are all of one side.
+  if r.sources.totals.traces > r.receivers.totals.traces: r.sources else: r.receivers
+
 proc scan(path: string; edits: Table[string, FileEdits]): QualityReport =
   scanAll(@[path], edits).report
 
@@ -255,8 +259,9 @@ proc main*() =
       doAssert named == 1 and got.unread.len == 1, $got.unread
       doAssert got.report.totals.traces == 64 and got.report.totals.files == 1,
         "the unread file is counted: " & $got.report.totals
-      for r in got.report.records:
-        doAssert r.file == whole, "a row of the unread file: " & r.file
+      var seen = 0
+      for row in got.report.stations: seen += row.seen
+      doAssert seen == 64, "a station counts a trace of the unread file: " & $seen
 
   block one_big_file_moves_the_progress_before_it_ends:
     withFixtures fx:
