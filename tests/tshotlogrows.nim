@@ -7,7 +7,8 @@
 ## Seen to fail: with the selection used only past a hundred rows, `selection_first`
 ## took the pointer's row; with `scrollsTo` ignoring the option, `off_never_scrolls`
 ## scrolled with it off; with `onlySelected` not asking the other filters,
-## `only_selected_and_filters` listed row 7.
+## `only_selected_and_filters` listed row 7. With `nextShown` taking `col + 1`,
+## `tab_skips_a_hidden_column` landed on the ignored column 4.
 
 import viewSEG/view/shotlogrows
 
@@ -33,6 +34,15 @@ proc main*() =
     # the same row chosen again by another click is a change
     doAssert scrollsTo(chosenRows([5], [], true).scrollKey(2),
       chosenRows([5], [], true).scrollKey(3), true)
+
+  block tab_skips_a_hidden_column:
+    # the columns shown when column 4 is ignored: Tab never lands on it
+    let shown = [0, 1, 2, 3, 5, 6]
+    doAssert nextShown(shown, 3) == 5
+    doAssert nextShown(shown, -1) == 0 and nextShown(shown, 0) == 1
+    doAssert nextShown(shown, 6) == -1, "past the last shown column"
+    doAssert nextShown([], 0) == -1
+    doAssert nextShown([2, 5], 2) == 5 and nextShown([2, 5], 3) == 5
 
   block only_selected_and_filters:
     let rows = onlySelected([7, 2, 2, 50], 10, proc (r: int): bool = r == 7)

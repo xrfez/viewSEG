@@ -2763,7 +2763,8 @@ func shotLogWidth*(state: AppState; i: int): int =
   else: state.shotLogs[i].log.width
 
 proc shotLogColumn*(state: AppState; i, col: int): string =
-  ## The header name of column `col` of loaded shot log `i`, or "".
+  ## The header name of column `col` of loaded shot log `i`, fitted to the
+  ## columns ("Column N" where it could not be), or "".
   if i < 0 or i >= state.shotLogs.len or state.shotLogs[i].log == nil: ""
   else: state.shotLogs[i].log.columnName(col)
 
@@ -2772,11 +2773,11 @@ proc shotLogGuess*(state: AppState; i: int): ShotLogMap =
   if i < 0 or i >= state.shotLogs.len or state.shotLogs[i].log == nil: initShotLogMap()
   else: guessMap(state.shotLogs[i].log.text)
 
-proc shotLogPattern*(state: AppState; i: int; map: ShotLogMap): string =
-  ## The pattern that reads `map`'s Time (UTC) columns of loaded shot log `i`
-  ## (`timePattern`); "" when it has none.
+proc shotLogTimeNote*(state: AppState; i: int; map: ShotLogMap): string =
+  ## What the Columns dialog says about the time of `map` on loaded shot log
+  ## `i` (`timeNote`); "" when there is nothing to say.
   if i < 0 or i >= state.shotLogs.len or state.shotLogs[i].log == nil: ""
-  else: timePattern(state.shotLogs[i].log, map)
+  else: timeNote(state.shotLogs[i].log, map)
 
 proc shotLogNames*(state: AppState; i: int; map: ShotLogMap; count: int): seq[string] =
   ## The names of the first `count` columns of loaded shot log `i` as `map`

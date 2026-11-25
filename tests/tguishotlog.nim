@@ -26,10 +26,15 @@
 ## With two rows scrolling to row 0, "two rows did not leave the grid: edge 30
 ## held 195 line [2 rows at this time]".
 ##
+## An ignored column is not searched by the filter, and a name too long for the
+## name box is cut between characters. Seen to fail: with the filter reading every
+## column, "an ignored column is not filtered did not happen"; with the box cut
+## anywhere, "the name box holds half a character".
+##
 ## Needs a display: run under
 ## `env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1920x1080x24"`.
 
-import std/[algorithm, math, monotimes, options, os, strutils, times]
+import std/[algorithm, math, monotimes, options, os, strutils, times, unicode]
 import parseSEG
 import viewSEG/core/[geometry, recordtime, shotlog, state]
 import viewSEG/ui/imgui/app
@@ -411,6 +416,33 @@ proc main*() =
           f.click(f.markOf("shotlog.cancel").centre)
         f.markOf("shotlog.grid").size.x > 0 and f.markOf("shotlog.guess").size.x == 0)
 
+      proc roleAt(f: FrameInfo; role: ColumnRole): int =
+        result = -1
+        for c, r in f.core.shotLogMap(0).roles:
+          if r == role: return c
+      step("a long name", proc (f: FrameInfo) =
+        var m = f.core.shotLogMap(0)
+        m.names[nameCol] = repeat("é", 40) # 80 bytes: more than the box holds
+        f.apply(Command(kind: ckRemapShotLog, logIndex: 0, logMap: m)),
+        proc (f: FrameInfo): bool =
+          f.core.shotLogMap(0).names[nameCol].len == 80)
+      step("Columns for the long name", proc (f: FrameInfo) =
+        f.click(f.markOf("shotlog.columns").centre),
+        proc (f: FrameInfo): bool =
+          if f.markOf("shotlog.guess").size.x == 0 and wait mod 8 == 0:
+            f.click(f.markOf("shotlog.columns").centre)
+          for n in f.markNames("shotlog.nametext " & $nameCol & " "):
+            # the box keeps whole characters: a name cut mid-character is not text
+            let shown = n["shotlog.nametext ".len + ($nameCol).len + 1 .. ^1]
+            doAssert validateUtf8(shown) == -1, "the name box holds half a character"
+            doAssert shown.len in 40 .. 63 and shown.startsWith("éé"), shown
+            return true
+          false)
+      step("Cancel the long name", proc (f: FrameInfo) = f.click(f.markOf("shotlog.cancel").centre),
+        proc (f: FrameInfo): bool =
+        if f.markOf("shotlog.cancel").size.x > 0 and wait mod 8 == 0:
+          f.click(f.markOf("shotlog.cancel").centre)
+        f.markOf("shotlog.grid").size.x > 0 and f.markOf("shotlog.guess").size.x == 0)
       step("the filter", proc (f: FrameInfo) =
         filterAt = f.markOf("shotlog.filter").centre
         f.moveMouse(filterAt), proc (f: FrameInfo): bool =
@@ -419,6 +451,14 @@ proc main*() =
         if wait == 7: f.typeText("5000")
         if wait < 20: return false
         "shotlog.filtered 1" in f.markNames("shotlog.filtered ")
+      , 2000)
+      step("an ignored column is not filtered", proc (f: FrameInfo) =
+        var m = f.core.shotLogMap(0)
+        m.roles[roleAt(f, crFileNumber)] = crIgnored
+        f.apply(Command(kind: ckRemapShotLog, logIndex: 0, logMap: m)),
+        proc (f: FrameInfo): bool =
+          # 5000 is the first file number, which is no longer shown: no row has it
+          wait > 20 and "shotlog.filtered 0" in f.markNames("shotlog.filtered ")
       , 2000)
 
       step("Project again", proc (f: FrameInfo) =

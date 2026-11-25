@@ -30,6 +30,11 @@ type
     columnsOpen: bool
     draft: ShotLogMap
     draftWidth: int
+    draftDirty: bool                  ## the draft's boxes are read again next frame
+    draftNames: seq[string]           ## the names the draft gives its columns
+    draftFault: string                ## why the draft cannot be applied, or ""
+    draftNameFaults: seq[tuple[col: int, why: string]]
+    draftNote: string                 ## what is said about the draft's time
     # a user defined column's name, as typed
     nameBufs: seq[array[NameRoom, char]]
     skip: int32
@@ -115,7 +120,9 @@ proc setSpsDest*(ui: var ShotLogUi; path: string) =
   ui.spsLogId = ui.currentId
 
 proc setText(buf: var openArray[char]; text: string) =
-  let n = min(text.len, buf.len - 1)
+  ## `text` in the box, cut at a character's end when it is too long.
+  var n = min(text.len, buf.len - 1)
+  while n > 0 and n < text.len and (ord(text[n]) and 0xC0) == 0x80: dec n
   for i in 0 ..< n: buf[i] = text[i]
   for i in n ..< buf.len: buf[i] = '\0'
 
@@ -369,6 +376,7 @@ proc bindLog(ui: var ShotLogUi; st: AppState; i, rev: int) =
     ui.cacheFaults(st, i)
   elif ui.boundRev != rev:
     ui.boundRev = rev
+    ui.draftDirty = true
     ui.resetScan()
     ui.cacheFaults(st, i)
     ui.stopEdit()
@@ -384,6 +392,7 @@ proc loadDraft(ui: var ShotLogUi; map: ShotLogMap; width: int) =
   ui.skip = int32(max(0, map.skipLines))
   setText(ui.pattern, map.dateTimePattern)
   setText(ui.sentinels, sentinelsText(map.sentinels))
+  ui.draftDirty = true
 
 proc readDraft(ui: var ShotLogUi) =
   ui.draft.skipLines = max(0, int(ui.skip))
@@ -392,16 +401,35 @@ proc readDraft(ui: var ShotLogUi) =
     ui.draft.names[c] = bufText(ui.nameBufs[c]).strip
   ui.draft.sentinels = splitSentinels(bufText(ui.sentinels))
 
-proc rowHits(st: AppState; i, row, width: int; needle: string): bool =
+proc refreshDraft(ui: var ShotLogUi; st: AppState; i: int) =
+  ## Reads the boxes into the draft and works out what the dialog says about
+  ## it. Done when the dialog opens, the log or its map changes, or a box or
+  ## choice is edited, not every frame.
+  ui.readDraft()
+  ui.draftNameFaults = nameProblems(ui.draft)
+  ui.draftNames = st.shotLogNames(i, ui.draft, ui.draftWidth)
+  ui.draftFault = mapFault(ui.draft)
+  ui.draftNote = st.shotLogTimeNote(i, ui.draft)
+  ui.draftDirty = false
+
+proc shownColumns(st: AppState; i, width: int): seq[int] =
+  ## The columns the grid shows: all but those mapped to Ignore.
+  let map = st.shotLogMap(i)
   for c in 0 ..< width:
+    if c >= map.roles.len or map.roles[c] != crIgnored: result.add c
+
+proc rowHits(st: AppState; i, row: int; shown: openArray[int]; needle: string): bool =
+  ## Whether a shown cell of `row` holds `needle`. An ignored column is not searched.
+  for c in shown:
     let cell = st.shotCell(i, row, c)
     if cell.len >= needle.len and needle in cell.toLowerAscii: return true
 
 proc scanFilter(ui: var ShotLogUi; st: AppState; i, width, n: int) =
   if ui.needle.len == 0 or ui.filterDone or i < 0: return
   let stop = min(n, ui.scanAt + ScanBatch)
+  let shown = shownColumns(st, i, width)
   for row in ui.scanAt ..< stop:
-    if rowHits(st, i, row, width, ui.needle) and
+    if rowHits(st, i, row, shown, ui.needle) and
         (not ui.problemsOnly or ui.faultText.hasKey(row)):
       ui.matches.add row
   ui.scanAt = stop
@@ -411,7 +439,8 @@ proc rowFiltered(ui: ShotLogUi; st: AppState; i, row, width, n: int): bool =
   ## Whether data row `row` is left out by the filter box or Problems only.
   if row < 0 or row >= n: return false
   if ui.problemsOnly and not ui.faultText.hasKey(row): return true
-  if ui.needle.len > 0 and not rowHits(st, i, row, width, ui.needle): return true
+  if ui.needle.len > 0 and
+      not rowHits(st, i, row, shownColumns(st, i, width), ui.needle): return true
   false
 
 proc noteFollow(ui: var ShotLogUi; st: var AppState; i, width, n: int): string =
@@ -490,14 +519,16 @@ proc listedIndex(ui: ShotLogUi; row, n: int): int =
   elif row in 0 ..< n:
     result = row
 
-proc nextListed(ui: ShotLogUi; row, col, width, n: int): tuple[row, col: int] =
-  ## The next editable cell after (`row`, `col`), or (-1, -1).
-  if width <= 0: return (-1, -1)
-  if col + 1 < width: return (row, col + 1)
+proc nextListed(ui: ShotLogUi; row, col, n: int; shown: openArray[int]):
+    tuple[row, col: int] =
+  ## The next editable cell after (`row`, `col`) among the `shown` columns, or (-1, -1).
+  if shown.len == 0: return (-1, -1)
+  let next = nextShown(shown, col)
+  if next >= 0: return (row, next)
   let at = ui.listedIndex(row, n)
   if at < 0: return (-1, -1)
   if at + 1 >= ui.listedCount(n): return (-1, -1)
-  (ui.listedRow(at + 1), 0)
+  (ui.listedRow(at + 1), shown[0])
 
 proc copyRow(st: AppState; i, row, width: int; d: Delimiter) =
   var cells = newSeq[string](width)
@@ -529,33 +560,33 @@ proc enumCombo[T: enum](id: string; v: var T; width: float32): bool =
 proc drawColumns(ui: var ShotLogUi; st: AppState; i: int; t: Theme; marks: var Marks;
     busy: bool): seq[Command] =
   let width = ui.draftWidth
-  ui.readDraft()
-  let nameFaults = nameProblems(ui.draft)
-  let defaults = st.shotLogNames(i, ui.draft, width)
-  let fault = mapFault(ui.draft)
+  if ui.draftDirty or ui.draftNames.len != width: ui.refreshDraft(st, i)
+  let fault = ui.draftFault
   for r in duplicateRoles(ui.draft.roles):
     wrapped(duplicateSentence(r), t.roles[rlWarning])
     marks.mark("shotlog.duplicate " & label(r))
   igAlignTextToFramePadding()
   igTextUnformatted("Delimiter", nil)
   igSameLine(0, -1)
-  discard enumCombo("##delim", ui.draft.delimiter, igGetFontSize() * 8)
+  if enumCombo("##delim", ui.draft.delimiter, igGetFontSize() * 8): ui.draftDirty = true
   marks.mark("shotlog.delimiter")
   igSameLine(0, -1)
   igTextUnformatted("lines to skip", nil)
   igSameLine(0, -1)
   igSetNextItemWidth(igGetFontSize() * 6)
-  discard igInputInt("##skip", addr ui.skip, 1, 10, 0)
+  if igInputInt("##skip", addr ui.skip, 1, 10, 0): ui.draftDirty = true
   if ui.skip < 0: ui.skip = 0
   marks.mark("shotlog.skip")
   igSameLine(0, -1)
   var header = ui.draft.hasHeader
-  if igCheckbox("header row", addr header): ui.draft.hasHeader = header
+  if igCheckbox("header row", addr header):
+    ui.draft.hasHeader = header
+    ui.draftDirty = true
   marks.mark("shotlog.header")
   igAlignTextToFramePadding()
   igTextUnformatted("Clock", nil)
   igSameLine(0, -1)
-  discard enumCombo("##clock", ui.draft.clock, igGetFontSize() * 6)
+  if enumCombo("##clock", ui.draft.clock, igGetFontSize() * 6): ui.draftDirty = true
   marks.mark("shotlog.clock")
   tip("The clock of a time written as a calendar date; seconds or microseconds since " &
     "1970 are always UTC")
@@ -563,19 +594,19 @@ proc drawColumns(ui: var ShotLogUi; st: AppState; i: int; t: Theme; marks: var M
   igTextUnformatted("Time pattern", nil)
   igSameLine(0, -1)
   igSetNextItemWidth(-1)
-  discard igInputText("##pattern", cast[cstring](addr ui.pattern[0]),
-    csize_t(ui.pattern.len), 0, nil, nil)
+  if igInputText("##pattern", cast[cstring](addr ui.pattern[0]),
+      csize_t(ui.pattern.len), 0, nil, nil):
+    ui.draftDirty = true
   marks.mark("shotlog.pattern")
   tip(PatternTip)
-  if crTime in ui.draft.roles:
-    let used = st.shotLogPattern(i, ui.draft)
-    let line = if used.len > 0: "Time (UTC) is read as " & used
-               else: "No form was found in the first rows: type a pattern"
-    dim(line, t)
-    marks.mark("shotlog.patternused " & used)
+  if ui.draftNote.len > 0:
+    dim(ui.draftNote, t)
+    marks.mark("shotlog.timenote " & ui.draftNote)
+    tip(TimeSourceTip)
   igTextUnformatted("Missing values, one per line", nil)
-  discard igInputTextMultiline("##sentinels", cast[cstring](addr ui.sentinels[0]),
-    csize_t(ui.sentinels.len), ImVec2_c(x: -1, y: igGetTextLineHeight() * 4), 0, nil, nil)
+  if igInputTextMultiline("##sentinels", cast[cstring](addr ui.sentinels[0]),
+      csize_t(ui.sentinels.len), ImVec2_c(x: -1, y: igGetTextLineHeight() * 4), 0, nil, nil):
+    ui.draftDirty = true
   marks.mark("shotlog.sentinels")
   let tableH = max(igGetTextLineHeight() * 6,
     igGetContentRegionAvail().y - igGetFrameHeightWithSpacing())
@@ -601,15 +632,17 @@ proc drawColumns(ui: var ShotLogUi; st: AppState; i: int; t: Theme; marks: var M
         sample.add st.shotCell(i, r, c)
       igTextUnformatted(sample.cstring, nil)
       discard igTableNextColumn()
-      discard roleCombo(c, ui.draft.roles[c], marks)
+      if roleCombo(c, ui.draft.roles[c], marks): ui.draftDirty = true
       discard igTableNextColumn()
       if ui.draft.roles[c] == crText:
         igSetNextItemWidth(-1)
-        discard igInputTextWithHint(("##name" & $c).cstring, defaults[c].cstring,
-          cast[cstring](addr ui.nameBufs[c][0]), csize_t(NameRoom), 0, nil, nil)
+        if igInputTextWithHint(("##name" & $c).cstring, ui.draftNames[c].cstring,
+            cast[cstring](addr ui.nameBufs[c][0]), csize_t(NameRoom), 0, nil, nil):
+          ui.draftDirty = true
         marks.mark("shotlog.name " & $c)
+        marks.mark("shotlog.nametext " & $c & " " & bufText(ui.nameBufs[c]))
         tip(NameTip)
-        for bad in nameFaults:
+        for bad in ui.draftNameFaults:
           if bad.col == c:
             wrapped(bad.why, t.roles[rlWarning])
             marks.mark("shotlog.nameproblem " & $c)
@@ -653,7 +686,7 @@ proc commitEdit(ui: var ShotLogUi; i, width, n: int; st: AppState; advance: bool
   commands.add Command(kind: ckEditShotCell, logIndex: i, logRow: row, logCol: col,
     logCell: text)
   if advance:
-    let nxt = ui.nextListed(row, col, width, n)
+    let nxt = ui.nextListed(row, col, n, shownColumns(st, i, width))
     if nxt.row >= 0:
       ui.pending = true
       ui.pendingRow = nxt.row
@@ -737,9 +770,7 @@ proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme;
     return
   marks.markWindow("shotlog.grid")
   let map = st.shotLogMap(i)
-  var shown: seq[int] = @[] ## the columns the grid shows: all but those mapped to Ignore
-  for c in 0 ..< width:
-    if c >= map.roles.len or map.roles[c] != crIgnored: shown.add c
+  let shown = shownColumns(st, i, width) ## all but the columns mapped to Ignore
   let names = st.shotLogNames(i, map, width)
   if not igBeginTable("shotlog.grid", cint(2 + shown.len), flags, ImVec2_c(x: 0, y: 0), 0):
     igEndChild()

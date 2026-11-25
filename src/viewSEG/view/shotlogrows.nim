@@ -29,6 +29,13 @@ type
   ScrollKey* = tuple[by: RowsBy, first, revision: int]
     ## What the grid last scrolled for: who chose, the first row, and the choice's revision.
 
+func nextShown*(shown: openArray[int]; col: int): int =
+  ## The first of the `shown` columns (ascending: those the grid shows, which
+  ## leaves out an ignored one) after `col`, or -1. Tab moves to it.
+  result = -1
+  for c in shown:
+    if c > col: return c
+
 func sortedUnique(rows: openArray[int]): seq[int] =
   result = @rows
   result.sort()

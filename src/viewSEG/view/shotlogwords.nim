@@ -15,16 +15,19 @@ const
   ApplyButton* = "Apply"
   CancelButton* = "Cancel"
   GuessButton* = "Guess again"
-  PatternTip* = "How the Time (UTC) columns read as one time: their cells are joined by " &
-    "one space, in column order.\n" &
-    "yyyy or yy: year (two digits: 50 to 99 is 19xx, 0 to 49 is 20xx)\n" &
-    "ddd: day of year      mm: month, or the minute after an hour      mi: minute\n" &
-    "dd: day of month      hh: hour      ss: second\n" &
-    "f: the fraction of the second (digits after a dot; the dot may be left out)\n" &
+  TimeSourceTip* = "Slicing and matching use GPSTB when that column is chosen, otherwise " &
+    "Time (UTC)."
+  PatternTip* = "How the cell of the Time (UTC) column reads as a time.\n" &
+    "yyyy: year, four digits      yy: two digits (50 to 99 is 19xx, 0 to 49 is 20xx)\n" &
+    "ddd: day of year      mo: month      dd: day of month\n" &
+    "hh: hour      mi: minute      ss: second\n" &
+    "f: the digits of the fraction of a second, after a dot or a comma\n" &
     "u: whole microseconds      any other character must be there as written\n" &
-    "Example: yyyy ddd hh mi ss.ffffff\n" &
-    "A column of seconds or microseconds since 1970: epoch seconds, epoch microseconds.\n" &
-    "Empty: the form of the first rows is used."
+    "mm is not a field: write mo for the month and mi for the minute.\n" &
+    "Example: yyyy-mo-dd hh:mi:ss.ffffff      a trailing Z is accepted.\n" &
+    "Seconds or microseconds since 1970: epoch seconds, epoch microseconds.\n" &
+    "Empty: the form the first rows decide is used; when they decide none, type it.\n" &
+    TimeSourceTip
   NameTip* = "The name of a user defined column. It cannot be one of the system's names " &
     "(whatever the capitals, spaces or punctuation), Ignore, or another column's name. " &
     "Empty: the header's name."
