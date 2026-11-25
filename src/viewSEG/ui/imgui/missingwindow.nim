@@ -533,7 +533,7 @@ proc drawScan(ui: var MissingUi; st: AppState; folderTab: bool; marks: var Marks
     discard
   elif r.shot.stats.records == 0 and r.receiver.stats.records == 0:
     if not (r.notChecked.len > 0 and not folderTab):
-      let note = if r.notChecked.len > 0: nothingChecked(r.notChecked.len) else: NoTemplateRecord
+      let note = if r.notChecked.len > 0: nothingChecked(r.notChecked) else: NoTemplateRecord
       igPushTextWrapPos(0)
       igTextUnformatted(note.cstring, nil)
       igPopTextWrapPos()

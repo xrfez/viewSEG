@@ -14,6 +14,7 @@ import std/strutils
 import parseSEG
 import processSEG/qc/record
 import viewSEG/core/missingreport
+import viewSEG/core/reportside
 import viewSEG/view/missingwords
 
 proc st(line, point: float64): StationKey = stationKey(line, point, 1)
@@ -183,6 +184,16 @@ proc main*() =
     var shots = initTally(ssReceivers)
     shots.addGather(template4(), rec(template4(), [4]))
     doAssert countsLine(shots.report.stats, false) == "1 record"
+
+  block nothing_checked_advises_only_for_files_that_cannot_be_told:
+    ## Seen to fail: with the advice always added, a folder of continuous recordings was told
+    ## to set a kind it cannot be given.
+    let continuous = @[(path: "a.sgd", why: ContinuousWhy), (path: "b.sgd", why: ContinuousWhy)]
+    let said = nothingChecked(continuous)
+    doAssert said == "2 files were not checked, so there is nothing to show.", said
+    let untold = @[(path: "a.sgd", why: ContinuousWhy),
+      (path: "b.sgd", why: "one receiver and one source: it may be one slice; " & SetKindHint)]
+    doAssert "cannot be told" in nothingChecked(untold) and "Files window" in nothingChecked(untold)
 
   echo "tmissingreport: ok"
 

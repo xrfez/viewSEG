@@ -31,8 +31,9 @@ type
     job: JobId = NoJob
     sink: QualitySink
     note: QualityNote
-    key: string ## what the job (or the answer) is for; "" for nothing asked
+    key: string       ## what the job (or the answer) is for; "" for nothing asked
     running, have, capped: bool
+    side: StationSide ## the stations this tab shows when its result holds both sides
     done, total: int64
     status: string
     result: QualityJobResult
@@ -245,6 +246,8 @@ proc finish(ui: var QualityUi; s: var Scan; state: JobState; error: string) =
   s.result = s.sink.result
   s.have = true
   s.status = Ready
+  s.side = if s.result.receivers.totals.traces >= s.result.sources.totals.traces: ssReceivers
+    else: ssSources
   ui.sortDirty = true
   ui.shownKey = ["", ""]
 
@@ -498,8 +501,19 @@ proc drawScan(ui: var QualityUi; st: AppState; folderTab: bool; marks: var Marks
     igTextUnformatted(notChecked.cstring, nil)
     igPopTextWrapPos()
     marks.mark("quality.message " & notChecked)
-  let side = if r.receivers.totals.traces > 0: ssReceivers
-    elif r.sources.totals.traces > 0: ssSources else: ssReceivers
+  let scan = if folderTab: addr ui.folder else: addr ui.file
+  if r.receivers.totals.traces > 0 and r.sources.totals.traces > 0:
+    if igRadioButton_Bool(ReceiversOption.cstring, scan.side == ssReceivers):
+      scan.side = ssReceivers
+      ui.shownKey = ["", ""]
+    marks.mark("quality.side receivers")
+    igSameLine(0, -1)
+    if igRadioButton_Bool(SourcesOption.cstring, scan.side == ssSources):
+      scan.side = ssSources
+      ui.shownKey = ["", ""]
+    marks.mark("quality.side sources")
+    marks.mark("quality.side")
+  let side = scan.side
   let report = r.reportOf(side)
   marks.mark("quality.sort " & sortText(ui.sort))
   let counts = countsLine(report.totals, folderTab)

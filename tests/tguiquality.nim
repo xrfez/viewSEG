@@ -98,6 +98,10 @@ proc main*() =
     for n in 1 .. 2:
       seismicFile(untoldDir / ("slice" & $n & ".sgd"), n, @[
         (line: 5.0, point: float64(n), component: 1'u8, status: tsLive, samples: zeros(32))])
+    let both = fx.dir / "both"
+    createDir(both)
+    copyFile(currentSourcePath().parentDir.parentDir / "samples" / "impulsive" / "continuous" /
+      "10_1001.sgd", both / "continuous.sgd")
     let mixed = fx.dir / "mixed"
     createDir(mixed)
     seismicFile(mixed / "shot.sgd", 1, @[
@@ -105,6 +109,13 @@ proc main*() =
       (line: 10.0, point: 2.0, component: 1'u8, status: tsLive, samples: zeros(32)),
       (line: 10.0, point: 3.0, component: 1'u8, status: tsLive, samples: zeros(32))])
     block receiverGather:
+      # (also written to the folder of receiver gathers and a continuous recording)
+      var w = openSeismicWriter(both / "receiver.sgd", SegdOutputOptions(
+        sampleIntervalUs: 2000, numSamples: 32, time: 1_700_000_000.0, receiverGather: true))
+      for shot in 1 .. 3:
+        writeTraceAt(w, 2, shot, 10, 7, 1, tsLive, zeros(32), srcPoint = float64(shot))
+      doAssert w.close().len == 0, "receiver gather was not written"
+    block receiverGatherMixed:
       # one receiver (10 / 7) of three shots
       var w = openSeismicWriter(mixed / "receiver.sgd", SegdOutputOptions(
         sampleIntervalUs: 2000, numSamples: 32, time: 1_700_000_000.0, receiverGather: true))
@@ -425,6 +436,27 @@ proc main*() =
     step("run again: they are measured as shot gathers, and it says so", runAgain,
       takenAsShots)
 
+    proc chooseBoth(f: FrameInfo) =
+      answer = @[both]
+      f.click(f.markOf("quality.folderbutton").centre)
+    proc bothChosen(f: FrameInfo): bool = f.core.settings.quality.folder == both
+    step("Folder... chooses the folder of a receiver gather and a continuous recording",
+      chooseBoth, bothChosen)
+    proc runBoth(f: FrameInfo) = f.click(f.markOf("quality.run").centre)
+    proc bothSides(f: FrameInfo): bool =
+      result = f.has("quality.ready") and f.has("quality.side receivers") and
+        f.has("quality.side sources")
+      if result:
+        doAssert f.markNames("quality.stat Receiver stations").len > 0 and
+          f.markNames("quality.stat Source stations").len == 0, "the side with more traces"
+    step("traces on both sides: the choice appears, the side with more traces shows",
+      runBoth, bothSides)
+    proc chooseSources(f: FrameInfo) = f.click(f.markOf("quality.side sources").centre)
+    proc sourcesShown(f: FrameInfo): bool =
+      result = f.markNames("quality.stat Source stations").len > 0
+      if result:
+        doAssert f.has("quality.counts 1 file, 3 traces"), $f.markNames("quality.counts ")
+    step("the other side shows the receiver gather's sources", chooseSources, sourcesShown)
     var at = 0
     var started = false
     var failed = ""

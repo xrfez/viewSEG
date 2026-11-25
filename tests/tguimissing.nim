@@ -552,7 +552,8 @@ proc main*() =
       untoldDirChosen)
     proc runUntold(f: FrameInfo) = f.click(f.markOf("missing.run").centre)
     proc nothingChecked(f: FrameInfo): bool =
-      result = f.has("missing.ready") and f.has("missing.message " & nothingChecked(2))
+      result = f.has("missing.ready") and f.markNames("missing.message 2 files were not " &
+        "checked, so there is nothing to show. A file of one receiver and one source").len == 1
       if result: doAssert not f.has("missing.message " & NoTemplateRecord)
     step("files that cannot be told and no file told: not checked, and it says so",
       runUntold, nothingChecked)
