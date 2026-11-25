@@ -357,8 +357,10 @@ While a check runs, a progress bar and **Stop** show; the Jobs window lists it t
 records that have no relation record to be checked against, and (Folder tab) **Not
 checked** the continuous recordings. A box narrows the rows by line or point. Click a
 column header to sort by it (again for the other way; Shift-click adds a column).
-**Export CSV...** writes the table on screen (`line,point,missing`); **statistics in a
-second file** also writes the figures beside it, with `-statistics` before the extension.
+**Export CSV...** writes the rows of the table on screen (`line,point,missing`): with
+words in the filter box, only the rows they let through. **statistics in a second file**
+also writes the figures of the whole result beside it, with `-statistics` before the
+extension and the filter text in its last column.
 
 ## Trace quality
 

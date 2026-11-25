@@ -25,6 +25,7 @@ type
   ExportAsk* = object
     rows*: seq[StationRow]
     stats*: MissingStats
+    filter*: string ## the text that narrowed `rows`; "" for none
     withStats*, live*: bool
 
   Scan = object
@@ -181,6 +182,14 @@ func matchesWords(text: string; words: openArray[string]): bool =
   for w in words:
     if not hasWord(text, w): return false
   true
+
+func shownRows(rows: openArray[StationRow]; filter: string): seq[StationRow] =
+  ## The rows the box `filter` lets through, in their order; all of them for no words.
+  let words = filterWords(filter)
+  for r in rows:
+    if words.len == 0 or matchesWords(
+        filerecs.stationNumber(r.line) & " " & filerecs.stationNumber(r.point), words):
+      result.add r
 
 proc rightText(text: string) =
   let w = igCalcTextSize(text.cstring, nil, false, -1).x
@@ -357,7 +366,7 @@ proc startExport*(ui: var MissingUi; st: AppState; path: string) =
     lane: jlBackground, reads: @[]), proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     writeCsv(dest, stationsCsv(ask.rows))
-    if ask.withStats: writeCsv(beside, statsCsv(ask.stats)))
+    if ask.withStats: writeCsv(beside, statsCsv(ask.stats, ask.filter)))
 
 proc pollExport(ui: var MissingUi; st: AppState) =
   if ui.exportJob == NoJob: return
@@ -493,8 +502,9 @@ proc drawScan(ui: var MissingUi; st: AppState; folderTab: bool; marks: var Marks
       igTextUnformatted(KilledNote.cstring, nil)
       marks.mark("missing.message " & KilledNote)
     if igButton(ExportButton.cstring, ImVec2_c(x: 0, y: 0)):
-      ui.ask = ExportAsk(rows: side.rows, stats: side.stats, withStats: ui.withStats,
-        live: true)
+      let text = filterText(ui.filter)
+      ui.ask = ExportAsk(rows: shownRows(side.rows, text), stats: side.stats,
+        filter: text, withStats: ui.withStats, live: true)
       out0.exportAsked = true
       out0.exportPath = (if folderTab and st.settings.missing.folder.len > 0:
         st.settings.missing.folder else: st.shownPath.parentDir) / SuggestedName

@@ -11,7 +11,8 @@
 ## Seen to fail: with the Folder tab's job started as soon as a folder is chosen,
 ## "Folder... chooses the folder" found a folder job before Run; with the
 ## subfolders tick ignored by the walk, "Run: the folder without its subfolders"
-## did not happen (3 files, not 2).
+## did not happen (3 files, not 2); with the export taking every row whatever the filter,
+## "Export CSV... writes the rows the filter shows" read both stations back.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -240,6 +241,34 @@ proc main*() =
       doAssert asked == @[dkExportMissing], "asked for " & $asked
       true
     step("Export CSV... writes Line, Point, Missing", exportCsv, exported)
+
+    let filtered = fx.dir / "out" / "filtered.csv"
+    var filterClicked, boxClicked, secondExport = false
+    proc typeFilter(f: FrameInfo) =
+      asked.setLen 0
+      answer = @[filtered]
+      f.click(f.markOf("missing.filter").centre)
+      filterClicked = true
+    proc exportedFiltered(f: FrameInfo): bool =
+      if filterClicked and not boxClicked and wait == 3:
+        f.typeText("4")
+      if filterClicked and not boxClicked and wait == 7:
+        f.click(f.markOf("missing.statsbox").centre)
+        boxClicked = true
+      if boxClicked and not secondExport and wait >= 11:
+        doAssert f.has("missing.row 10 4 2") and not f.has("missing.row 10 3 1"),
+          $f.markNames("missing.row ")
+        f.click(f.markOf("missing.export").centre)
+        secondExport = true
+      if not fileExists(filtered) or not fileExists(fx.dir / "out" / "filtered-statistics.csv"):
+        return false
+      doAssert readFile(filtered) == "line,point,missing\n10,4,2\n", readFile(filtered)
+      let stats = readFile(fx.dir / "out" / "filtered-statistics.csv")
+      doAssert stats.splitLines[0].endsWith(",filter") and stats.splitLines[1].endsWith(",4"),
+        stats
+      true
+    step("Export CSV... writes the rows the filter shows, and the filter", typeFilter,
+      exportedFiltered)
 
     proc fileTab(f: FrameInfo) =
       f.apply Command(kind: ckShowFile, panel: MainPanel, path: folder / "two.sgd",

@@ -188,12 +188,14 @@ proc stationsCsv*(rows: openArray[StationRow]): string =
   for r in rows:
     result.add csvLine(stationNumber(r.line), stationNumber(r.point), $r.missing)
 
-proc statsCsv*(s: MissingStats): string =
-  ## One header and one line of figures.
+proc statsCsv*(s: MissingStats; filter = ""): string =
+  ## One header and one line of figures. `filter` is the text that narrowed the
+  ## rows exported beside it ("" for none); the figures are always of the whole
+  ## result.
   result = csvLine("stations", "files", "records", "inTemplate", "found", "missing",
     "percentMissing", "expectedInRecords", "presentInRecords", "missingInRecords",
-    "percentMissingInRecords")
+    "percentMissingInRecords", "filter")
   result.add csvLine(if s.side == ssReceivers: "receivers" else: "sources", $s.files,
     $s.records, $s.inTemplate, $s.found, $s.missing, percentText(s.percentMissing),
     $s.expectedInRecords, $s.presentInRecords, $s.missingInRecords,
-    percentText(s.percentMissingInRecords))
+    percentText(s.percentMissingInRecords), filter)
