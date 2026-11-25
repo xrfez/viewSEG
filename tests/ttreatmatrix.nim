@@ -220,6 +220,49 @@ proc main*() =
               said.add "an unconfirmed document is left"
             discard problems
             if said.len > 0: wrong.add name & ": " & said.join("; ")
+    block carriedOnce:
+      # two documents of one content, the one that stays holding a force: the force goes to the
+      # document taken once, and a later automatic stays (nothing comes back, nothing is written)
+      let at = fx.dir / "carried"
+      let cfg = at / "config"
+      let f = canonical(writeSpecs(at / "data", "f", [spec(0, 0), spec(0, 1000), spec(0, 2000)]))
+      var modified: Time
+      var id = quickIdentity(f, modified)
+      id.full = fullHash(f)
+      id.fullKnown = true
+      let store = Store(home: cfg / StoreFolder)
+      createDir(store.home)
+      var taken: seq[string] = @[]
+      for later in [true, false]:
+        var d = FileRecord(identity: id, name: "f.sgd", path: f,
+          opened: getTime() - initDuration(days = 1),
+          modified: if later: modified else: modified - initDuration(hours = 2))
+        if later: d.edits.lists[teKilled] = @[0]
+        else:
+          d.edits.lists[teKilled] = @[1]
+          d.treat = TreatAs(kind: some rkReceiverContinuous)
+        taken.add freeDocName(id, taken)
+        writeFile(store.docPath(taken[^1]), memoryDocument(d))
+      proc run(auto: bool): RecordingKind =
+        var st = appIn(cfg)
+        st.open(f)
+        doAssert st.settled(st.idle), "carriedOnce: not settled"
+        result = st.treatOf(f).kind.get(rkShotGather)
+        if auto:
+          st.apply Command(kind: ckTreatAs, treatPath: f, treatKind: "automatic")
+          doAssert st.settled(st.idle), "carriedOnce: automatic not written"
+          doAssert not st.treatOf(f).isSet
+        st.shutdown()
+      doAssert run(true) == rkReceiverContinuous, "carriedOnce: the force did not go to the taken"
+      var before: seq[string] = @[]
+      for _, p in walkDir(store.home):
+        if p.endsWith(MemorySuffix): before.add readFile(p)
+      doAssert run(false) == rkShotGather, "carriedOnce: the cleared force came back"
+      var after: seq[string] = @[]
+      for _, p in walkDir(store.home):
+        if p.endsWith(MemorySuffix): after.add readFile(p)
+      doAssert before == after, "carriedOnce: an open with nothing to carry wrote"
+      doAssert docs(cfg).allIt(not it.treat.isSet), "carriedOnce: a force stayed"
     doAssert wrong.len == 0, $wrong.len & " of " & $cells.len & " cells:\n" & wrong.join("\n")
     echo "ttreatmatrix: ", cells.len, " cells"
 

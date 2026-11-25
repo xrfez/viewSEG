@@ -1871,6 +1871,23 @@ proc carryTreat(state: var AppState; carried: TreatAs; doc: string) =
     if kept.stamp.modified == Time(): NoDoc else: kept.stamp)
   state.knownDocs[doc].treat = kept.treat.merged(carried, parts)
 
+proc takeTreatFrom(state: var AppState; other: FileRecord; doc: string) =
+  ## What the document `other` of the same content says the file is treated as joins the document
+  ## `doc` (`carryTreat`) once, and goes from `other`, which stays (it has edits): a later
+  ## choice of automatic in `doc` is then not undone by it.
+  if not other.treat.isSet: return
+  state.carryTreat(other.treat, doc)
+  if state.store.isNowhere or (state.project.dir.len > 0 and state.project.readOnly): return
+  var parts: set[TreatPart] = {}
+  if other.treat.kind.isSome: parts.incl tpKind
+  if other.treat.grouping.isSome: parts.incl tpGrouping
+  if other.treat.subSort.isSome: parts.incl tpSubSort
+  var bare = other
+  bare.treat = TreatAs()
+  state.diskIo.treat(state.store.docPath(other.doc), bare, parts,
+    "what is remembered about " & other.name,
+    if other.stamp.modified == Time(): NoDoc else: other.stamp)
+
 proc handTreat(state: var AppState; path, doc: string; id: FileIdentity; modified: Time) =
   ## Hands the disk thread the parts of the user's choice for the file at `path` changed since
   ## the last time (`treatParts`), as they are now, for its document `doc` (`DiskIo.treat`).
@@ -5479,9 +5496,10 @@ proc takeHashed(state: var AppState; m: sink Msg) =
     for c in move(r.waiting):
       if c.doc != r.doc and c.identity.fullKnown and c.identity.full == r.identity.full and
           not c.damaged and not state.readOnlyProject:
-        state.carryTreat(c.treat, r.doc)
         if c.edits.isEmpty:
+          state.carryTreat(c.treat, r.doc)
           state.diskIo.remove(state.store.docPath(c.doc), "what is remembered about " & name)
+        else: state.takeTreatFrom(c, r.doc)
   # confirmed: what its document says it is treated as; none when no document is the file's
   state.loadTreat(r.path, if r.doc.len > 0: state.knownDocs.getOrDefault(r.doc).treat
     else: TreatAs())
