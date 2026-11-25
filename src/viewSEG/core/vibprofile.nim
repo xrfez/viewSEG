@@ -2,10 +2,11 @@
 ## QC run can apply them to other files. One profile per project (the job).
 ##
 ## It holds the six limits and the statistics window, the harmonics, the
-## accelerometer set, the force scale, a 100 % force per vibrator, each with the
-## unit it was given in and, for pound-counts, the accelerometer set it was given
-## on (and the older projects' one value with its own), a drive level when the user typed them, the reference's archive id
-## (never its samples) and the top frequency typed for that reference.
+## accelerometer set, the force scale, the project's one 100 % force with the unit it
+## was given in and, for pound-counts, the accelerometer set it was given on, where it
+## came from (typed, or set on a sweep: its file and its vibrator), a drive level when the
+## user typed it, the reference's archive id (never its samples) and the top frequency
+## typed for that reference.
 ##
 ## It does not hold anything read from a file: a controller or vibrator id, a
 ## serial, header weights and sensitivities, a polarity finding, a fitted top,
@@ -18,14 +19,15 @@ import analysis, nif, settings, units
 
 type
   VibHundred* = object
-    ## The 100 % force kept for one vibrator (the QC record's vibrator ID, above 0), with the
-    ## unit and accelerometer set it was given in, and how and where it was given. Each value
-    ## keeps its own unit: it is never read in another vibrator's.
+    ## A 100 % force with the unit and accelerometer set it was given in, and how and where it
+    ## was given. The value keeps its own unit: it is never read in another.
     vibrator*: int
+      ## the vibrator (the QC record's vibrator ID) of the sweep it was set on; 0: not known.
+      ## Information only: the value is used for every vibrator
     pct*: float64 = NaN
     unit*: string
-      ## the unit `pct` was given in (`HundredUnits`); "": not known (a value kept before each
-      ## vibrator's had its own unit), so it is not applied until it is set again
+      ## the unit `pct` was given in (`HundredUnits`); "": not known, so it is not applied
+      ## until it is set again
     accelSet*: AccelSet = asB ## the accelerometer set a pound-counts value was given on
     setKnown*: bool ## `accelSet` is known
     how*: HundredHow = hhTyped
@@ -41,8 +43,7 @@ type
     accelSet*: AccelSet = asB
     forceScale*: ForceScale
     forceHundredPct*: float64 = NaN
-      ## the project's one 100 % force (an older project's, every vibrator's that has none of
-      ## its own); NaN: none
+      ## the project's one 100 % force, used for every vibrator; NaN: none
     forceHundredUnit*: string ## the unit `forceHundredPct` was typed in; "": not said
     forceHundredSet*: AccelSet = asB
       ## the accelerometer set a 100 % force in pound-counts was typed on.
@@ -53,13 +54,15 @@ type
     targetPct*: float64 = NaN ## NaN: the user did not type a drive level
     hundredHow*: HundredHow = hhTyped ## how `forceHundredPct` (the default) was given
     hundredAtPct*: float64 = NaN ## the target force (%) it was given at
-    hundredByVibrator*: seq[VibHundred]
-      ## the 100 % force of each vibrator that has its own, each in its own unit; a vibrator
-      ## with none takes `forceHundredPct` (what an older project kept for all), and with that
-      ## unset has none
-    vibrator*: int
-      ## the vibrator of the file the window showed (0: not known): where a change of the 100 %
-      ## force is written; never stored as a setting
+    hundredFile*: string ## the file the window showed when it was set or typed; "": not known
+    hundredVibrator*: int ## the vibrator of that file's sweep; 0: not known
+    olderHundreds*: seq[VibHundred]
+      ## 100 % forces an older version kept per vibrator that differ from each other (or from
+      ## `forceHundredPct`): the project then has no 100 % force (`forceHundredPct` is NaN)
+      ## and these are kept as read until one is set again, which drops them
+    olderSingle*: VibHundred
+      ## the one value an older document held beside `olderHundreds` that differ from it,
+      ## kept as read with them
     judge*: JudgeOn = joRecorded
       ## the ground force the run judges: in the record, or made from mass and baseplate
     madeReactionKg*, madeBaseplateKg*: float64 = NaN
@@ -87,12 +90,31 @@ type
       ## the set a pound-counts 100 % force was typed on, when known
     forceHundredSetKnown*: bool
       ## `forceHundredSet` was stored. False: an older project, the set unknown.
-    hundredByVibrator*: seq[VibHundred] ## each vibrator's own 100 % force
-    judge*: JudgeOn = joRecorded ## the ground force judged (`VibQcProfile.judge`)
+    hundredConflict*: string
+      ## `hundredConflict` of the profile: why there is no 100 % force; "": no reason to say
+    judge*: JudgeOn = joRecorded
+      ## the ground force judged (`VibQcProfile.judge`) on a file whose layout has no choice of
+      ## its own (`layouts`)
     layouts*: seq[string]
       ## the roles chosen by hand per file layout (`choiceText`), the ones the Vibrator window
       ## uses: a file of a layout with a choice is judged on its places (Swap mass and
-      ## baseplate among them); not part of the profile
+      ## baseplate among them) and its polarities (a signature file: the ground force's);
+      ## not part of the profile
+    tops*: seq[string]
+      ## the top frequencies typed in the project (`topTexts`): a file measured against its
+      ## recorded reference takes the one typed for its layout (`recordedTopKey`), as a window
+      ## does; not part of the profile
+    segyHundredPct*: float64 = NaN
+      ## the 100 % force a Vibrator window on a SEG-Y file opens with (the one typed last on
+      ## one, in that file's unit; NaN: none): the external converter's SEG-Y's recorded ground
+      ## force is judged with it, never with the signature files' value; not part of the profile
+    segyTargetPct*: float64 = 100.0 ## ... and its drive level
+    segyLimits*: QcLimits
+      ## the limits a Vibrator window on a SEG-Y file opens with (those remembered for the
+      ## kind): the external converter's SEG-Y is judged with the profile's, and its row says so
+      ## when these differ; not part of the profile
+    segyQcWindowMs*: float64 = NaN ## ... its statistics window; NaN: not known, nothing said
+    segyHarmonics*: int ## ... and its harmonics
     problems*: seq[string]
 
 const ForceNotJudged* = "No 100 % force: the force limits are not judged."
@@ -101,31 +123,12 @@ const ForceNotJudged* = "No 100 % force: the force limits are not judged."
   ## file may give its force (a `.dat` from its target force, a `.vib` from its
   ## hold-down weight), and the file that cannot says why.
 
-const OneWeightsSet* = "The ground force made from mass and baseplate uses the project's one " &
-  "set of weights for every vibrator."
-  ## What a window and a folder run say once when the made ground force is judged while the
-  ## profile keeps 100 % forces for more than one vibrator: the weights are not per vibrator.
-
-func oneWeightsForAll*(entries: openArray[VibHundred]; judge: JudgeOn): bool =
-  ## Whether `OneWeightsSet` is to be said: the ground force is made from mass and baseplate and
-  ## `entries` hold 100 % forces of more than one vibrator.
-  result = false
-  if judge == joWeighted:
-    for e in entries:
-      if e.vibrator != entries[0].vibrator: return true
-
 const OneSetOfWeights* = "One set of weights for the project: the folder QC uses them too. " &
-  "The Ground force choice (In the record or Made from mass and baseplate) is one for the " &
-  "project as well: the folder QC judges every file with the one set last in any Vibrator " &
-  "window, .dat and .vib files included."
+  "The Ground force choice (In the record or Made from mass and baseplate) is kept for each " &
+  "file layout: the folder QC judges each file on its layout's choice, the recorded ground " &
+  "force when none was made, .dat and .vib files included. The 100 % force is one for the project too: it is " &
+  "used for every vibrator."
   ## The note beside a converter's weight boxes in a project.
-
-func weightsNotes*(entries: openArray[VibHundred]; judge: JudgeOn): seq[string] =
-  ## The lines beside a converter's weight boxes in a project with the 100 % forces `entries`:
-  ## they are the project's one set and, while the ground force is made from them for a fleet,
-  ## `OneWeightsSet`.
-  result = @[OneSetOfWeights]
-  if oneWeightsForAll(entries, judge): result.add OneWeightsSet
 
 func sameFloat(x, y: float64): bool {.inline.} =
   x == y or (x.isNaN and y.isNaN)
@@ -138,44 +141,79 @@ func sameLimits(a, b: QcLimits): bool =
     sameFloat(a.avgForcePct, b.avgForcePct) and
     sameFloat(a.peakForcePct, b.peakForcePct)
 
-func sameHundred(a, b: seq[VibHundred]): bool =
-  if a.len != b.len: return false
-  for i in 0 ..< a.len:
-    if a[i].vibrator != b[i].vibrator or not sameFloat(a[i].pct, b[i].pct) or
-        a[i].unit != b[i].unit or a[i].accelSet != b[i].accelSet or
-        a[i].setKnown != b[i].setKnown or a[i].how != b[i].how or
-        not sameFloat(a[i].atPct, b[i].atPct) or a[i].file != b[i].file: return false
-  true
+func sameHundred*(a, b: VibHundred): bool =
+  ## Whether `a` and `b` are the same value, given in the same way (a NaN equal to a NaN).
+  a.vibrator == b.vibrator and sameFloat(a.pct, b.pct) and a.unit == b.unit and
+    a.accelSet == b.accelSet and a.setKnown == b.setKnown and a.how == b.how and
+    sameFloat(a.atPct, b.atPct) and a.file == b.file
 
-func hundredFor*(entries: seq[VibHundred]; single: VibHundred; vibrator: int): VibHundred =
-  ## The 100 % force of `vibrator`: its own when it has one, else `single` (the project's one
-  ## value, which an older project kept for every vibrator); `pct` NaN when there is none. A
-  ## vibrator is never given another vibrator's value.
-  for e in entries:
-    if e.vibrator == vibrator and vibrator > 0: return e
-  result = single
-  result.vibrator = vibrator
+func sameHundreds(a, b: seq[VibHundred]): bool =
+  result = a.len == b.len
+  for i in 0 ..< min(a.len, b.len):
+    if not sameHundred(a[i], b[i]): result = false
 
-func singleHundred(p: VibQcProfile): VibHundred =
-  ## The profile's one value (an older project's, for every vibrator) with its own unit and set.
-  VibHundred(pct: p.forceHundredPct, unit: p.forceHundredUnit, accelSet: p.forceHundredSet,
-    setKnown: p.forceHundredSetKnown, how: p.hundredHow, atPct: p.hundredAtPct, file: p.fromFile)
+func hundredOf*(p: VibQcProfile): VibHundred =
+  ## The project's one 100 % force with its unit, set and where it came from; `pct` NaN when
+  ## there is none.
+  VibHundred(vibrator: p.hundredVibrator, pct: p.forceHundredPct, unit: p.forceHundredUnit,
+    accelSet: p.forceHundredSet, setKnown: p.forceHundredSetKnown, how: p.hundredHow,
+    atPct: p.hundredAtPct, file: p.hundredFile)
 
-func hundredOf*(p: VibQcProfile; vibrator: int): VibHundred =
-  ## `hundredFor` the profile's own.
-  hundredFor(p.hundredByVibrator, p.singleHundred, vibrator)
+func setHundred*(p: var VibQcProfile; h: VibHundred) =
+  ## `h` as the project's one 100 % force (an empty one clears it).
+  p.forceHundredPct = h.pct
+  p.forceHundredUnit = h.unit
+  p.forceHundredSet = h.accelSet
+  p.forceHundredSetKnown = h.setKnown
+  p.hundredHow = h.how
+  p.hundredAtPct = h.atPct
+  p.hundredFile = h.file
+  p.hundredVibrator = h.vibrator
 
-func hundredOf(now: VibQcProfile): VibHundred =
-  ## The 100 % force a window's profile `now` gives, for its own vibrator.
-  VibHundred(vibrator: now.vibrator, pct: now.forceHundredPct, unit: now.forceHundredUnit,
-    accelSet: now.forceHundredSet, setKnown: now.forceHundredSetKnown, how: now.hundredHow,
-    atPct: now.hundredAtPct, file: now.fromFile)
+func sameKind*(a, b: VibHundred): bool =
+  ## Whether two values are the same force: the same number in the same unit and, in
+  ## pound-counts (the one unit that depends on the accelerometer set), the same set.
+  sameFloat(a.pct, b.pct) and a.unit == b.unit and (a.unit != "pound-counts" or
+    a.setKnown == b.setKnown and (not a.setKnown or a.accelSet == b.accelSet))
 
-func withHundred(entries: seq[VibHundred]; e: VibHundred): seq[VibHundred] =
-  ## `entries` with the one of `e.vibrator` set to `e`, or dropped when `e.pct` is NaN.
-  for x in entries:
-    if x.vibrator != e.vibrator: result.add x
-  if not e.pct.isNaN: result.add e
+func takeOlder*(p: var VibQcProfile) =
+  ## Reads what an older document kept, in `forceHundredPct` and `olderHundreds` (a value per
+  ## vibrator): one value, or values that all agree (the same number, unit and set), are the
+  ## project's one 100 % force. Values that differ are taken as none: the profile has no 100 %
+  ## force, and keeps them as read until one is set again.
+  var all = p.olderHundreds
+  let single = p.hundredOf
+  if not single.pct.isNaN: all.insert(single, 0)
+  if all.len > 0:
+    var agree = true
+    for h in all:
+      if not sameKind(h, all[0]): agree = false
+    if agree:
+      p.olderHundreds = @[]
+      if single.pct.isNaN: p.setHundred(all[0])
+    elif not single.pct.isNaN:
+      p.olderSingle = single
+      p.setHundred(VibHundred())
+
+const MaxConflictNames* = 8
+  ## the vibrators the conflict sentence names at most; the rest are counted
+
+func hundredConflict*(p: VibQcProfile): string =
+  ## The sentence for a project whose older document kept 100 % forces that differ, so that it
+  ## has none until one is set from a sweep; "" when there is nothing to say. It names at most
+  ## `MaxConflictNames` vibrators and counts the others, however many the document kept.
+  if p.forceHundredPct.isNaN and p.olderHundreds.len > 0:
+    let shown = min(p.olderHundreds.len, MaxConflictNames)
+    let more = p.olderHundreds.len - shown
+    let last = more == 0 and p.olderSingle.pct.isNaN # (the last name follows "and")
+    var words = if p.olderHundreds.len == 1: "vibrator " else: "vibrators "
+    for i in 0 ..< shown:
+      if i > 0: words.add(if i == shown - 1 and last: " and " else: ", ")
+      words.add $p.olderHundreds[i].vibrator
+    if more > 0: words.add " and " & $more & (if more == 1: " other" else: " others")
+    elif not p.olderSingle.pct.isNaN: words.add " and the others"
+    result = "This project kept different 100 % forces for " & words &
+      "; it now keeps one: set it again from a sweep."
 
 func `==`*(a, b: VibQcProfile): bool =
   ## Whether two profiles hold the same settings, a NaN (unset) equal to a NaN.
@@ -193,18 +231,8 @@ func `==`*(a, b: VibQcProfile): bool =
     sameFloat(a.madeBaseplateKg, b.madeBaseplateKg) and
     sameFloat(a.forceHundredWeighted, b.forceHundredWeighted) and
     a.hundredHow == b.hundredHow and sameFloat(a.hundredAtPct, b.hundredAtPct) and
-    sameHundred(a.hundredByVibrator, b.hundredByVibrator)
-
-func firstProfile*(now: VibQcProfile): VibQcProfile =
-  ## The profile a first window makes: `now`, its 100 % force kept for its vibrator, with its
-  ## unit and set, when that is known (the project's one slot stays empty: it is the older
-  ## projects' default).
-  result = now
-  if now.vibrator > 0 and not now.forceHundredPct.isNaN:
-    result.hundredByVibrator = @[now.hundredOf]
-    (result.forceHundredPct, result.hundredHow, result.hundredAtPct) = (NaN, hhTyped, NaN)
-    (result.forceHundredUnit, result.forceHundredSet) = ("", asB)
-    result.forceHundredSetKnown = false
+    a.hundredFile == b.hundredFile and a.hundredVibrator == b.hundredVibrator and
+    sameHundreds(a.olderHundreds, b.olderHundreds) and sameHundred(a.olderSingle, b.olderSingle)
 
 func merged*(stored, had, now: VibQcProfile): VibQcProfile =
   ## The stored profile with only what the user changed in one window written into
@@ -234,17 +262,15 @@ func merged*(stored, had, now: VibQcProfile): VibQcProfile =
   let hundredChanged = not sameFloat(had.forceHundredPct, now.forceHundredPct) or
     not now.forceHundredPct.isNaN and (had.forceHundredUnit != now.forceHundredUnit or
       had.forceHundredSet != now.forceHundredSet or
-      had.forceHundredSetKnown != now.forceHundredSetKnown)
-  if hundredChanged and now.vibrator > 0:
-    # a vibrator's own 100 % force, in its own unit: written for it alone, the project's default
-    # and the other vibrators' (each in its own unit) stay
-    result.hundredByVibrator = result.hundredByVibrator.withHundred(now.hundredOf)
-  elif hundredChanged:
-    result.forceHundredPct = now.forceHundredPct
-    (result.hundredHow, result.hundredAtPct) = (now.hundredHow, now.hundredAtPct)
-    (result.forceHundredUnit, result.forceHundredSet) = (now.forceHundredUnit,
-      now.forceHundredSet)
-    result.forceHundredSetKnown = now.forceHundredSetKnown
+      had.forceHundredSetKnown != now.forceHundredSetKnown or
+      had.hundredHow != now.hundredHow or had.hundredFile != now.hundredFile or
+      had.hundredVibrator != now.hundredVibrator)
+  if hundredChanged:
+    # the one 100 % force, whatever vibrator's sweep it was set on; what an older document
+    # kept per vibrator goes
+    result.setHundred(now.hundredOf)
+    result.olderHundreds = @[]
+    result.olderSingle = VibHundred()
   takeFloat(result.targetPct, had.targetPct, now.targetPct)
   take(referenceId)
   takeFloat(result.topHz, had.topHz, now.topHz)
@@ -283,15 +309,6 @@ func changeWords*(a, b: VibQcProfile): seq[string] =
     result.add (if b.forceHundredPct.isNaN: "100 % force cleared"
       else: "100 % force " & sensible(b.forceHundredPct) &
         (if b.forceHundredUnit.len > 0: " " & b.forceHundredUnit else: ""))
-  if not sameHundred(a.hundredByVibrator, b.hundredByVibrator):
-    for e in b.hundredByVibrator:
-      let was = a.hundredByVibrator.hundredFor(VibHundred(), e.vibrator)
-      if not sameFloat(was.pct, e.pct) or was.unit != e.unit:
-        result.add "100 % force for vibrator " & $e.vibrator & " " & sensible(e.pct) &
-          (if e.unit.len > 0: " " & e.unit else: "")
-    for e in a.hundredByVibrator:
-      if b.hundredByVibrator.hundredFor(VibHundred(), e.vibrator).pct.isNaN:
-        result.add "100 % force for vibrator " & $e.vibrator & " cleared"
   if not sameFloat(a.targetPct, b.targetPct):
     result.add (if b.targetPct.isNaN: "drive level cleared"
       else: "drive level " & sensible(b.targetPct) & " %")
@@ -320,7 +337,8 @@ func profileOf*(limits: QcLimits; qcWindowMs: float64; harmonics: int;
     referenceId: string; topHz: float64; forceHundredUnit = "";
     forceHundredSet = asB; fromFile = ""; judge = joRecorded; madeReactionKg = NaN;
     madeBaseplateKg = NaN; forceHundredWeighted = NaN; hundredHow = hhTyped;
-    hundredAtPct = NaN; vibrator = 0; forceHundredSetKnown = true): VibQcProfile =
+    hundredAtPct = NaN; hundredVibrator = 0; forceHundredSetKnown = true;
+    hundredFile = ""): VibQcProfile =
   ## The profile a Vibrator window is using. Pass that window's values, not a
   ## signature file's built-in reset (which clears a typed 100 % force and drive
   ## level). `referenceId` is the archive id, never samples. `topHz` is the top
@@ -330,7 +348,8 @@ func profileOf*(limits: QcLimits; qcWindowMs: float64; harmonics: int;
   ## pound-counts force was typed on; the window's, so it is known unless the window took
   ## the value from a project that did not record it (`forceHundredSetKnown`). `fromFile`
   ## names the file the window showed. `judge` is the ground force switch, with the masses
-  ## (weights) and the 100 % force it needs.
+  ## (weights) and the 100 % force it needs. `hundredFile` and `hundredVibrator` say which
+  ## sweep a 100 % force was set on.
   VibQcProfile(limits: limits, qcWindowMs: qcWindowMs, harmonics: harmonics,
     accelSet: accelSet, forceScale: scale, forceHundredPct: forceHundredPct,
     forceHundredUnit: forceHundredUnit, forceHundredSet: forceHundredSet,
@@ -338,7 +357,7 @@ func profileOf*(limits: QcLimits; qcWindowMs: float64; harmonics: int;
     referenceId: referenceId, topHz: topHz, fromFile: fromFile, judge: judge,
     madeReactionKg: madeReactionKg, madeBaseplateKg: madeBaseplateKg,
     forceHundredWeighted: forceHundredWeighted, hundredHow: hundredHow,
-    hundredAtPct: hundredAtPct, vibrator: vibrator)
+    hundredAtPct: hundredAtPct, hundredFile: hundredFile, hundredVibrator: hundredVibrator)
 
 func typedForce(x: float64): bool {.inline.} =
   x > 0 and x < Inf
@@ -354,12 +373,12 @@ func applied*(p: VibQcProfile; archiveIds: openArray[string]): VibQcAsk =
     referenceId: p.referenceId, topHz: p.topHz,
     forceHundredUnit: p.forceHundredUnit, forceHundredSet: p.forceHundredSet,
     forceHundredSetKnown: p.forceHundredSetKnown, judge: p.judge,
-    hundredByVibrator: p.hundredByVibrator)
-  if p.judge == joWeighted:
-    # the masses and the made signal's own 100 % force go to the run only when it is made
-    result.options.reactionMassKg = p.madeReactionKg
-    result.options.baseplateMassKg = p.madeBaseplateKg
-    result.options.forceHundredWeighted = p.forceHundredWeighted
+    hundredConflict: p.hundredConflict)
+  # the masses and the made signal's own 100 % force go to the run whatever the profile judges:
+  # a file layout may have its own choice, as its window does
+  result.options.reactionMassKg = p.madeReactionKg
+  result.options.baseplateMassKg = p.madeBaseplateKg
+  result.options.forceHundredWeighted = p.forceHundredWeighted
   if p.referenceId.len == 0 or p.referenceId notin archiveIds:
     result.problems.add referenceProblem(p.referenceId)
   if not typedForce(p.forceHundredPct):

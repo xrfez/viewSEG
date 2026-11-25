@@ -186,6 +186,8 @@ type
     forceHundredHow*: HundredHow = hhTyped ## how the 100 % force (either) was given
     forceHundredFile*: string ## the file the window showed when it was given; "": unknown
     forceHundredAtPct*: float64 = NaN ## the target force (%) it was given at; NaN: unknown
+    forceHundredVibrator*: int
+      ## the vibrator of the sweep it was set on; 0: unknown (information only)
     forceHundredFromProfile*: bool
       ## it came from the project's vibrator QC profile, not from this window's own edit
     rolesOpen*: bool = false ## vibrator signature: the roles' table is unfolded
@@ -363,10 +365,11 @@ func topTexts*(tops: openArray[TopFrequency]): seq[string] =
   ## `tops` as the project's document keeps them.
   for t in tops: result.add topText(t.reference, t.hz)
 
-func hundredSource*(p: AnalysisParams; vibrator: int): string =
+func hundredSource*(p: AnalysisParams): string =
   ## Where the 100 % force box's value came from, for the note beside it: "typed", "set on
-  ## a.dat at target 60 %", "from the project's QC profile, set on a.dat at target 60 %", each
-  ## "for vibrator 12" when the sweep's vibrator is known; "" when no value is given.
+  ## a.dat (vibrator 12) at target 60 %", "from the project's QC profile, set on a.dat
+  ## (vibrator 12) at target 60 %"; the vibrator is the one of the sweep it was set on, whatever
+  ## the window shows now. "" when no value is given.
   if p.forceHundredPct.isNaN and p.forceHundredWeighted.isNaN: return ""
   func whole(x: float64): string =
     if x == round(x): $int64(x) else: formatFloat(x, ffDecimal, 1)
@@ -375,9 +378,9 @@ func hundredSource*(p: AnalysisParams; vibrator: int): string =
   of hhSweep:
     result = "set " & (if p.forceHundredFile.len > 0: "on " & p.forceHundredFile
       else: "from a sweep")
+    if p.forceHundredVibrator > 0: result.add " (vibrator " & $p.forceHundredVibrator & ")"
     if not p.forceHundredAtPct.isNaN: result.add " at target " & whole(p.forceHundredAtPct) & " %"
   if p.forceHundredFromProfile: result = "from the project's QC profile, " & result
-  if vibrator > 0: result.add " for vibrator " & $vibrator
 
 func hundredGuard*(controllerPct, targetPct: float64): string =
   ## What to say when "Set from this sweep" is pressed on a sweep whose own controller reports
@@ -458,6 +461,11 @@ func layoutKey*(codes: openArray[int16]; count = -1): string =
     if i >= MaxLayoutKeyCodes: break
     if i > 0: result.add '.'
     result.add $c
+
+func recordedTopKey*(codes: openArray[int16]; count = -1): string =
+  ## What a top frequency typed against the recorded reference is kept under: `RecordedKey`
+  ## and the file layout (`layoutKey`), so a file of another layout never takes it.
+  RecordedKey & " " & layoutKey(codes, count)
 
 type ChosenPolarity* = object
   ## What a hand choice keeps with its roles: the polarity of GF and of M and B, and the

@@ -588,11 +588,8 @@ proc drawMassesGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32
   drawUnitToggle(name, t, marks, res, st)
   if st.inProject and st.vibConverter(w):
     # a converter's weights are the project's one set (not per vibrator): said, never asked
-    var kept: seq[VibHundred] = @[]
-    if st.project.doc.hasVibProfile: kept = st.project.doc.vibProfile.hundredByVibrator
-    for n, line in weightsNotes(kept, p.roles.judge):
-      wrapped(line, t)
-      marks.mark(name & ".masses project " & $n)
+    wrapped(OneSetOfWeights, t)
+    marks.mark(name & ".masses project 0")
 
 proc drawForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
     kind: SignatureKind; forceNote: string; t: Theme; marks: var Marks;
@@ -652,22 +649,18 @@ proc drawForceGroup(w: AnalysisWindow; name: string; planeAt: int; box: float32;
     igAlignTextToFramePadding()
     igTextUnformatted(forceShown.unit.cstring, nil)
     marks.mark(name & ".force unit")
-  # where the value came from: typed, or set on a sweep (which file, at which target), and for
-  # which vibrator; a vibrator with none says so
-  let vibrator = if planeAt >= 0: st.vibratorOf(w) else: 0
-  let source = hundredSource(p, vibrator)
-  if source.len > 0:
+  # where the value came from: typed, or set on a sweep (which file, which vibrator, which
+  # target); it is the project's one, used for every vibrator
+  let source = hundredSource(p)
+  # (the sentence of a project that kept different values: made once a frame, and only when shown)
+  let said = if source.len > 0: source
+             elif planeAt >= 0 and p.forceHundredPct.isNaN: st.hundredConflictNote(w)
+             else: ""
+  if said.len > 0:
     igSameLine(0, -1)
     igAlignTextToFramePadding()
     igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-    igTextUnformatted(("(" & source & ")").cstring, nil)
-    igPopStyleColor(1)
-    marks.mark(name & ".hundred source")
-  elif planeAt >= 0 and p.forceHundredPct.isNaN and st.missingHundred(w).len > 0:
-    igSameLine(0, -1)
-    igAlignTextToFramePadding()
-    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-    igTextUnformatted(("(" & st.missingHundred(w) & ")").cstring, nil)
+    igTextUnformatted(("(" & said & ")").cstring, nil)
     igPopStyleColor(1)
     marks.mark(name & ".hundred source")
   if w.result.hundredWords.len > 0 and p.forceHundredPct.isNaN:

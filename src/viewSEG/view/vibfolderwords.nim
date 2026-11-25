@@ -4,6 +4,7 @@
 import std/[math, os, strutils]
 from ../core/sigtypes import SignatureKind, sgDat, sgNone, sgVib, timeText
 from ../core/analysis import JudgeOn, joWeighted
+from ../core/openchoice import SignatureChoice
 import ../core/[project, settings, units, vibfolderconf, vibfolderqc, vibjudge, vibprofile]
 
 const
@@ -269,24 +270,15 @@ func profileLines*(p: VibQcProfile): seq[string] =
       line.add " "
       line.add p.forceHundredUnit
     line.add "."
-  if p.hundredByVibrator.len > 0:
-    # each vibrator's own, in the unit it was given in
-    var each: seq[string] = @[]
-    for e in p.hundredByVibrator:
-      each.add "vibrator " & $e.vibrator & " " & sensible(e.pct) &
-        (if e.unit.len > 0: " " & e.unit else: " (unit not known: set it again)")
-    line.add " 100% force for " & each.join(", ") & "."
+  elif p.hundredConflict.len > 0:
+    line.add " " & p.hundredConflict
   if not p.targetPct.isNaN:
     line.add " Drive " & sensible(p.targetPct) & "%."
   if not p.topHz.isNaN:
     line.add " Top " & sensible(p.topHz) & " Hz."
   if p.referenceId.len > 0:
     line.add " Reference " & p.referenceId & "."
-  line.add (if p.judge == joWeighted: " Ground force made from mass and baseplate" &
-    (if not (p.madeReactionKg.isNaN or p.madeBaseplateKg.isNaN):
-      " (" & sensible(p.madeReactionKg) & " kg, " & sensible(p.madeBaseplateKg) & " kg)"
-    else: "") & "."
-    else: " Ground force in the record.")
+  line.add " Ground force: each file layout's own choice (recorded when none was made)."
   result = @[line]
   let lim = p.limits
   result.add "Average phase " & offOr(lim.avgPhaseDeg, "°") &
@@ -319,6 +311,20 @@ func configLines*(c: VibQcConfig): seq[string] =
   if not c.weights.reactionMassKg.isNaN:
     kg.add "reaction mass " & sensible(c.weights.reactionMassKg) & " kg"
   if kg.len > 0: result.add "Job weights: " & kg.join(", ") & "."
+
+proc settingsChanged*(ranLines: seq[string]; ranKey: FolderRunKey; now: VibQcConfig;
+    choices: seq[SignatureChoice]): bool =
+  ## Whether a run made with the configuration shown as `ranLines` and keyed `ranKey`
+  ## (`runKeyOf`) would be judged otherwise now, with `now` on files decoded with `choices`
+  ## (`choicesAt`): the run shown then says `SettingsChanged`.
+  not now.configured or configLines(now) != ranLines or runKeyOf(now, choices) != ranKey
+
+proc settingsChangedKept*(scanning, kept: bool; ranLines: seq[string]; ranKey: FolderRunKey;
+    now: VibQcConfig; choices: seq[SignatureChoice]): bool =
+  ## `settingsChanged`, except that while the Files listing is being made again (`scanning`)
+  ## the options of its files are not known, so the value decided before (`kept`) stands.
+  if scanning: kept
+  else: settingsChanged(ranLines, ranKey, now, choices)
 
 proc sortColumn*(name: string; col: var FolderColumn): bool =
   ## The sort key `name` is, when that header sorts. False for Warnings.

@@ -80,6 +80,10 @@ proc profile(judge: JudgeOn; reaction = NaN; plate = NaN; weighted = NaN): VibQc
   profileOf(QcLimits(), 500.0, 5, asB, ForceScale(), 5.0e7, NaN, "", NaN, "", asB, "", judge,
     reaction, plate, weighted)
 
+proc onLayouts(ask: VibQcAsk; layouts: seq[string]): VibQcAsk =
+  result = ask
+  result.layouts = layouts
+
 proc main*() =
   block profileKeepsTheSwitch:
     let p = profile(joWeighted, Wm, Wb, 1000.0)
@@ -97,13 +101,14 @@ proc main*() =
     doAssert "judge" notin plain and "madeReactionKg" notin plain, plain
     doAssert readProject(plain, "project.nif", problems).vibProfile.judge == joRecorded
     doAssert p != profile(joRecorded, Wm, Wb, 1000.0)
-    # the ask: the masses reach the run only when the ground force is made
+    # the ask: the masses reach the run whatever the profile judges (a file layout may have
+    # chosen to make the ground force on its own)
     let made = applied(p, [])
     doAssert made.judge == joWeighted and made.options.reactionMassKg == Wm and
       made.options.forceHundredWeighted == 1000.0
     let record = applied(profile(joRecorded, Wm, Wb, 1000.0), [])
-    doAssert record.judge == joRecorded and record.options.reactionMassKg.isNaN and
-      record.options.forceHundredWeighted.isNaN
+    doAssert record.judge == joRecorded and record.options.reactionMassKg == Wm and
+      record.options.forceHundredWeighted == 1000.0
     # a window that changes only the switch writes only it into the stored profile
     let stored = profile(joRecorded, NaN, NaN, NaN)
     var flipped = stored
@@ -113,9 +118,9 @@ proc main*() =
       kept.forceHundredWeighted == 1000.0, $kept
     doAssert "ground force made from mass and baseplate" in changeWords(stored, flipped)
     # the profile's text says which ground force is judged
-    doAssert "Ground force in the record." in profileLines(profile(joRecorded))[0]
-    doAssert "Ground force made from mass and baseplate (3600 kg, 1400 kg)." in
-      profileLines(p)[0], profileLines(p)[0]
+    const Said = "Ground force: each file layout's own choice (recorded when none was made)."
+    doAssert Said in profileLines(profile(joRecorded))[0]
+    doAssert Said in profileLines(p)[0], profileLines(p)[0]
 
   block listing:
     withFixtures fx:
@@ -161,6 +166,20 @@ proc main*() =
         "signature_4trace_a.sgy"
       let files = @[listed(sgy), listed(dat), listed(sample)]
       doAssert files[0].converted and not files[1].converted and files[2].converted
+      # each layout's own choice is what a file is judged on (recorded when none was made):
+      # "made" chosen on a window of each file
+      var st = initAppState()
+      st.keepSettingsIn(fx.dir / "config", loadSettings(fx.dir / "config" / "settings.nif"))
+      for f in files:
+        let w = st.window(f.path)
+        var p = st.plots[w].params
+        let chosen = p.roles.judge == joWeighted # (a layout chosen already opens as chosen)
+        p.roles.judge = joWeighted
+        if f.path == files[0].path:
+          (p.reactionMassKg, p.baseplateMassKg, p.forceHundredWeighted) = (Wm, Wb, 1000.0)
+        if not chosen: st.change(w, p)
+      let layouts = st.vibRoleChoices
+      st.shutdown()
       let record = runJob(files, applied(profile(joRecorded, Wm, Wb, 1000.0), []))
       for f in files:
         let row = record.rowOf(f.path)
@@ -170,7 +189,8 @@ proc main*() =
         kindLabel(record.rowOf(sgy).kind) == SegyKindLabel
       # made: the converter's file on its weights (the reaction mass on the trace coded 19), the
       # .dat on the plain sum of its channels, both said in the sentence
-      let made = runJob(files, applied(profile(joWeighted, Wm, Wb, 1000.0), []))
+      let madeAsk = applied(profile(joWeighted, Wm, Wb, 1000.0), []).onLayouts(layouts)
+      let made = runJob(files, madeAsk)
       for f in files:
         let row = made.rowOf(f.path)
         doAssert row.outcome == foJudged, f.path & ": " & row.problem
@@ -188,17 +208,18 @@ proc main*() =
         doAssert abs(got - want) <= 0.01 * max(abs(want), 1.0), $l & ": " & $got & " not " & $want
       # the weights the wrong way round make another ground force: the converter swap is real
       var turned = profile(joWeighted, Wb, Wm, 1000.0)
-      let wrong = runJob(@[files[0]], applied(turned, []))
+      let wrong = runJob(@[files[0]], applied(turned, []).onLayouts(layouts))
       let right = made.rowOf(sgy)
       doAssert wrong.rowOf(sgy).sentence != right.sentence,
         "the weights made no difference: " & right.sentence
       # the made ground force with its own 100 % force not set says so on the row
-      let noMade = runJob(@[files[0]], applied(profile(joWeighted, Wm, Wb, NaN), []))
+      let noWeight = applied(profile(joWeighted, Wm, Wb, NaN), []).onLayouts(layouts)
+      let noMade = runJob(@[files[0]], noWeight)
       doAssert "no 100 % force is set for the ground force made from mass and baseplate" in
         noMade.rowOf(sgy).forceWhy, noMade.rowOf(sgy).forceWhy
       # a profile with no weights: the converter's file stays on the record, with a warning on
       # its row; the .dat takes the file's own
-      let bare = runJob(files, applied(profile(joWeighted), []))
+      let bare = runJob(files, applied(profile(joWeighted), []).onLayouts(layouts))
       let bareRow = bare.rowOf(sgy)
       doAssert "from M and B" notin bareRow.sentence, bareRow.sentence
       var told = false
@@ -283,7 +304,7 @@ proc main*() =
       doAssert kept.limits.avgPhaseDeg == 3 and kept.harmonics == 7 and kept.fromFile == "a.sgy",
         $kept
       doAssert kept.forceHundredPct.isNaN and kept.targetPct.isNaN and
-        kept.hundredByVibrator.len == 0, "a SEG-Y window's own 100 % force or drive level"
+        kept.olderHundreds.len == 0, "a SEG-Y window's own 100 % force or drive level"
       # once there is a profile, a converter's window writes only the made signal's settings
       p = st.plots[w].params
       p.qc.avgPhaseDeg = 4.0
@@ -316,36 +337,10 @@ proc main*() =
       doAssert st.plots[w2].params.reactionMassKg == 3000 and
         st.plots[w2].params.baseplateMassKg == 1500, "the window does not show the pair kept"
       st.shutdown()
-    # the window's lines
-    let two = @[VibHundred(vibrator: 11, pct: 1.0), VibHundred(vibrator: 12, pct: 2.0)]
-    doAssert weightsNotes(two, joWeighted) == @[OneSetOfWeights, OneWeightsSet]
-    # (the switch a converter's window sets is the one the folder applies to every file)
+    # the window's line: the weights and the ground force choice are one for the project, and
+    # so is the 100 % force
     doAssert "Ground force choice" in OneSetOfWeights and ".dat and .vib files included" in
-      OneSetOfWeights, OneSetOfWeights
-    doAssert weightsNotes(two, joRecorded) == @[OneSetOfWeights]
-    doAssert weightsNotes(two[0 .. 0], joWeighted) == @[OneSetOfWeights]
-    # the folder run: once, when a SEG-Y file was judged on the one set
-    block folderRun:
-      withFixtures fx:
-        let c = converterOf()
-        var files: seq[FolderListed] = @[]
-        for name in ["a.sgy", "b.sgy"]:
-          writeVibSegy(fx.dir / name, [c.reference, c.mass, c.plate, c.record], 1.0,
-            [21'i16, 19, 18, 20])
-          files.add listed(fx.dir / name)
-        let dat = listed(datFile(fx.dir, "a.dat"))
-        var prof = profile(joWeighted, Wm, Wb, 1000.0)
-        prof.hundredByVibrator = two
-        var count = 0
-        for x in runJob(files & dat, applied(prof, [])).problems:
-          if x == OneWeightsSet: inc count
-        doAssert count == 1, $count
-        doAssert OneWeightsSet notin runJob(@[dat], applied(prof, [])).problems
-        prof.hundredByVibrator = two[0 .. 0]
-        doAssert OneWeightsSet notin runJob(files, applied(prof, [])).problems
-        prof.hundredByVibrator = two
-        prof.judge = joRecorded
-        doAssert OneWeightsSet notin runJob(files, applied(prof, [])).problems
+      OneSetOfWeights and "used for every vibrator" in OneSetOfWeights, OneSetOfWeights
 
 when isMainModule:
   main()

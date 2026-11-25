@@ -137,7 +137,16 @@ carries a warning sign.
   looking at. The force scale is the one in the settings now, and the reference is the project's
   chosen one. Only the settings you change in a window are written into the profile, so a
   second window cannot wipe what the first one set; a window opened on a file starts from the
-  profile, and Messages says once what changed. Nothing read from the file is copied. A change made by an agent, or with no
+  profile, and Messages says once what changed. Nothing read from the file is copied. The
+  folder QC judges each file as a window opened on that file would: with the profile, the
+  ground force polarity chosen for the file's layout, the top frequency typed for its layout
+  (against the recorded reference) or the one the project keeps for the stored reference now
+  (typed in any Vibrator window on it, a SEG-Y one's too) and the options the file opens with (Reopen with options,
+  for one file or for every file of its kind in the listing). The profile is the authority for
+  the limits, the statistics window and the harmonics: the external converter's SEG-Y is judged
+  with them too, and when a window on such a file would open with other ones (those remembered
+  for a SEG-Y window), its row says "Judged with the project's QC profile limits; a window on
+  this file opens with its own remembered limits". A change made by an agent, or with no
   project open, is for that run only and is not kept. **Reports > Vibrator QC of a folder** reads
   this configuration; until a window has set it, that window says that vibrator signature QC is
   not configured.
@@ -181,8 +190,11 @@ them and a new window of a converter's file opens with them. They are not kept p
 another project, or change them, for another set). The two weights are one pair: a window that
 changes one keeps the other as the project holds it (another window may have changed it) and
 then shows the pair kept; a window already open is not refreshed until it changes one. The
-Ground force choice is one for the project too: the folder QC judges every file with the one set
-last in any Vibrator window, `.dat` and `.vib` files included. When a converter's window makes
+folder QC judges each file on the Ground force choice remembered for its layout, as a window on
+it does (a converter's file chosen made and a `.dat` left in the record are each judged so); a
+file of a layout with no choice of its own is judged on the recorded ground force, as a window on
+it is (`.dat` and `.vib` files included). The made signal's weights and its own 100 % force go
+with every file whichever choice was made. When a converter's window makes
 the project's first profile, the profile takes that window's limits, statistics window and
 harmonics as it shows them (not its 100 % force of the recorded ground force or its drive level,
 which are in that file's terms); after that it writes only the made signal's settings. When the profile keeps 100 % forces for more
@@ -213,7 +225,10 @@ better (a mean phase more than 20° lower), a line says so and nothing is swappe
 does not prove the order is right: when the two channels are nearly in phase with each other,
 both orders give much the same phase and the check cannot tell them apart. The folder QC judges a converter's file on the roles the window takes for its layout, a swap
 included, and its row carries the same word when the other order fits the reference clearly
-better (the polarity stays as recorded there).
+better. Its recorded ground force is in the converter's own unit, so it is judged with the 100 %
+force and drive level a Vibrator window on a SEG-Y file opens with (the ones last typed on such a
+window), never with the signature files' 100 % force: with none typed its force limits are not
+judged, and the row says why.
 
 For a `.dat` and a `.vib` a line under the choice says that both choices give the same ground
 force. When a file cannot follow the choice (no mass or baseplate trace, masses not typed, a `.vib`
@@ -228,19 +243,23 @@ which. The fundamental says whether the drive level is at target; a raw peak wel
 at distortion or decoupling. The fundamental's peak decides nothing.
 
 **Where the 100 % force comes from.** Beside its box a note says whether it was typed, or set
-from a sweep (on which file, at which target force), or taken from the project's QC profile, and
-for which vibrator. Set it once on a high-force sweep and every later sweep of that vibrator is
-read against it, so a low-force sweep simply reads low. It is kept **per vibrator** in the
-project's QC profile: a vibrator with no value says so and is not judged on force (it never takes
-another vibrator's); a project saved before keeps its one value as the default for every
-vibrator until a vibrator gets its own. Each vibrator's value keeps the unit (and, for
-pound-counts, the accelerometer set) it was given in, so one set in counts before the force scale
-was given is converted exactly with the scale for the window and the folder QC, and one set in
-newtons is not read as counts when the scale is taken away (that vibrator is not judged on force,
-and says to set it again). A value kept by a version that had one unit for every vibrator has no
-known unit: set it again. With no project open, each vibrator's value is kept the same way for
-the run only (never saved): a window moved to another vibrator's sweep has none until you set
-it, says so, and is not judged on force; moved back, it has the first vibrator's again. If the file carries the controller's own average force
+from a sweep (on which file, which vibrator's sweep, at which target force: "set on a.dat
+(vibrator 12) at target 60 %"), or taken from the project's QC profile. Set it once on a
+high-force sweep and every later sweep is read against it, so a low-force sweep simply reads low.
+There is **one 100 % force for the project**, kept in its QC profile and used for every vibrator,
+in every window and in the folder QC: "Set from this sweep" sets it for all of them, whichever
+vibrator's sweep is shown, and every Vibrator window open on a sweep takes it at once (a frozen
+one too: freezing keeps the sweep shown, not the project's settings). A project with different vibrators needs it set again for each, or
+another project for each; the program does not keep a value per vibrator. The value keeps the
+unit (and, for pound-counts, the accelerometer set) it was given in, so one set in counts before
+the force scale was given is converted exactly with the scale for the window and the folder QC,
+and one set in newtons is not read as counts when the scale is taken away (the force is then not
+judged, and says to set it again). A project saved by a version that kept a value per vibrator
+reads as one value when it kept one, or when all of its values agree; when they differ the
+project has none, Messages and the window say "This project kept different 100 % forces for
+vibrators 11 and 12; it now keeps one: set it again from a sweep.", and the force is not judged
+until you set it (the old values stay in the project's document until then). With no project
+open, the one value is kept for the run only (never saved). If the file carries the controller's own average force
 and it differs from the target you typed by more than 10 percentage points when you press Set from
 this sweep, the value is set all the same and a line under the box (and Messages) says what a
 sweep at the target would then read. The force in pounds (the force scale) is under **Advanced:
@@ -263,8 +282,9 @@ share one value (same unit, same curve).
   place to reverse a polarity; M's choice carries B with it): it affects the analysis only (the
   samples and the file stay as recorded), is remembered for
   this file layout (in the project when one is open, else in your settings), and is said in the
-  roles' notes ("GF reversed for the analysis: your choice") and in the polarity line. **as
-  recorded** takes it back. Automatic polarity is not offered for a signature file. For a `.dat`
+  roles' notes ("GF reversed for the analysis: your choice") and in the polarity line. The
+  folder QC judges every file of that layout the same way, and its row's polarity line says so
+  too. **as recorded** takes it back. Automatic polarity is not offered for a signature file. For a `.dat`
   that stores the controller's own correlation, the line also says where its peak at lag 0 lies
   and, when the ground force is opposite and that peak is negative, that the controller counts the
   same relation as in phase.

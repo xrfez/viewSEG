@@ -430,6 +430,11 @@ func pickPilotTrace*(r: PilotRule; isAux: openArray[bool]; record: string):
     result.problem = recordSentence(record) & " has " & $isAux.len & " trace" &
       (if isAux.len == 1: "" else: "s") & ", not a trace " & $r.trace & "."
 
+func generatedTopHz*(e: ReferenceEntry): float64 =
+  ## The end frequency of a generated reference (the higher of its two), the edge of the
+  ## distortion band when no top is typed; NaN for a stored trace.
+  if e.origin.generated: max(e.origin.f1Hz, e.origin.f2Hz) else: NaN
+
 func frequencyText*(e: ReferenceEntry): string =
   ## The frequency range, for a generated reference; "" for a stored trace.
   if e.origin.generated:

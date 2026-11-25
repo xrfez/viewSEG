@@ -106,6 +106,8 @@ type
     recorded*: bool
       ## the project's reference is a trace of the record: each file's recorded
       ## reference is used, and `name` is the rule's
+    exactTopHz*: float64 = NaN
+      ## a generated reference's end frequency (`generatedTopHz`); NaN: not generated
 
 func totalsOf*(rows: openArray[FolderRow]): FolderTotals =
   ## Counts of `rows`. `files` is every row.

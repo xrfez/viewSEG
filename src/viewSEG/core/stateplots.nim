@@ -280,7 +280,7 @@ func vibTopKey*(state: AppState; pw: AnalysisWindow): string =
       let s = state.sessions[i]
       let g = s.gatherOf(pw.traces[0] - s.base)
       if g in 0 ..< s.gathers.len:
-        result = RecordedKey & " " & layoutKey(s.recordCodes(g), s.gathers[g].traces.len)
+        result = recordedTopKey(s.recordCodes(g), s.gathers[g].traces.len)
   if pw.params.projectReference and state.chosenRef.len > 0 and
       state.refsLoaded:
     let at = state.refs.findId(state.chosenRef)
@@ -304,12 +304,11 @@ proc vibratorOf*(state: AppState; w: AnalysisWindow): int =
   let i = if w.traces.len > 0: state.findTrace(w.traces[0]) else: -1
   if i >= 0: sigVibrator(state.sessions[i]) else: 0
 
-func seedHundred(params: var AnalysisParams; p: VibQcProfile; vibrator: int;
-    fromProject = true) =
-  ## The 100 % force the project's profile (`fromProject`, else the run's own list) holds for
-  ## `vibrator`, in the unit and set it was given in, as a window opens with it (NaN when the
-  ## vibrator has none: it is not judged on force, and never borrows another's).
-  let h = p.hundredOf(vibrator)
+func seedHundred(params: var AnalysisParams; p: VibQcProfile; fromProject = true) =
+  ## The project's one 100 % force (`fromProject`, else the run's own), in the unit and set it
+  ## was given in, as a window opens with it, whatever vibrator's sweep it shows (NaN when
+  ## there is none: not judged on force).
+  let h = p.hundredOf
   params.forceHundredPct = h.pct
   params.forceHundredUnit = if h.pct.isNaN: "" else: h.unit
   (params.forceHundredSet, params.forceHundredSetKnown) = if h.pct.isNaN: (params.accelSet, true)
@@ -317,21 +316,16 @@ func seedHundred(params: var AnalysisParams; p: VibQcProfile; vibrator: int;
   params.forceHundredHow = h.how
   params.forceHundredFile = h.file
   params.forceHundredAtPct = h.atPct
+  params.forceHundredVibrator = h.vibrator
   params.forceHundredFromProfile = fromProject and not h.pct.isNaN
 
-func missingHundred*(state: AppState; w: AnalysisWindow): string =
-  ## What a signature window says when its sweep's vibrator has no 100 % force while others
-  ## have theirs (in the project's QC profile, else this run's): it is not judged on force.
-  ## "" when the vibrator has one, is not known, or the file gives its own.
-  let vibrator = state.vibratorOf(w)
-  var kept: seq[VibHundred] = @[]
-  if not state.inProject: kept = state.sessionHundreds.hundredByVibrator
-  elif state.project.doc.hasVibProfile: kept = state.project.doc.vibProfile.hundredByVibrator
-  if vibrator > 0 and kept.len > 0 and w.params.forceHundredPct.isNaN and
-      w.result.hundredWords.len == 0:
-    result = "no 100 % force for vibrator " & $vibrator &
-      (if state.inProject: " in the project's QC profile" else: " set in this run") &
-      ": not judged on force"
+func hundredConflictNote*(state: AppState; w: AnalysisWindow): string =
+  ## What a signature window says when its project kept different 100 % forces for vibrators
+  ## (an older version did): there is none until one is set from a sweep, and the force is not
+  ## judged. "" otherwise, or when the file gives its own.
+  if state.inProject and state.project.doc.hasVibProfile and
+      w.params.forceHundredPct.isNaN and w.result.hundredWords.len == 0:
+    result = state.project.doc.vibProfile.hundredConflict
 
 proc vibProfileOf*(state: AppState; w: AnalysisWindow): VibQcProfile =
   ## Vibrator window `w`'s settings as a profile: the limits, window, harmonics, set, the
@@ -347,7 +341,8 @@ proc vibProfileOf*(state: AppState; w: AnalysisWindow): VibQcProfile =
   profileOf(p.qc, p.qcWindowMs, p.harmonics, p.accelSet, state.settings.forceScale,
     p.forceHundredPct, p.targetPct, refId, top, p.forceHundredUnit, p.forceHundredSet,
     w.file, p.roles.judge, p.reactionMassKg, p.baseplateMassKg, p.forceHundredWeighted,
-    p.forceHundredHow, p.forceHundredAtPct, state.vibratorOf(w), p.forceHundredSetKnown)
+    p.forceHundredHow, p.forceHundredAtPct, p.forceHundredVibrator, p.forceHundredSetKnown,
+    p.forceHundredFile)
 
 proc signatureAsk(state: AppState; s: Session; p: AnalysisParams): SignatureAsk =
   ## What a signature file adds to the Vibrator window's ask: the user's force scale (the
@@ -464,7 +459,7 @@ proc askPlot(state: var AppState; w: int): bool =
         a.archiveName = e.name
         a.archiveIntervalUs = e.intervalUs
         a.archiveStartMs = e.timeStart
-        if e.origin.generated: a.exactTopHz = max(e.origin.f1Hz, e.origin.f2Hz)
+        a.exactTopHz = generatedTopHz(e)
     a.refName = a.archiveName & " (archive)"
     pw.reference = a.refName
   if pw.view == avVibrator:
@@ -995,7 +990,7 @@ proc openPlot(state: var AppState; cmd: Command) =
       w.params.qc = p.limits
       (w.params.qcWindowMs, w.params.harmonics) = (p.qcWindowMs, p.harmonics)
       if s.signature.kind == sgVib: w.params.accelSet = p.accelSet
-      w.params.seedHundred(p, sigVibrator(s))
+      w.params.seedHundred(p)
       w.params.targetPct = p.targetPct
     if samePlaces(cmd.plotParams.roles, VibRoles()):
       w.params.roles = state.rolesOf(s, traces, w.params.roles, s.name, w.params.accelSet)
@@ -1032,7 +1027,7 @@ proc keepVibProfile(state: var AppState; had, now: VibQcProfile) =
   ## `now` is the profile. The change is said in Messages once it has settled.
   let hasOne = state.project.doc.hasVibProfile
   let stored = state.project.doc.vibProfile
-  let next = if hasOne: merged(stored, had, now) else: firstProfile(now)
+  let next = if hasOne: merged(stored, had, now) else: now
   if hasOne and next == stored: return
   if state.profileNoteAt == MonoTime(): state.profileNoteBase = stored
   state.profileNoteAt = getMonoTime()
@@ -1041,6 +1036,35 @@ proc keepVibProfile(state: var AppState; had, now: VibQcProfile) =
   state.project.doc.vibProfile.later = stored.later
   state.project.doc.hasVibProfile = true
   state.projectChanged()
+
+func oneHundred(state: AppState): VibHundred =
+  ## The one 100 % force windows on signature files take: the project's profile's, else (no
+  ## project) the run's; none in a project without a profile.
+  if state.inProject:
+    if state.project.doc.hasVibProfile: state.project.doc.vibProfile.hundredOf
+    else: VibHundred()
+  else: state.sessionHundreds.hundredOf
+
+proc reseedHundreds(state: var AppState; but: int) =
+  ## Every open Vibrator window on a signature file but `plots[but]` takes the one 100 % force
+  ## again, frozen ones too (freezing keeps the sweep shown, not the project's settings), and
+  ## the ones it changes are measured again.
+  if state.inProject and not state.project.doc.hasVibProfile: return
+  let fromProject = state.inProject
+  let source = if fromProject: state.project.doc.vibProfile else: state.sessionHundreds
+  for w in 0 ..< state.plots.len:
+    if w != but and state.plots[w].view == avVibrator:
+      let i = state.vibWindowFile(w)
+      if i >= 0 and state.sessions[i].isSignature:
+        var params = state.plots[w].params
+        params.seedHundred(source, fromProject)
+        if params != state.plots[w].params or params.forceHundredFromProfile !=
+            state.plots[w].params.forceHundredFromProfile:
+          state.plots[w].params = params
+          inc state.plots[w].revision
+          if not state.askPlot(w):
+            state.log.add(sevWarning, "New plot", "The file of " & state.plots[w].title &
+              " is not open any more, or busy: it shows what it had.")
 
 proc showPlot(state: var AppState; cmd: Command) =
   ## `ckPlotDisplay`: an analysis window's settings, and whether it is
@@ -1148,6 +1172,7 @@ proc showPlot(state: var AppState; cmd: Command) =
         not sameValue(b, pw.params.forceHundredWeighted):
       params.forceHundredFile = if a.isNaN and b.isNaN: "" else: pw.file
       params.forceHundredAtPct = params.targetPct
+      params.forceHundredVibrator = if a.isNaN and b.isNaN: 0 else: state.vibratorOf(pw)
       params.forceHundredFromProfile = false
       if params.forceHundredHow == hhSweep and not (a.isNaN and b.isNaN):
         let guard = hundredGuard(pw.result.controllerAvgForcePct, params.targetPct)
@@ -1157,6 +1182,7 @@ proc showPlot(state: var AppState; cmd: Command) =
   (measured.rolesOpen, measured.noteOpen) = (pw.params.rolesOpen, pw.params.noteOpen)
   (measured.setupOpen, measured.setupSet) = (pw.params.setupOpen, pw.params.setupSet)
   let changed = measured != pw.params
+  let hundredWas = state.oneHundred
   pw.params = params
   if signature and state.inProject and keeps(cmd.origin) and not state.project.readOnly:
     # what the user sets on a signature window is the project's vibrator QC profile: one
@@ -1165,10 +1191,10 @@ proc showPlot(state: var AppState; cmd: Command) =
     let now = state.vibProfileOf(pw)
     if now != profileHad: state.keepVibProfile(profileHad, now)
   elif signature and not state.inProject and keeps(cmd.origin):
-    # without a project each vibrator's 100 % force is kept for this run the same way (never
-    # saved), so a window moved to another vibrator's sweep does not carry this one's
+    # without a project the one 100 % force is kept for this run the same way (never saved),
+    # so a window moved to another sweep has it too
     let now = state.vibProfileOf(pw)
-    if now.vibrator > 0 and now != profileHad:
+    if now != profileHad:
       state.sessionHundreds = merged(state.sessionHundreds, profileHad, now)
   elif pw.view == avVibrator and state.inProject and keeps(cmd.origin) and
       not state.project.readOnly and state.vibConverter(pw):
@@ -1222,6 +1248,9 @@ proc showPlot(state: var AppState; cmd: Command) =
   if changed and not state.askPlot(w):
     state.log.add(sevWarning, "New plot", "The file of " & pw.title & " is not open any " &
       "more, or busy: it shows what it had.")
+  if not sameHundred(hundredWas, state.oneHundred):
+    # the one 100 % force changed: every other window on a signature file uses it at once
+    state.reseedHundreds(w)
 
 proc holdPlotCursor(state: var AppState; cmd: Command) =
   ## `ckPlotCursor`: where an analysis window's cursor is held (by its
@@ -1449,19 +1478,24 @@ proc repick(state: var AppState; w, k, i: int): bool =
     pw.params.roles = state.rolesOf(s, seed, oldRoles, s.name, pw.params.accelSet)
     if s.isSignature != wasSignature:
       # from another kind of file to a signature file, or back: the drive level and the 100 %
-      # force are those a window of the new kind opens with (a signature file's: none typed)
+      # force are those a window of the new kind opens with (a signature file's: none typed,
+      # then the one 100 % force of the project, else of this run)
       let kind = state.settings.plotOptions.vibrator
       pw.params.forceHundredPct = if s.isSignature: NaN else: kind.forceHundredPct
       pw.params.forceHundredUnit = ""
       pw.params.targetPct = if s.isSignature: NaN else: kind.targetPct
-    elif s.isSignature and oldAt >= 0 and sigVibrator(s) != sigVibrator(state.sessions[oldAt]):
-      # another vibrator's sweep: its own 100 % force, or none (never the other one's), from
-      # the project's profile, else from what was given in this run (when both vibrators are
-      # known: a sweep of no known vibrator keeps the window's, read in its own unit)
+      if s.isSignature and state.inProject and state.project.doc.hasVibProfile:
+        pw.params.seedHundred(state.project.doc.vibProfile)
+        pw.params.targetPct = state.project.doc.vibProfile.targetPct
+      elif s.isSignature and not state.inProject:
+        pw.params.seedHundred(state.sessionHundreds, fromProject = false)
+    elif s.isSignature and oldAt >= 0:
+      # another sweep, of any vibrator: the one 100 % force of the project's profile, else of
+      # this run, whatever vibrator it was set on (it may have been set since the window opened)
       if state.inProject and state.project.doc.hasVibProfile:
-        pw.params.seedHundred(state.project.doc.vibProfile, sigVibrator(s))
-      elif not state.inProject and sigVibrator(s) > 0 and sigVibrator(state.sessions[oldAt]) > 0:
-        pw.params.seedHundred(state.sessionHundreds, sigVibrator(s), fromProject = false)
+        pw.params.seedHundred(state.project.doc.vibProfile)
+      elif not state.inProject:
+        pw.params.seedHundred(state.sessionHundreds, fromProject = false)
   pw.first = seed[0]
   pw.processing = pr
   if state.askPlot(w):

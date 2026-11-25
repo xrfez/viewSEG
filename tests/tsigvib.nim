@@ -925,6 +925,22 @@ proc main*() =
     doAssert polarityOf(newSeqWith(8, NaN), false, false,
         ask).kind == pkUnclear
 
+  block unclearReversed:
+    # an unclear polarity of a ground force reversed for the analysis still says it was reversed,
+    # and by whom; one not reversed says nothing of it (seen to fail: the two unclear lines left
+    # without the reversal)
+    let ask = SignatureAsk()
+    var weak = newSeq[float64](40)
+    for i in 0 ..< weak.len: weak[i] = float64(i * 97 mod 360)
+    for (phases, why) in [(newSeqWith(8, NaN), "no part of the sweep"), (weak, "weakly")]:
+      let mine = polarityOf(phases, true, true, ask)
+      doAssert mine.kind == pkUnclear and why in mine.line, mine.line
+      doAssert mine.line.endsWith("; reversed for the analysis, as you chose"), mine.line
+      let auto = polarityOf(phases, true, false, ask)
+      doAssert auto.line.endsWith("; reversed for the analysis by the Automatic polarity"),
+        auto.line
+      doAssert "reversed" notin polarityOf(phases, false, false, ask).line
+
   echo "tsigvib: ok"
 
 when isMainModule:

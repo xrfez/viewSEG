@@ -5,13 +5,14 @@
 ## run is not configured.
 
 import std/[os, sequtils]
-import analysis, project, settings, state, vibfolderqc, vibprofile
+import analysis, openchoice, project, references, settings, state, vibfolderqc, vibprofile
 
 const
   NotConfigured* = "Vibrator signature QC is not configured."
   WhereToConfigure* = "Set it in a Vibrator signature window: Analysis > New plot > " &
     "Vibrator, on a signature file."
 
+  StillListing* = "The folder is still being listed: run again when the listing is done."
   ReadOnlyProject* = "The project is read-only: the QC settings cannot be kept in it."
   ReferencesLoading* = "The references are being read."
   ReferenceMissing* = "The chosen reference is not in the archive: choose a reference " &
@@ -65,26 +66,34 @@ func referenceChoice*(loaded: bool; index: ReferenceIndex; home, id: string): tu
       elif not (e.file.len == 0 or home.len == 0):
         result.state = rfStored
         result.reference = FolderReference(path: home / e.file, name: e.name,
-          startMs: e.timeStart)
+          startMs: e.timeStart, exactTopHz: generatedTopHz(e))
       return
 
 func vibQcConfig*(st: AppState): VibQcConfig =
   ## The configuration in force. The project's chosen reference is used; the
-  ## profile's stored one only when none is chosen. The force scale is the
-  ## one set now. Not configured without an open project that holds a profile.
+  ## profile's stored one only when none is chosen; either with the top the project keeps
+  ## for it now. The force scale is the one set now. Not configured without an open project that holds a profile.
   if not (st.inProject and st.project.doc.hasVibProfile):
     if st.inProject and st.project.readOnly: result.unsetWhy = ReadOnlyProject
     return
   result.configured = true
   result.profile = st.project.doc.vibProfile
   let chosen = st.chosenReference
-  if chosen.len > 0 and chosen != result.profile.referenceId:
-    # the top typed was typed for the reference the profile was stored with
-    result.profile.referenceId = chosen
-    result.profile.topHz = topsOf(st.project.doc.vibTops).topOf(chosen)
+  if chosen.len > 0: result.profile.referenceId = chosen
+  if result.profile.referenceId.len > 0:
+    # the top a window measured against that reference takes: the one the project keeps for it
+    # now, not the one the profile held when it was stored (a top typed since on a window that
+    # writes no profile, a SEG-Y one's, changes the project's alone)
+    result.profile.topHz = topsOf(st.project.doc.vibTops).topOf(result.profile.referenceId)
   result.profile.forceScale = st.settings.forceScale
   result.ask = applied(result.profile, archiveIds(st))
   result.ask.layouts = st.vibRoleChoices
+  result.ask.tops = st.project.doc.vibTops
+  result.ask.segyHundredPct = st.settings.plotOptions.vibrator.forceHundredPct
+  result.ask.segyTargetPct = st.settings.plotOptions.vibrator.targetPct
+  (result.ask.segyLimits, result.ask.segyQcWindowMs, result.ask.segyHarmonics) = (
+    st.settings.plotOptions.vibrator.qc, st.settings.plotOptions.vibrator.qcWindowMs,
+    st.settings.plotOptions.vibrator.harmonics)
   result.weights = st.project.doc.vibJobWeights
   let found = referenceChoice(st.referencesLoaded, st.references, st.referencesHome,
     result.profile.referenceId)
@@ -95,6 +104,41 @@ func vibQcConfig*(st: AppState): VibQcConfig =
     of rfLoading: ReferencesLoading
     of rfMissing: ReferenceMissing
     else: ""
+
+func choicesAt*(st: AppState; paths: openArray[string]): seq[SignatureChoice] =
+  ## The options each of the files at `paths` (canonical) is decoded with, as a window opens it
+  ## now (`openChoiceOf`): those it was reopened with, else those given for every file of its
+  ## kind in the listing, else the defaults. In memory: no file is read.
+  result = newSeq[SignatureChoice](paths.len)
+  for i, path in paths: result[i] = st.openChoiceOf(path).signature
+
+proc runRefusal*(st: AppState): string =
+  ## Why a folder run is not started now: the Files listing is still being made, so the
+  ## options its files open with are not known. Empty when a run may start.
+  if st.fileList.scanning: StillListing else: ""
+
+proc canonicalPaths*(files: openArray[FolderListed]): seq[string] =
+  ## The canonical path of each of `files` (`canonical`), as `choicesAt` takes them.
+  result = newSeq[string](files.len)
+  for i, f in files: result[i] = canonical(f.path)
+
+proc folderChoices*(st: AppState; files: openArray[FolderListed]): seq[SignatureChoice] =
+  ## The options each of `files` is decoded with, as a window opens it now (`choicesAt`).
+  st.choicesAt(canonicalPaths(files))
+
+type FolderRunKey* = object
+  ## Everything a folder run is judged with beside what its configuration's lines show: the
+  ## whole ask (the roles, polarities and ground force switch chosen per file layout, the tops
+  ## typed, a SEG-Y window's 100 % force and drive level among them), the job's weights, the
+  ## reference, and each file's open options. A run made now with another key judges with other
+  ## settings.
+  settings: string
+  choices: seq[SignatureChoice]
+
+proc runKeyOf*(c: VibQcConfig; choices: seq[SignatureChoice]): FolderRunKey =
+  ## The key of a run made with `c` on files decoded with `choices` (`folderChoices`). An
+  ## unset value (NaN) is the same as another unset one.
+  FolderRunKey(settings: $c.ask & $c.weights & $c.reference, choices: choices)
 
 func sameShot(a, b: FolderShot): bool =
   a.ffid == b.ffid and a.line == b.line and a.point == b.point

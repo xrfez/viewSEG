@@ -6,7 +6,9 @@
 ## a file, and every file not judged is listed as skipped. The sink is set
 ## before the job returns, fails or is cancelled.
 ##
-## Polarity is reported and never changed. Job weights are never applied as
+## Polarity is reported, and never changed from what a file says: a ground force is reversed
+## for the analysis only where the user chose so for the file's layout in a Vibrator window,
+## as that window does, and the row's polarity line says so. Job weights are never applied as
 ## masses: a header that disagrees is words only.
 
 import std/[math, os, sets, strutils, tables]
@@ -48,6 +50,7 @@ type
     name: string
     startMs: float64
     recorded: bool
+    exactTopHz: float64 ## a generated reference's end frequency; NaN: not generated
 
 func filePhase(i, n: int; path: string): string =
   "file " & $(i + 1) & " of " & $n & ": " & path.extractFilename
@@ -56,6 +59,22 @@ func sameDt(a, b: float64): bool {.inline.} =
   a > 0 and b > 0 and abs(a - b) <= 1e-9 * max(a, b)
 
 func typedForce(x: float64): bool {.inline.} = x > 0 and x < Inf
+
+const OwnLimitsNote* = "Judged with the project's QC profile limits; a window on this file " &
+  "opens with its own remembered limits"
+  ## said on a converter's SEG-Y row whose window would open with other limits, statistics
+  ## window or harmonics than the profile's (`VibQcAsk.segyLimits`)
+
+func sameNumber(a, b: float64): bool {.inline.} = a == b or (a.isNaN and b.isNaN)
+
+func opensOtherwise(ask: VibQcAsk): bool =
+  ## Whether a Vibrator window on a SEG-Y file opens with other limits, statistics window or
+  ## harmonics than the profile's; false when they are not known.
+  if ask.segyQcWindowMs.isNaN: return false
+  result = not sameNumber(ask.segyQcWindowMs, ask.options.qcWindowMs) or
+    ask.segyHarmonics != ask.options.harmonics
+  for mine, theirs in fields(ask.options.qc, ask.segyLimits):
+    if not sameNumber(mine, theirs): result = true
 
 func hasChoice*(c: FolderChoice): bool =
   ## Whether a folder or a file was picked.
@@ -147,14 +166,23 @@ proc folderRoles*(codes: openArray[int16]; kind: SignatureKind;
   result.judge = joRecorded
 
 func chosenRoles*(roles: VibRoles; layouts: openArray[string]; codes: openArray[int16];
-    count, first: int): VibRoles =
-  ## `roles` with the places chosen by hand for the layout of a record of `count` traces from
+    count, first: int; signature = false): VibRoles =
+  ## `roles` with the choice remembered for the layout of a record of `count` traces from
   ## trace `first` whose codes are `codes` (`layoutKey`), as a Vibrator window on that record
-  ## takes them (Swap mass and baseplate among them); unchanged when none is remembered for the
-  ## layout or a place is not in the record. The polarity stays as recorded.
+  ## takes it: for a `signature` file the ground force's polarity and the ground force switch
+  ## (its places are its codes'; M and B stay as recorded), else the places (Swap mass and
+  ## baseplate among them) with the polarities and the switch chosen with them. Unchanged when
+  ## none is remembered for the layout, or a place is not in the record: `roles.judge` is then
+  ## the one judged (`folderRoles` gives the recorded one).
   result = roles
   var places: array[4, int]
-  if layouts.choiceFor(layoutKey(codes, count), places):
+  var polarity = Recorded
+  if layouts.choiceFor(layoutKey(codes, count), places, polarity):
+    if signature:
+      # (Automatic is never offered for a signature file)
+      result.groundForcePolarity = if polarity.gf == poAutomatic: poAsRecorded else: polarity.gf
+      result.judge = polarity.judge
+      return
     for p in places:
       if p >= count: return
     for p in places.mitems:
@@ -162,16 +190,17 @@ func chosenRoles*(roles: VibRoles; layouts: openArray[string]; codes: openArray[
     (result.reference, result.groundForce, result.mass, result.baseplate) =
       (places[0], places[1], places[2], places[3])
     (result.source, result.handFile) = (rsRemembered, "")
+    (result.groundForcePolarity, result.massPolarity, result.judge) = (polarity.gf, polarity.mb,
+      polarity.judge)
 
 proc folderParams*(ask: VibQcAsk; roles: VibRoles; kind: SignatureKind): AnalysisParams =
-  ## The ask a Vibrator window would use, with the profile's masses only when it makes the
-  ## ground force from M and B (else none). A 100 % force
-  ## the profile did not type stays unset. Its unit, and the accelerometer set
+  ## The ask a Vibrator window would use, on `roles` as given (the ground force judged among
+  ## them: the one chosen for the file's layout, `chosenRoles`), with the profile's masses and
+  ## the made signal's 100 % force whatever is judged (none when the profile has none). A 100 %
+  ## force the profile did not type stays unset. Its unit, and the accelerometer set
   ## a pound-counts force was typed on, are the ones the profile stored, never
   ## the set now judged and never guessed from the scale. A set an older
   ## project did not store stays unknown.
-  var roles = roles
-  roles.judge = ask.judge
   AnalysisParams(roles: roles, harmonics: ask.options.harmonics,
     accelSet: ask.accelSet, qcWindowMs: ask.options.qcWindowMs, qc: ask.options.qc,
     forceHundredPct: ask.options.forceHundredPct,
@@ -296,6 +325,7 @@ proc loadReference(reference: FolderReference): tuple[held: HeldRef; problem: st
   result.held.startMs = reference.startMs
   result.held.name = reference.name
   result.held.recorded = reference.recorded
+  result.held.exactTopHz = reference.exactTopHz
   if reference.path.len == 0: return
   try:
     let read = readReferenceFile(reference.path)
@@ -306,10 +336,11 @@ proc loadReference(reference: FolderReference): tuple[held: HeldRef; problem: st
   except CatchableError as e:
     result.problem = e.msg
 
-func forceWhyNot(facts: SignatureFacts; ask: VibQcAsk; measures: seq[FolderMeasure];
-    hundredProblem: string; ownHundred: bool; vibrator: int): string =
+func forceWhyNot(facts: SignatureFacts; ask: VibQcAsk; params: AnalysisParams;
+    measures: seq[FolderMeasure]; hundredProblem: string; ownHundred: bool): string =
   ## Why this file's force limits were not judged, in words; "" when they were (or
-  ## are off). The missing piece is named from what the file and the settings hold.
+  ## are off). The missing piece is named from what the file and the settings it was judged
+  ## with (`params`) hold.
   var notJudged = false
   for m in measures:
     if m.limit in {qlAvgForce, qlPeakForce} and m.status == qsNotJudged and
@@ -319,16 +350,16 @@ func forceWhyNot(facts: SignatureFacts; ask: VibQcAsk; measures: seq[FolderMeasu
   result = "the force limits are not judged: "
   if hundredProblem.len > 0:
     result.add "the typed 100 % force does not apply (" & hundredProblem & ")"
-  elif ask.judge == joWeighted and facts.kind == sgNone and
-      typedForce(ask.options.reactionMassKg) and typedForce(ask.options.baseplateMassKg):
+  elif params.roles.judge == joWeighted and facts.kind == sgNone and
+      typedForce(params.reactionMassKg) and typedForce(params.baseplateMassKg):
     # (a converter's file whose ground force is made: its own 100 % force is the one that counts)
-    result.add(if typedForce(ask.options.forceHundredWeighted):
+    result.add(if typedForce(params.forceHundredWeighted):
         "no force was measured in the judged part"
       else: "no 100 % force is set for the ground force made from mass and baseplate")
   elif ownHundred:
     result.add "no force was measured in the judged part"
-  elif vibrator > 0 and ask.hundredByVibrator.len > 0:
-    result.add "no 100 % force is set for vibrator " & $vibrator & " in the project's QC profile"
+  elif ask.hundredConflict.len > 0 and facts.kind != sgNone:
+    result.add "no 100 % force is set (" & ask.hundredConflict & ")"
   else:
     case facts.kind
     of sgDat:
@@ -343,7 +374,9 @@ func forceWhyNot(facts: SignatureFacts; ask: VibQcAsk; measures: seq[FolderMeasu
         result.add "no accelerometer constant is set"
       else:
         result.add "the header gives no hold-down weight"
-    of sgNone: result.add "no 100 % force is available"
+    of sgNone:
+      result.add "no 100 % force is typed for a SEG-Y file's recorded ground force (the " &
+        "project's 100 % force is a signature file's, in another unit)"
 
 proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo: SweepInfo;
     ask: VibQcAsk; choice: SignatureChoice; held: HeldRef): FolderRow =
@@ -398,11 +431,19 @@ proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo:
     return FolderRow(path: path, kind: facts.kind, pair: pairPath, outcome: foProblem,
       problem: why)
   var roles = folderRoles(codes, facts.kind, ask.accelSet)
-  if facts.kind == sgNone and first in 0 ..< codes.len and first + count <= codes.len:
-    # a SEG-Y file's roles are those the Vibrator window takes for its layout: a choice made by
-    # hand there (Swap mass and baseplate) is the folder's too; a signature file's are its codes'
-    roles = roles.chosenRoles(ask.layouts, codes.toOpenArray(first, first + count - 1), count,
-      first)
+  # (a layout with no choice of its own judges the recorded ground force, as a window does)
+  var topHz = ask.topHz
+  if first in 0 ..< codes.len and first + count <= codes.len:
+    template record: untyped = codes.toOpenArray(first, first + count - 1)
+    # the roles the Vibrator window takes for the file's layout: a SEG-Y file's choice made by
+    # hand there (Swap mass and baseplate), with its polarities; a signature file's places are
+    # its codes', and the ground force's polarity chosen for the layout comes back
+    roles = roles.chosenRoles(ask.layouts, record, count, first,
+      signature = facts.kind != sgNone)
+    if held.samples.len == 0:
+      # measured against the recorded reference: the top typed for this file's layout, as
+      # the window keeps it (a file of another layout never takes it)
+      topHz = topsOf(ask.tops).topOf(recordedTopKey(record, count))
   var at: array[VibRole, int]
   at[vsReference] = roles.reference
   at[vsGroundForce] = roles.groundForce
@@ -424,20 +465,19 @@ proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo:
     names.add label & " (archive)"
     at[vsReference] = rows.high
   var params = folderParams(ask, roles, facts.kind)
-  # the 100 % force of this file's vibrator (its pair's for a `.vib`), else the project's one,
-  # each in the unit and set it was given in
-  var vibrator = item.info.vibrator
-  if vibrator == 0 and pairInfo.vibrator > 0: vibrator = pairInfo.vibrator
-  let hundred = hundredFor(ask.hundredByVibrator, VibHundred(pct: ask.options.forceHundredPct,
-    unit: ask.forceHundredUnit, accelSet: ask.forceHundredSet,
-    setKnown: ask.forceHundredSetKnown), vibrator)
-  params.forceHundredPct = hundred.pct
-  params.forceHundredUnit = hundred.unit
-  (params.forceHundredSet, params.forceHundredSetKnown) = (hundred.accelSet, hundred.setKnown)
+  # the project's one 100 % force, for every vibrator, in the unit and set it was given in
+  # (`folderParams` takes them from the ask). A converter's SEG-Y is no signature file: its
+  # recorded ground force is in its own unit, so it takes what a Vibrator window on it opens
+  # with, the 100 % force and drive level typed for a SEG-Y window (none: not judged), never
+  # the signature files' value read raw
+  if item.converted:
+    (params.forceHundredPct, params.forceHundredUnit) = (ask.segyHundredPct, "")
+    params.targetPct = ask.segyTargetPct
   let sig = if item.converted: SignatureAsk()
     else: folderSignature(facts, ask.forceScale, ask.accelSet, pair, ask.options.targetPct)
   # (the window's check of the converter's order: said when the other order fits clearly better)
-  var answer = vibratorOf(rows, names, at, dtMs, params, recorded, ask.topHz, NaN, note, sig,
+  let exactTopHz = if held.samples.len > 0: held.exactTopHz else: NaN
+  var answer = vibratorOf(rows, names, at, dtMs, params, recorded, topHz, exactTopHz, note, sig,
     converterOrder = facts.kind == sgNone and isConverterLayout(codes))
   if answer.problem.len == 0:
     if held.samples.len > 0:
@@ -460,12 +500,13 @@ proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo:
   addLine(warnings, answer.judgeWarning)
   addLine(warnings, answer.controllerNote)
   addLine(warnings, answer.against)
+  if item.converted and ask.opensOtherwise: addLine(warnings, OwnLimitsNote)
   if answer.problem.len > 0:
     return FolderRow(path: path, kind: facts.kind, pair: pairPath, outcome: foProblem,
       problem: answer.problem, polarity: answer.polarity.line, warnings: warnings)
   let measures = measuresOf(answer.qc.rows)
-  let forceWhy = forceWhyNot(facts, ask, measures, answer.hundredProblem,
-    typedForce(hundred.pct), vibrator)
+  let forceWhy = forceWhyNot(facts, ask, params, measures, answer.hundredProblem,
+    typedForce(params.forceHundredPct))
   if forceWhy.len > 0:
     addLine(warnings, forceWhy.capitalizeAscii)
   FolderRow(path: path, kind: facts.kind, pair: pairPath, outcome: foJudged,
@@ -482,6 +523,7 @@ type
     partnerInfos: seq[SweepInfo]
     ask: VibQcAsk
     choice: SignatureChoice
+    choices: seq[SignatureChoice] ## each file's, when given (`folderQcWork`)
     held: HeldRef
     gone: string
 
@@ -503,11 +545,12 @@ proc judgeItem(it: ItemContext; a: ptr FolderItems; i: int): FolderRow {.nimcall
     FolderRow(path: item.path, kind: item.info.kind, pair: partner,
       outcome: foProblem, problem: item.path.extractFilename & " is not a signature file.")
   else:
-    judgeFile(it, item, partner, a.partnerInfos[i], a.ask, a.choice, a.held)
+    let choice = if i < a.choices.len: a.choices[i] else: a.choice
+    judgeFile(it, item, partner, a.partnerInfos[i], a.ask, choice, a.held)
 
 proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
     files: seq[FolderListed]; target: FolderQcSink; choice: SignatureChoice;
-    reference: FolderReference) =
+    choices: seq[SignatureChoice]; reference: FolderReference) =
   var table = FolderTable(problems: ask.problems, rows: @[])
   var keys: seq[PairKey] = @[]
   for f in files: keys.add pairKeyOf(f.path, f.info)
@@ -520,7 +563,7 @@ proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
   if ctx.cancelled:
     skipFrom(table.rows, files, paired.pairs, 0)
     stopJob(target, table)
-  var held: HeldRef
+  var held = HeldRef(exactTopHz: NaN)
   var gone = ""
   held.recorded = reference.recorded
   held.name = reference.name
@@ -535,7 +578,8 @@ proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
                 else: "the reference file is missing"
       gone = "the reference \"" & name &
         "\" is no longer in the archive (" & why & ")"
-  var args = FolderItems(files: files, ask: ask, choice: choice, held: held, gone: gone,
+  var args = FolderItems(files: files, ask: ask, choice: choice, choices: choices, held: held,
+    gone: gone,
     partners: newSeq[string](count), partnerInfos: newSeq[SweepInfo](count))
   for i, item in files:
     args.partners[i] = paired.pairs.getOrDefault(item.path)
@@ -581,20 +625,15 @@ proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
     # a cancel the batch saw between files: the rest is skipped, as in a file
     skipFrom(table.rows, files, paired.pairs, ran.taken)
     stopJob(target, table)
-  if oneWeightsForAll(ask.hundredByVibrator, ask.judge) and
-      typedForce(ask.options.reactionMassKg) and typedForce(ask.options.baseplateMassKg):
-    # (said once, when a SEG-Y file was judged on those weights)
-    for row in table.rows:
-      if row.kind == sgNone and row.outcome == foJudged and OneWeightsSet notin table.problems:
-        table.problems.add OneWeightsSet
   finish(target, table)
 
 proc folderQcWork*(ask: VibQcAsk; weights: VibJobWeights; files: seq[FolderListed];
     sink: FolderQcSink; choice = SignatureChoice();
-    reference = FolderReference()): JobWork =
+    reference = FolderReference(); choices: seq[SignatureChoice] = @[]): JobWork =
   ## Judges each of `files` in order, on a job thread (`folderQcSpec`).
   ## `weights` are compared with a `.vib` header and never applied. `choice`
-  ## is the open choice; the default is the file's own. `reference.path`,
+  ## is the open choice; the default is the file's own. `choices`, when given, are each
+  ## file's (`files[i]` is decoded with `choices[i]`, as a window opens it). `reference.path`,
   ## when set, is read once and used instead of the recorded pilot when the
   ## sample interval agrees. A reference that cannot be read, or that has no
   ## samples, is a problem on every row and no file is judged. Up to the item
@@ -603,4 +642,4 @@ proc folderQcWork*(ask: VibQcAsk; weights: VibJobWeights; files: seq[FolderListe
   ## larger than that runs alone). The sink is set before this returns.
   result = proc (ctx: JobContext) {.gcsafe.} =
     {.cast(gcsafe).}:
-      runFolder(ctx, ask, weights, files, sink, choice, reference)
+      runFolder(ctx, ask, weights, files, sink, choice, choices, reference)
