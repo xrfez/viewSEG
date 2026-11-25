@@ -49,10 +49,14 @@ type
     path*: string
     size*: int64
     kills*: seq[int] ## the file's killed traces, ascending
+    id*: string
+      ## names the file as listed and edited: its path, size, modification time (as finely as
+      ## the file system gives it) and kills; a count keeps its part by it (`core/foldjobs`)
 
   ActualInputs* = object
     ## What the count needs, copied on the UI thread.
     key*: string          ## names the files (sizes, times, edits), the options and the moves
+    join*: string         ## names the options and the moves: what each file's part needs as well
     files*: seq[ActualFile]
     options*: JoinOptions ## how the survey is joined to the files' keys
     moves*: StationMoves
@@ -79,6 +83,7 @@ type
     inp: ptr ActualInputs
     survey: ptr SurveyGeometry
     grid: Binning
+    order: seq[int] ## the files read, by item
 
 static:
   doAssert plainData(ActualPart)
@@ -115,10 +120,10 @@ proc openKeys(path, cacheDir: string; it: ItemContext): Session =
   except ValueError, IOError, OSError:
     discard
 
-proc readActual(it: ItemContext; a: ptr ActualItems; i: int): ActualPart {.nimcall, gcsafe.} =
-  ## Opens file `i`, joins the survey and the moves to its keys in memory, and counts
+proc readActual(it: ItemContext; a: ptr ActualItems; k: int): ActualPart {.nimcall, gcsafe.} =
+  ## Opens the file of item `k`, joins the survey and the moves to its keys in memory, and counts
   ## its traces into the grid's bins. The file is closed before this returns; a cancel is raised.
-  template f: untyped = a.inp.files[i]
+  template f: untyped = a.inp.files[a.order[k]]
   var s: Session = nil
   try:
     {.cast(gcsafe).}:
@@ -168,45 +173,60 @@ proc readActual(it: ItemContext; a: ptr ActualItems; i: int): ActualPart {.nimca
     s = nil
     clearCycleRoots()
 
-proc countActual*(ctx: JobContext; inp: ptr ActualInputs; survey: ptr SurveyGeometry;
-    grid: Binning; actual: var FoldMap): ActualTally =
+proc add(tally: var ActualTally; raw: ptr UncheckedArray[int32]; path: string;
+    r: ActualPart) =
+  ## Adds what file `path` came to.
+  if r.skip.len > 0:
+    tally.skipped.add (path: path, why: r.skip)
+    return
+  inc tally.files
+  if r.unplaced: inc tally.unplaced
+  tally.traces += r.traces
+  tally.notLive += r.notLive
+  tally.killed += r.killed
+  tally.noCoordinates += r.noCoordinates
+  tally.outside += r.outside
+  tally.binned += r.binned
+  for k, bin in r.bins: raw[bin] += r.counts[k]
+
+proc countActual*(ctx: JobContext; inp: ptr ActualInputs; known: openArray[ptr ActualPart];
+    survey: ptr SurveyGeometry; grid: Binning; actual: var FoldMap;
+    fresh: var seq[ActualPart]): ActualTally =
   ## Counts the traces of `inp`'s files into `actual` (a fold map over `grid`, empty), adding
   ## each file's bins in file order; `survey` (nil: none) places traces by their stations.
+  ## File `i` is not read again when `known[i]` is not nil (`known` may be shorter): that is
+  ## its part as an earlier count read it, with the same inputs and grid, read through its
+  ## address (the caller keeps it alive and unchanged until the work is back). `fresh` gets,
+  ## for each file, the part read here (an empty part for one taken from `known`).
   ## Worker-only. A cancel raises `JobCancelledError`; `actual` is then partly filled, and the
   ## caller drops it.
   let total = inp.files.len
-  ctx.setPhase "counting " & $total & (if total == 1: " file" else: " files")
   var args = ActualItems(inp: inp, survey: survey, grid: grid)
-  var sizes = newSeq[int64](total)
-  for i, f in inp.files: sizes[i] = max(0'i64, f.size)
-  var tally = ActualTally()
+  for i in 0 ..< total:
+    if i >= known.len or known[i].isNil: args.order.add i
+  let reads = args.order.len
+  ctx.setPhase "counting " & $reads & (if reads == 1: " file" else: " files")
+  var sizes = newSeq[int64](reads)
+  for k, i in args.order: sizes[k] = max(0'i64, inp.files[i].size)
+  var got = newSeq[ActualPart](total)
+  proc take(k: int; outcome: sink ItemOutcome[ActualPart]) {.closure, gcsafe.} =
+    ctx.checkCancelled()
+    let i = args.order[k]
+    ctx.setPhase "counting " & inp.files[i].path.extractFilename
+    if outcome.ok: got[i] = move outcome.value
+    elif outcome.failure.cancelled: raise newException(JobCancelledError, "cancelled")
+    else:
+      let e = outcome.failure
+      got[i] = ActualPart(skip: if e.msg.len > 0: e.msg else: e.name)
+  let ran = ctx.parallelItems(reads, addr args, readActual, take,
+    ItemOptions(cost: sizes, budget: actualBudget))
+  if ran.taken < reads: raise newException(JobCancelledError, "cancelled")
   var cells = actual.fold # the map's own counts (a tensor shares its storage)
   let raw = cast[ptr UncheckedArray[int32]](cells.unsafe_raw_offset(aligned = false))
-  proc take(i: int; outcome: sink ItemOutcome[ActualPart]) {.closure, gcsafe.} =
-    ctx.checkCancelled()
-    ctx.setPhase "counting " & inp.files[i].path.extractFilename
-    if not outcome.ok:
-      if outcome.failure.cancelled: raise newException(JobCancelledError, "cancelled")
-      let e = outcome.failure
-      tally.skipped.add (path: inp.files[i].path, why: if e.msg.len > 0: e.msg else: e.name)
-      return
-    template r: untyped = outcome.value
-    if r.skip.len > 0:
-      tally.skipped.add (path: inp.files[i].path, why: r.skip)
-      return
-    inc tally.files
-    if r.unplaced: inc tally.unplaced
-    tally.traces += r.traces
-    tally.notLive += r.notLive
-    tally.killed += r.killed
-    tally.noCoordinates += r.noCoordinates
-    tally.outside += r.outside
-    tally.binned += r.binned
-    for k, bin in r.bins: raw[bin] += r.counts[k]
-  let ran = ctx.parallelItems(total, addr args, readActual, take,
-    ItemOptions(cost: sizes, budget: actualBudget))
-  if ran.taken < total: raise newException(JobCancelledError, "cancelled")
-  tally
+  for i in 0 ..< total:
+    if i < known.len and not known[i].isNil: result.add(raw, inp.files[i].path, known[i][])
+    else: result.add(raw, inp.files[i].path, got[i])
+  fresh = move got
 
 # ---------------------------------------------------------------- the inputs --
 
@@ -272,8 +292,10 @@ proc actualInputs*(st: AppState): ref ActualInputs =
     let edits = st.editsAt(e.path)
     f.kills = edits.shown.lists[teKilled]
     f.kills.sort()
-    key.add e.path & "|" & $e.size & "|" & $e.modified.toUnix & "|" & $hash(f.kills) & ";"
+    f.id = e.path & "|" & $e.size & "|" & $e.modified.toUnix & "." & $e.modified.nanosecond &
+      "|" & $f.kills.len & "," & $hash(f.kills)
+    key.add f.id & ";"
     result.files.add f
-  key.add "options:" & $result.options & ";moves:" & result.moves.movesKey & ";other:" &
-    $result.otherSurvey
+  result.join = "options:" & $result.options & ";moves:" & result.moves.movesKey
+  key.add result.join & ";other:" & $result.otherSurvey
   result.key = key

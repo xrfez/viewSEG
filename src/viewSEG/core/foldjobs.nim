@@ -36,13 +36,27 @@
 ## `FoldTracker` is the follower: each frame the window gives it the survey
 ## and the layer's settings, it starts the job when they changed and keeps
 ## the results by survey and bin size (at most `CachedMaps` of them and
-## `CachedBytes` in all, the oldest dropped first), so a bin size chosen again
+## `foldCacheBytes` in all, the oldest dropped first), so a bin size chosen again
 ## is not counted again; a survey that changed or was cleared drops them all.
-## A job that was cancelled keeps its relations held until its work is back,
+## A job that was cancelled keeps what it was given held until its work is back,
 ## and a new count waits for it, so changes cannot stack up counts. The jobs
 ## are `auto`: quiet when they go well.
+##
+## For the recorded fold it also keeps each file's part (`ActualPart`) by the file's id (path,
+## size, time and kills), for the grid and join of the newest count, within the same bytes
+## (the parts the newest count did not use go first), so a count after a file was added or
+## changed, or a kill, reads only those files. The map shown stays (`updating`) until the new
+## one is ready unless it cannot be right (another survey, other bins, another folder).
+##
+## **Threads.** The job shares no `ref` with the UI thread. The follower makes the sink, keeps
+## the relations and the parts it lends, and gives the job their addresses (`FoldPins`); it
+## keeps them until the job's work is back (`Jobs.workingOn`), also after a cancel, and gives
+## them up to the process at the quit (`keepForStragglers`). The parts lent are never changed
+## while lent (a new part replaces the `ref` in the table, never the object). The job posts
+## the parts it read as plain data in the sink; the follower wraps them in `ref`s on the UI
+## thread once the job is done.
 
-import std/[math, options, strutils, times]
+import std/[algorithm, math, options, strutils, tables, times]
 import parseSEG
 import colourmaps, geometry
 import processSEG/qc/fold
@@ -53,12 +67,15 @@ const
   NoRelations* = "The survey has no relation (X) records: the pre-plot fold counts " &
     "the source and receiver pairs they list."
   NoStations* = "The survey files give no source or receiver with coordinates."
-  CachedMaps = 3           ## results kept, by survey and bin size
-  CachedBytes = 256 shl 20 ## and the most bytes they may hold together (the newest is kept)
-  MaxCells* = 4096         ## the most blocks a level has along either axis (a GPU texture's size)
+  CachedMaps = 3   ## results kept, by survey and bin size
+  MaxCells* = 4096 ## the most blocks a level has along either axis (a GPU texture's size)
   Waiting = "Waiting for the earlier count to stop."
   Cancelled* = "The count was cancelled. Turn the layer off and on, or change a bin size, " &
     "to count again."
+
+var foldCacheBytes* = 256 shl 20
+  ## The most bytes the results kept and the files' parts may hold together (the newest
+  ## result is kept). Set only by tests.
 
 type
   FoldLevel* = object
@@ -103,11 +120,15 @@ type
       ## and the map's placed the traces
 
   FoldSink* = ref object
-    ## Filled when the job ends, except when it is cancelled.
+    ## Filled when the job ends, except when it is cancelled. The job fills it through its
+    ## address: whoever submits the work keeps it alive until the work is back.
     result*: FoldResult
     other*: FoldResult
       ## the layer made beside `result` (a count of the recorded fold also gives the
       ## difference, and the other way round); `ok` false when there is none
+    fresh*: seq[ActualPart]
+      ## the recorded fold and the difference: for each file, its part as the job read it (an
+      ## empty part for one it was lent, `FoldInputs.known`)
 
   FoldStations* = object
     stations*: seq[Station]
@@ -120,6 +141,9 @@ type
     binAlong*, binAcross*: float64 ## NaN: the library's natural bin
     kind*: FoldKind
     actual*: ref ActualInputs      ## the files to count, for the recorded fold and the difference
+    known*: seq[ptr ActualPart]
+      ## for each file of `actual`, its part from an earlier count of the same grid and join
+      ## (nil: the file is read): kept alive and unchanged by the caller until the work is back
 
   FoldStatus* = enum
     fmOff        ## the layer is off
@@ -135,26 +159,56 @@ type
     actual*: ref ActualInputs
       ## recorded fold and difference: the files to count; nil when they cannot be counted
     why*: string ## then, why not (a sentence for the user)
+    waiting*: bool
+      ## `why` passes by itself (the folder is being listed): a map of the same scope stays
     stamp*: int  ## changes when `actual` is another build
+    scope*: string
+      ## names what a recorded fold is of apart from the files' state (the folder listed): a
+      ## map of another scope is never shown while a new count runs
+
+  FoldPins = object
+    ## What a job's work reads or fills in place, kept on the UI thread until the work is back
+    ## (also after a cancel), then let go of there: the job is given addresses only.
+    job: JobId = NoJob
+    relations: ref SurveyGeometry ## the relation records it reads
+    sink: FoldSink ## what it fills
+    parts: seq[ref ActualPart] ## per file, the part it was lent; nil where it reads the file
+
+  KeptPart = tuple[id: string, part: ref ActualPart, used: int]
+    ## a file's part, the state of the file it is of (`ActualFile.id`), and the count that last
+    ## used it
 
   FoldTracker* = object
     ## Starts, follows and caches the layer's job.
     status*: FoldStatus
     reason*: string
-    shown*: ref FoldResult   ## the map to draw; nil for none
-    revision*: int           ## bumped whenever `shown` changes
-    job: JobId
-    sink: FoldSink
-    hold: ref SurveyGeometry ## the relations the job reads
-    retired: seq[tuple[job: JobId, hold: ref SurveyGeometry]]
-      ## cancelled jobs that may still read theirs
-    jobKey, jobOther: string ## the keys of the job's two results
+    shown*: ref FoldResult                 ## the map to draw; nil for none
+    revision*: int                         ## bumped whenever `shown` changes
+    job: JobId = NoJob
+    pins: FoldPins                         ## the running job's
+    retired: seq[FoldPins]                 ## jobs given up whose work may still run
+    jobKey, jobOther: string               ## the keys of the job's two results
+    jobScope: string                       ## what its results are of (`FoldWant.scope`)
+    jobFiles: seq[tuple[path, id: string]] ## the files it counts
+    jobJoin: string                        ## the grid and join of its parts; "" for the pre-plot
+    jobCount: int
     cache: seq[tuple[key: string, res: ref FoldResult]]
-    wantKey: string          ## the key of the layer wanted now
+    wantKey: string                        ## the key of the layer wanted now
+    wantScope: string
+    wantKind: FoldKind
+    shownScope: string                     ## what `shown` is of
     cacheSig: string
+    parts: Table[string, KeptPart]
+      ## the files' parts by path, one each (of the file's newest state counted), all of the
+      ## grid and join `partsFor`
+    partsFor: string
+    partsBytes: int
+    counts: int ## counts of recorded traces started
     seen: tuple[survey: int, on: bool, along, across: float64, kind: FoldKind, stamp: int]
     seenSet: bool
-    pending: bool            ## a count waits for the retired jobs' work to end
+    pending: bool
+      ## a count waits: for the retired jobs' work to end, or for the running count of the same
+      ## grid and join to end, whose parts it then takes
 
 func isSurveyFile(l: SurveyLayer): bool {.inline.} = l.origin == loSurveyFile
 
@@ -373,8 +427,10 @@ proc recorded(base: FoldResult; ctx: JobContext; pre, actual: FoldMap):
 
 proc foldWork*(inp: FoldInputs; sink: FoldSink): JobWork =
   ## The work of a job that counts the fold of `inp` into `sink`
-  ## (`foldSpec` is the spec to submit it with). Worker-only. A cancel
-  ## raises `JobCancelledError` and leaves `sink` as it was. For the recorded
+  ## (`foldSpec` is the spec to submit it with). Worker-only. The work holds `sink`, the
+  ## relations and the parts of `inp.known` by their addresses: the caller keeps them until
+  ## the work is back (`Jobs.workingOn`). A cancel raises `JobCancelledError` and leaves
+  ## `sink` as it was. For the recorded
   ## fold and the difference the same job counts the pre-plot and the recorded
   ## traces over one grid: `sink.result` is the layer asked for, `sink.other` the
   ## other of the two.
@@ -384,10 +440,13 @@ proc foldWork*(inp: FoldInputs; sink: FoldSink): JobWork =
   let kind = inp.kind
   var files = ActualInputs()
   if not inp.actual.isNil: files = inp.actual[]
+  let known = inp.known
+  let into = addr sink[] # the job shares no `ref`: the caller keeps the sink
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     var res = FoldResult(kind: kind, firstInline: 1, firstCrossline: 1)
     var other = FoldResult()
+    var fresh: seq[ActualPart] = @[]
     {.cast(gcsafe).}:
       try:
         if rel == nil:
@@ -404,7 +463,7 @@ proc foldWork*(inp: FoldInputs; sink: FoldSink): JobWork =
         res.describe(grid, along, across)
         if kind.isActual:
           var actual = initFoldMap(grid)
-          let tally = ctx.countActual(addr files, addr g, grid, actual)
+          let tally = ctx.countActual(addr files, known, addr g, grid, actual, fresh)
           ctx.checkCancelled()
           var made = res.recorded(ctx, m, actual)
           for r in [addr made.actual, addr made.difference]:
@@ -440,107 +499,232 @@ proc foldWork*(inp: FoldInputs; sink: FoldSink): JobWork =
         res = FoldResult(kind: kind, reason: sentence(e.msg))
         other = if kind.isActual: FoldResult(kind: if kind == fkActual: fkDifference else: fkActual,
           reason: res.reason) else: FoldResult()
-    sink.other = move other
-    sink.result = move res
+    into.fresh = move fresh
+    into.other = move other
+    into.result = move res
 
 # ----------------------------------------------------------------- follower --
 
-proc keepHeld(t: var FoldTracker; jobs: Jobs; job: JobId) =
-  ## Keeps the relations `t.hold` until the work of `job` is back (it may be
-  ## reading them still, also when the job was listed cancelled for not stopping).
-  if job != NoJob and not t.hold.isNil and jobs.workingOn(job): t.retired.add (job, t.hold)
-  t.hold = nil
+func showing*(t: FoldTracker): bool {.inline.} =
+  ## Whether `shown` is drawn: it is ready, or it stays while a new count of the same scope
+  ## runs (`updating`).
+  not t.shown.isNil and t.status in {fmReady, fmComputing}
+
+func updating*(t: FoldTracker): bool {.inline.} =
+  ## Whether the map drawn is the last one counted while a newer count runs.
+  not t.shown.isNil and t.status == fmComputing
+
+func foldScope(s: Survey; along, across: float64; folder: string): string =
+  ## What a map is of apart from the layer and the files' state: the survey, the bin sizes
+  ## and the folder listed.
+  s.surveySignature & "#" & binText(along) & "x" & binText(across) & "#" & folder
+
+func bytes(p: ActualPart): int =
+  (p.bins.len + p.counts.len) * 4 + p.skip.len + sizeof(ActualPart)
+
+proc unpin(t: var FoldTracker; jobs: Jobs) =
+  ## Lets go of what the job `t.pins` names was given, or keeps it until its work is back (it
+  ## may still run, also when the job was listed cancelled for not stopping).
+  if t.pins.job != NoJob and jobs.workingOn(t.pins.job): t.retired.add move t.pins
+  t.pins = FoldPins()
 
 proc retire(t: var FoldTracker; jobs: Jobs) =
-  ## Cancels the running job. Its relations stay held until its work has ended.
+  ## Cancels the running job. What it was given stays held until its work has ended.
   if t.job != NoJob:
     discard jobs.cancel(t.job)
-    if not t.hold.isNil: t.retired.add (t.job, t.hold)
+    if t.pins.job != NoJob: t.retired.add move t.pins
   t.job = NoJob
-  t.sink = nil
-  t.hold = nil
+  t.pins = FoldPins()
 
 proc release(t: var FoldTracker; jobs: Jobs) =
-  var kept: seq[tuple[job: JobId, hold: ref SurveyGeometry]]
-  for (job, hold) in t.retired:
-    if jobs.workingOn(job): kept.add (job, hold)
-  t.retired = kept
+  ## Lets go of the retired jobs whose work is back.
+  var kept: seq[FoldPins] = @[]
+  for p in t.retired.mitems:
+    if jobs.workingOn(p.job): kept.add move p
+  t.retired = move kept
 
-proc show(t: var FoldTracker; r: ref FoldResult) =
+proc show(t: var FoldTracker; r: ref FoldResult; scope = "") =
   t.shown = r
+  t.shownScope = if r.isNil: "" else: scope
   inc t.revision
 
-proc remember(t: var FoldTracker; key: string; r: ref FoldResult) =
-  ## Keeps `r`: of the results, at most `CachedMaps` and `CachedBytes`, the oldest dropped first.
-  t.cache.add (key, r)
-  var total = 0
+func keeps(t: FoldTracker; scope: string; kind: FoldKind): bool =
+  ## Whether the map shown may stay while a count of `scope` and `kind` runs.
+  not t.shown.isNil and t.shownScope == scope and t.shown.kind == kind
+
+proc dropParts(t: var FoldTracker) =
+  t.parts.clear()
+  t.partsBytes = 0
+
+func bytes(path: string; k: KeptPart): int = k.part[].bytes + path.len + k.id.len
+
+proc keepPart(t: var FoldTracker; path, id: string; part: ref ActualPart; used: int) =
+  ## Keeps `part` as file `path`'s, in its state `id`, in place of any other of the file.
+  t.parts.withValue(path, was):
+    t.partsBytes -= bytes(path, was[])
+  t.parts[path] = (id, part, used)
+  t.partsBytes += bytes(path, t.parts[path])
+
+proc trim(t: var FoldTracker) =
+  ## Keeps the maps and the parts within `foldCacheBytes`: first the parts the newest count did
+  ## not use go, the oldest first, then the maps but the newest, then the newest count's parts.
+  var total = t.partsBytes
   for (_, kept) in t.cache: total += kept[].bytes
-  while t.cache.len > 1 and (t.cache.len > CachedMaps or total > CachedBytes):
+  if total <= foldCacheBytes: return
+  var order: seq[tuple[used: int, path: string]] = @[]
+  for path, k in t.parts: order.add (k.used, path)
+  order.sort()
+  var k = 0
+  template dropNext() =
+    let path = order[k].path
+    let b = bytes(path, t.parts[path])
+    t.parts.del path
+    t.partsBytes -= b
+    total -= b
+    inc k
+  while total > foldCacheBytes and k < order.len and order[k].used < t.counts: dropNext()
+  while t.cache.len > 1 and total > foldCacheBytes:
     total -= t.cache[0].res[].bytes
     t.cache.delete(0)
+  while total > foldCacheBytes and k < order.len: dropNext()
+
+proc remember(t: var FoldTracker; key: string; r: ref FoldResult) =
+  ## Keeps `r`: of the results, at most `CachedMaps`, the oldest dropped first, and within
+  ## `foldCacheBytes` with the parts (`trim`).
+  t.cache.add (key, r)
+  while t.cache.len > CachedMaps: t.cache.delete(0)
+  t.trim()
 
 proc dropAll(t: var FoldTracker; jobs: Jobs) =
   t.retire(jobs)
   t.cache.setLen 0
   t.cacheSig = ""
+  t.dropParts()
+  t.partsFor = ""
   if not t.shown.isNil:
     t.show(nil)
 
-proc take(t: var FoldTracker; key, wantKey: string) =
-  ## Takes the result the job left in the sink (`wantKey` is what is wanted now), and the
-  ## one it made beside it.
+proc takeParts(t: var FoldTracker) =
+  ## Keeps the parts of the files the job counted, those it was lent and those it read, for
+  ## the next count of the same grid and join. A file it could not read is read again.
+  if t.jobJoin.len == 0 or t.jobJoin != t.partsFor: return
+  template sink: untyped = t.pins.sink
+  for i, (path, id) in t.jobFiles:
+    if i < t.pins.parts.len and not t.pins.parts[i].isNil:
+      t.keepPart(path, id, t.pins.parts[i], t.jobCount)
+    elif i < sink.fresh.len and sink.fresh[i].skip.len == 0:
+      let p = new ActualPart
+      p[] = move sink.fresh[i]
+      t.keepPart(path, id, p, t.jobCount)
+  sink.fresh = @[]
+  t.trim()
+
+proc take(t: var FoldTracker; key: string) =
+  ## Takes the result the job left in the sink, and the one it made beside it. One wanted now
+  ## is shown; one of an earlier state of the same files' scope is shown while the next count
+  ## runs.
+  t.takeParts()
   let r = new FoldResult
-  r[] = move t.sink.result
+  r[] = move t.pins.sink.result
   let o = new FoldResult
-  o[] = move t.sink.other
+  o[] = move t.pins.sink.other
   let otherKey = t.jobOther
   if o.ok and otherKey.len > 0: t.remember(otherKey, o)
   if r.ok: t.remember(key, r)
+  var wanted = false
   for (k, x) in [(key, r), (otherKey, o)]:
-    if k.len > 0 and k == wantKey:
+    if k.len > 0 and k == t.wantKey:
+      wanted = true
       if x.ok:
         t.status = fmReady
-        t.show(x)
+        t.show(x, t.jobScope)
       else:
         (t.status, t.reason) = (fmFailed, x.reason)
+        if not t.shown.isNil: t.show(nil)
+  if not wanted and t.jobScope == t.wantScope:
+    for x in [r, o]:
+      if x.ok and x.kind == t.wantKind and t.shown != x: t.show(x, t.jobScope)
 
-proc poll(t: var FoldTracker; jobs: Jobs; wantKey: string) =
+proc poll(t: var FoldTracker; jobs: Jobs) =
   ## Takes the job's result once it ended.
   if t.job == NoJob: return
   let job = t.job
   let info = jobs.info(job)
+  let wanted = t.jobKey == t.wantKey or t.jobOther == t.wantKey
   if info.isNone:
     # Forgotten from the history (many jobs came after it): the sink still holds
     # what it made, when it made anything; otherwise the next frame counts again.
     if jobs.workingOn(job): return
-    let key = t.jobKey
     t.job = NoJob
-    t.keepHeld(jobs, job)
-    if not t.sink.isNil and (t.sink.result.ok or t.sink.result.reason.len > 0):
-      t.take(key, wantKey)
+    template sink: untyped = t.pins.sink
+    if not sink.isNil and (sink.result.ok or sink.result.reason.len > 0):
+      t.take(t.jobKey)
     else:
       t.seenSet = false
-    t.sink = nil
+    t.unpin(jobs)
   else:
     let state = info.get.state
     if state in {jsDone, jsFailed, jsCancelled}:
-      let key = t.jobKey
       t.job = NoJob
-      t.keepHeld(jobs, job)
-      if state == jsDone and not t.sink.isNil:
-        t.take(key, wantKey)
-      elif state == jsFailed and (key == wantKey or t.jobOther == wantKey):
+      if state == jsDone and not t.pins.sink.isNil:
+        t.take(t.jobKey)
+      elif state == jsFailed and wanted:
         (t.status, t.reason) = (fmFailed, "The fold could not be counted: " & info.get.error & ".")
-      elif state == jsCancelled and (key == wantKey or t.jobOther == wantKey):
+        if not t.shown.isNil: t.show(nil)
+      elif state == jsCancelled and wanted:
         # cancelled from the Jobs window
         (t.status, t.reason) = (fmFailed, Cancelled)
-      t.sink = nil
+        if not t.shown.isNil: t.show(nil)
+      t.unpin(jobs)
+
+func partsKey(s: Survey; along, across: float64; actual: ref ActualInputs): string =
+  ## Names what a file's part depends on besides the file: the grid (the survey and the bin
+  ## sizes) and the join (`ActualInputs.join`).
+  s.surveySignature & "#" & binText(along) & "x" & binText(across) & "#" & actual.join
+
+proc start(t: var FoldTracker; jobs: Jobs; s: Survey; want: FoldWant; along, across: float64;
+    key, otherKey, scope: string) =
+  ## Submits the count of `want`. A recorded fold is lent the parts of the files kept from an
+  ## earlier count of the same grid and join, by address, and pins them until its work is back.
+  var inp = foldInputs(s, along, across, want.kind, want.actual)
+  t.pins = FoldPins(relations: inp.relations, sink: FoldSink())
+  t.jobFiles.setLen 0
+  t.jobJoin = ""
+  if want.kind.isActual:
+    let join = partsKey(s, along, across, want.actual)
+    if join != t.partsFor:
+      t.dropParts()
+      t.partsFor = join
+    inc t.counts
+    let n = want.actual.files.len
+    inp.known = newSeq[ptr ActualPart](n)
+    t.pins.parts = newSeq[ref ActualPart](n)
+    for i in 0 ..< n:
+      template f: untyped = want.actual.files[i]
+      t.jobFiles.add (f.path, f.id)
+      t.parts.withValue(f.path, kept):
+        if kept.id == f.id:
+          kept.used = t.counts
+          t.pins.parts[i] = kept.part
+          inp.known[i] = addr kept.part[]
+    t.jobJoin = join
+    t.jobCount = t.counts
+  (t.jobKey, t.jobOther, t.jobScope) = (key, otherKey, scope)
+  t.job = jobs.submit(foldSpec(want.kind), foldWork(inp, t.pins.sink))
+  t.pins.job = t.job
+  t.reason = ""
 
 proc follow*(t: var FoldTracker; jobs: Jobs; s: Survey; want: FoldWant; along, across: float64) =
   ## Called each frame: takes a finished job's result, and starts a job when
   ## the layer was turned on or is another one, or the survey, the files counted or a
   ## bin size changed. `along` and `across` are NaN for the natural bin. Cheap while
   ## nothing changed.
+  ##
+  ## While a folder is being recorded its files change often. The map shown stays, marked
+  ## `updating`, until the new count is ready, unless it cannot be right at all (another survey,
+  ## other bin sizes, another folder). A count of the same grid and join is let run to its end
+  ## when the files change under it (its result is shown meanwhile); the next one then reads
+  ## only the files that are new or changed (`ActualFile.id`) and takes the others' parts.
   let on = want.on
   var changed = not t.seenSet or t.seen.survey != s.revision or t.seen.on != on or
     binText(t.seen.along) != binText(along) or binText(t.seen.across) != binText(across) or
@@ -548,9 +732,9 @@ proc follow*(t: var FoldTracker; jobs: Jobs; s: Survey; want: FoldWant; along, a
   t.seen = (s.revision, on, along, across, want.kind, want.stamp)
   t.seenSet = true
   if t.retired.len > 0: t.release(jobs)
-  if t.pending and t.retired.len == 0: changed = true
+  if t.pending and t.retired.len == 0 and t.job == NoJob: changed = true
   if not changed:
-    if t.status == fmComputing: t.poll(jobs, t.wantKey)
+    if t.status == fmComputing: t.poll(jobs)
   else:
     t.pending = false
     let sig = s.surveySignature
@@ -558,15 +742,26 @@ proc follow*(t: var FoldTracker; jobs: Jobs; s: Survey; want: FoldWant; along, a
       t.dropAll(jobs)
       t.cacheSig = sig
     var reason = if on: s.foldReason else: ""
+    var waiting = false
     if on and reason.len == 0 and want.kind.isActual and want.actual.isNil:
       reason = if want.why.len > 0: want.why else: NoSeismicFiles
+      waiting = want.waiting
+    let scope = foldScope(s, along, across, if want.kind.isActual: want.scope else: "")
+    (t.wantScope, t.wantKind) = (scope, want.kind)
     if not on:
       t.retire(jobs)
       t.status = fmOff
       t.reason = ""
+      t.wantKey = ""
       if not t.shown.isNil: t.show(nil)
+    elif reason.len > 0 and waiting and t.keeps(scope, want.kind):
+      # the folder is being listed again: the map stays, and so does a count running
+      (t.status, t.reason) = (fmComputing, reason)
+      t.wantKey = ""
     elif reason.len > 0:
+      t.retire(jobs)
       (t.status, t.reason) = (fmImpossible, reason)
+      t.wantKey = ""
       if not t.shown.isNil: t.show(nil)
     else:
       let key = foldKey(s, along, across, want.kind, want.actual)
@@ -581,25 +776,25 @@ proc follow*(t: var FoldTracker; jobs: Jobs; s: Survey; want: FoldWant; along, a
         t.retire(jobs)
         t.status = fmReady
         t.reason = ""
-        if t.shown != held: t.show(held)
+        if t.shown != held: t.show(held, scope)
       elif t.job != NoJob and (t.jobKey == key or (otherKey.len > 0 and t.jobOther == key)):
         t.status = fmComputing
+      elif t.job != NoJob and want.kind.isActual and t.jobJoin.len > 0 and
+          t.jobJoin == partsKey(s, along, across, want.actual) and t.jobScope == scope:
+        # the files changed under a count of the same grid and join: it runs to its end, and
+        # the next count takes the parts it read
+        (t.status, t.reason, t.pending) = (fmComputing, "", true)
+        if not t.keeps(scope, want.kind) and not t.shown.isNil: t.show(nil)
       else:
         t.retire(jobs)
         t.release(jobs)
-        if not t.shown.isNil: t.show(nil)
+        if not t.keeps(scope, want.kind) and not t.shown.isNil: t.show(nil)
         t.status = fmComputing
         if t.retired.len > 0: # an earlier count still works: wait, so counts do not stack
           (t.pending, t.reason) = (true, Waiting)
         else:
-          let inp = foldInputs(s, along, across, want.kind, want.actual)
-          t.sink = FoldSink()
-          t.hold = inp.relations
-          t.jobKey = key
-          t.jobOther = otherKey
-          t.job = jobs.submit(foldSpec(want.kind), foldWork(inp, t.sink))
-          t.reason = ""
-  if t.status == fmComputing and t.job != NoJob: t.poll(jobs, t.wantKey)
+          t.start(jobs, s, want, along, across, key, otherKey, scope)
+  if t.status == fmComputing and t.job != NoJob: t.poll(jobs)
 
 proc follow*(t: var FoldTracker; jobs: Jobs; s: Survey; on: bool; along, across: float64) =
   ## `follow` for the pre-plot layer alone.
@@ -609,11 +804,19 @@ func running*(t: FoldTracker): JobId {.inline.} =
   ## The job counting now, `NoJob` for none.
   t.job
 
+func partsKept*(t: FoldTracker): int {.inline.} =
+  ## How many files' parts are kept for the next count (for tests).
+  t.parts.len
+
 proc keepForStragglers*(t: FoldTracker) =
-  ## A count still working at the quit may read the relations it was given and
-  ## write its sink: they stay, to the end of the process, instead of being
-  ## released under it (as `AppState`'s own do).
-  if not t.hold.isNil: GC_ref(t.hold)
-  if not t.sink.isNil: GC_ref(t.sink)
-  for (_, hold) in t.retired:
-    if not hold.isNil: GC_ref(hold)
+  ## A count still working at the quit may read what it was given and write its sink: they
+  ## stay, to the end of the process, instead of being released under it (as `AppState`'s own
+  ## do).
+  template keep(p: FoldPins) =
+    if p.job != NoJob:
+      if not p.relations.isNil: GC_ref(p.relations)
+      if not p.sink.isNil: GC_ref(p.sink)
+      for part in p.parts:
+        if not part.isNil: GC_ref(part)
+  keep(t.pins)
+  for p in t.retired: keep(p)

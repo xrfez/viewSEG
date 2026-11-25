@@ -1260,7 +1260,12 @@ layers is drawn at a time: ticking one unticks the others. Both are dim, with th
 the survey cannot give a pre-plot fold or no seismic file is listed ("No seismic files are
 listed in the Files window."), and while the folder is still being listed. They are counted in
 the background, several files at a time, and counted again when a file is added to the folder
-or changed, a trace is killed or restored, a station move changes, or a survey is loaded.
+or changed, a trace is killed or restored, a station move changes, or a survey is loaded. A
+count after a file was added or changed, or a trace killed, reads only those files (what the
+others came to is kept, within the memory the fold maps may take); while it runs, the map
+counted last stays, with "updating..." beside the tick, in the legend and in the line under the
+ticks, so a folder still being recorded keeps its map. It goes at once for another survey,
+other bin sizes or another folder.
 
 Under the Recorded, **Shots in the folder** rings the survey's sources whose record is in a
 file of the folder listed in Files (read in the background, while a survey file with

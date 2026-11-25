@@ -586,21 +586,23 @@ func foldWords(mu: MapUi; st: AppState; kind: FoldKind): string =
   ## The line of fold layer `kind` in the Layers popover.
   let name = FoldNames[kind]
   if not st.settings.map.foldOn(kind): return name
+  let r = mu.fold.shown
+  let most = if r.isNil: "" elif r.kind == fkDifference: ": largest " & $r.maxFold
+             else: ": max fold " & $r.maxFold
   case mu.fold.status
-  of fmComputing: name & ": computing..."
-  of fmReady:
-    let r = mu.fold.shown
-    if r.kind == fkDifference: name & ": largest " & $r.maxFold
-    else: name & ": max fold " & $r.maxFold
+  of fmComputing: name & (if mu.fold.updating: most & ", updating..." else: ": computing...")
+  of fmReady: name & most
   else: name
 
 proc foldWant(mu: var MapUi; st: AppState): FoldWant =
   ## What the follower is asked for this frame: the layer ticked and, for the recorded fold
   ## and the difference, the files to count (built again only when the stamp moved).
   let m = st.settings.map
-  result = FoldWant(kind: m.foldKindOf, on: m.foldAny)
+  result = FoldWant(kind: m.foldKindOf, on: m.foldAny,
+    scope: st.fileList.folder & "|" & $st.fileList.recursive)
   if result.on and result.kind != fkPreplot:
     result.why = actualReason(st)
+    result.waiting = result.why == Listing
     if result.why.len == 0:
       let stamp = actualStamp(st)
       if mu.foldActual.isNil or not mu.foldStampSet or stamp != mu.foldStamp:
@@ -703,7 +705,12 @@ proc drawFoldRow(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutp
       marks.mark("map.fold totals")
     of fmFailed, fmImpossible: wrapped(mu.fold.reason)
     of fmComputing:
-      if mu.fold.reason.len > 0: wrapped(mu.fold.reason)
+      if mu.fold.updating:
+        # the last map counted stays while the files changed are counted
+        wrapped("Updating... " & (if mu.fold.reason.len > 0: mu.fold.reason & " " else: "") &
+          mu.fold.shown[].totalsText(unit))
+        marks.mark("map.fold totals")
+      elif mu.fold.reason.len > 0: wrapped(mu.fold.reason)
     else: discard
     igUnindent(0)
 
@@ -1541,7 +1548,7 @@ proc foldFrame(mu: var MapUi; st: AppState; area: Bounds; perPixel: float64): Fo
   ## framebuffer pixel: the level whose blocks are wide enough, uploaded when it
   ## changed, and the block rows the area touches.
   let r = mu.fold.shown
-  if r.isNil or mu.fold.status != fmReady or not st.settings.map.foldAny or
+  if not mu.fold.showing or not st.settings.map.foldAny or
       mgPreplot in st.settings.map.hiddenGroups or r.counts.len == 0:
     return
   if mu.foldGrid.res != r or mu.foldFor != mu.fold.revision:
@@ -1564,10 +1571,10 @@ proc drawFoldLegend(mu: var MapUi; pos, size: ImVec2_c; ink: MapInk; marks: var 
   ## the difference the diverging bar from the most negative to the most positive.
   let r = mu.fold.shown
   mu.foldLegend = ""
-  if r.isNil or mu.fold.status != fmReady or mu.renderer.foldKey == 0: return
+  if not mu.fold.showing or mu.renderer.foldKey == 0: return
   let dl = igGetWindowDrawList()
   let diff = r.kind == fkDifference
-  let title = r.kind.foldTitle
+  let title = r.kind.foldTitle & (if mu.fold.updating: " (updating...)" else: "")
   mu.foldLegend = title
   let top = if diff: "-" & $r.maxFold else: "0"
   let mid = if diff: "0" else: ""
@@ -1745,7 +1752,7 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
     var under: seq[PointRef] = @[]
     var near: seq[(MapFilter, int)] = @[] # what the marks under the pointer mark
     var foldBin = -1
-    let foldShown = not mu.fold.shown.isNil and mu.fold.status == fmReady and
+    let foldShown = mu.fold.showing and
       st.settings.map.foldAny and mgPreplot notin st.settings.map.hiddenGroups
     if held:
       under = mu.menuPoints
