@@ -33,7 +33,10 @@ project is open read-only."). You can still pick the pattern the project already
   files)" for the parts of a vibrator signature file, "(seismic files)" for the parts only
   a seismic file has. They are not hidden, because one pattern can serve both sorts of file.
 - **Example:** shows the name the pattern makes with made-up values and the extension of
-  the chosen format, or the reason it cannot make one. Nothing is read from a file for it.
+  the chosen format, or the reason it cannot make one. The other parts show made-up values. A
+  **vendor field** part shows the value read from the shown file, as the output would write it
+  (or the sentence it would be refused with); the file is read in the background, so the
+  example shows `42` until the answer is there, and for a file of more than 200000 traces.
 - **Save** keeps the pattern in the project. **Delete** removes the saved pattern of that
   name. While Save cannot keep the pattern (the name is empty, or a part is refused) it is
   dim, its tooltip gives the reason, and the reason is also under the buttons.
@@ -81,7 +84,8 @@ written: its row says "Vendor field NAME is not one value in this file.". A file
 trace has one, in which the name is unknown (or no vendor map is loaded), or whose number is
 not finite or is 1e15 or more, is not written either: "Vendor field NAME is not in this
 file."; and a text with a byte that is not printable ASCII gives "Vendor field NAME holds
-characters a file name cannot hold." The example under the parts shows `42` for it.
+characters a file name cannot hold." The example under the parts shows `42` for it until the
+shown file's value has been read.
 
 ### Numbers
 

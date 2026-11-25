@@ -15,7 +15,8 @@ from parseSEG import SeismicFile, TextEncoding, teEbcdic, teAscii
 import sdl3_nim
 import imguin/cimgui
 import ../../core/[edits, filejobs, filekinds, filesystem, geometry, jobs, outputbatch,
-  outputbinary, outputjobs, outputtext, panels, references, settings, state]
+  namepreviewjobs, outputbinary, outputjobs, outputtext, panels, references, settings, state,
+  vendormaps]
 import ../../view/[filetable, outputbinaryedit, outputtextedit, outputwords, theme]
 import fittext, focus, fonts, icons, marks, overflow, style
 
@@ -112,6 +113,11 @@ type
     textFilled: bool                           ## `textValues` are that file's, not sample values
     textValues: TextValues
     textWhy: string                            ## why the preview shows sample values
+    vendorJob: JobId = NoJob                   ## the job reading the example's vendor values
+    vendorSink: VendorPreview                  ## what it fills
+    vendorAsked: string                        ## the key it was asked for (`vendorPreviewKey`)
+    vendorKey: string                          ## the key `vendorValues` are for
+    vendorValues: seq[VendorFieldValue]        ## read from the shown file; empty before an answer
     binOpen: bool                              ## the binary header set editor is shown
     binEdit: BinaryEdit
     binNameBuf: array[257, char]
@@ -1095,6 +1101,35 @@ proc drawPartRow(ui: var OutputUi; i: int; marks: var Marks): int =
   marks.mark("output.part " & $i & ".remove")
   igPopID()
 
+proc vendorPreview(ui: var OutputUi; st: AppState): bool =
+  ## Whether `ui.vendorValues` are the example's vendor values read from the shown file, as the
+  ## output run reads them. They come from a job (never read here), asked once per file, killed
+  ## trace choice, field names and vendor maps' load; an answer for another key is dropped.
+  let fields = vendorFieldsOf(ui.draft)
+  if ui.vendorJob != NoJob:
+    let info = st.jobs.info(ui.vendorJob)
+    if info.isSome and info.get.state in {jsQueued, jsRunning}: return false
+    if info.isSome and info.get.state == jsDone:
+      let got = vendorAnswer(ui.vendorSink, ui.vendorAsked)
+      if got.isSome:
+        ui.vendorValues = got.get
+        ui.vendorKey = ui.vendorAsked
+    ui.vendorJob = NoJob
+  let i = st.shownFile(st.findPanel(MainPanel))
+  if fields.len == 0 or i < 0: return false
+  let fp = st.sessions[i].filePtr
+  if fp == nil: return false
+  let path = $(st.sessions[i].path)
+  let key = vendorPreviewKey(path, ui.dropKilled, fields, vendorStamp())
+  if key == ui.vendorKey: return true
+  if key != ui.vendorAsked:
+    ui.vendorAsked = key
+    ui.vendorSink = VendorPreview()
+    ui.vendorJob = st.jobs.submit(vendorPreviewSpec(extractFilename(path), path),
+      vendorPreviewWork(fp, st.sessions[i].signature, st.editsAt(path), ui.dropKilled, fields,
+      currentVendors(), key, ui.vendorSink))
+  false
+
 proc drawEditor(ui: var OutputUi; st: AppState; marks: var Marks; outp: var OutputOutput) =
   igSeparator()
   igTextUnformatted("File name pattern", nil)
@@ -1133,8 +1168,11 @@ proc drawEditor(ui: var OutputUi; st: AppState; marks: var Marks; outp: var Outp
   elif act == 3: ui.dropPart(at)
   ui.drawKindList(marks)
   var sample: seq[VendorFieldValue] = @[]
-  for name in vendorFieldsOf(ui.draft):
-    sample.add VendorFieldValue(name: name, value: NameValue(state: nvInt, intValue: 42))
+  if ui.vendorPreview(st):
+    sample = ui.vendorValues
+  else:
+    for name in vendorFieldsOf(ui.draft):
+      sample.add VendorFieldValue(name: name, value: NameValue(state: nvInt, intValue: 42))
   let shown = render(ui.draft, previewValues(), nameExt(ui.format), sample)
   igTextUnformatted(ExampleLabel.cstring, nil)
   marks.mark("output.pattern.example")
