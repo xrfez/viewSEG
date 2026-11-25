@@ -1160,6 +1160,10 @@ from a time on.
     1 m from the position in force; the item ends with the distance, for example "41.8 m
     from the survey's position". When the two agree, or the header gives no position, the
     item is dim and its tooltip says why.
+    It is dim, with the reason in its tooltip, when the file's positions are in another unit
+    than the survey's (type the position instead). An elevation of exactly 0 in the header
+    counts as not given. It holds for every trace of the station: a move of the station from
+    a time on, if there is one, keeps the traces from that time on.
   - *Move this station...* opens a small dialog with the station, X, Y and an optional
     elevation (filled in with the position in force, in the survey's units), a tick
     **From this trace's time on** (off: every trace of the station; on: from this trace's
@@ -1171,7 +1175,7 @@ from a time on.
   position holds again.
 
 A move is kept in the project. With no project open, or a read-only one, it holds for this
-run only, and the Messages say so. The open files take a move at once, and what follows it is
+run only, and the Messages say so; a project made next keeps the moves made before it. The open files take a move at once, and what follows it is
 the map, the template box, the missing-trace checks and the Output window's positions (unless
 "Keep the file's own positions" is ticked). A move wins over a survey's position. It never
 changes a survey file or a recording; there is no Undo for it, **Remove** is the way back.

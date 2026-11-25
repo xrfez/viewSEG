@@ -120,7 +120,7 @@ import analysis, analysisreader, closer, compare, comparejobs, components, corre
       shotfollowtarget, shotlayout, shotlog, shotsort,
   ofile, shotlogjobs, shotlogsps, shotselect, shotselectjobs, shotspsjobs,
   shots, spectra,
-  spectrumreader, spread, stationmoves, survey, surveyjobs, threads, tiles, traceids,
+  spectrumreader, spread, stationindex, stationmoves, survey, surveyjobs, threads, tiles, traceids,
       vendorfieldjobs,
   traceorder, treatas, vendorfieldlist, vendorjobs, vendormaps, vibprofile, watch, zoom
 
@@ -1234,7 +1234,7 @@ type
     ## Everything the views show. Move-only.
     log: MessageLog
     selection: Selection
-    hoverNote: string                          ## why the hover lights nothing up; "" when it does
+    hoverNote: string                                     ## why the hover lights nothing up; "" when it does
     linked: Linked
     inspect: Inspection
       ## what the Headers window shows of the files' bytes
@@ -1543,7 +1543,10 @@ type
       vendor: VendorShown]]
       ## traces read for agent control (`readTraceHeaders`), oldest first, until taken
     ownPositions: seq[tuple[session: SessionId; index: int; keys: TraceKeys]]
-      ## receiver positions traces' own headers give (`askOwnPosition`), oldest first
+      ## receiver positions traces' own headers give (`askOwnPosition`), oldest first; a trace
+      ## that gave none is kept too, with a NaN position, so it is not read again
+    ownAsking: seq[tuple[session: SessionId; index: int]] ## those being read
+    ownReadCount: int ## how many reads were started
     mail: seq[Msg]
     indexCache: string ## the index cache folder; "" for none
     settings: Settings
@@ -8830,6 +8833,7 @@ proc takeOpened(state: var AppState; m: sink Msg) =
   elif state.layoutSaved != state.layoutRev: state.saveArrangement()
   if news.created and wasIn: discard
   elif news.created: state.saveMemory(getMonoTime(), force = true)
+  let carried = if not wasIn and news.created: p.doc.stationMoves else: StationMoves()
   p = ProjectState(dir: dir, doc: move news.doc, lock: news.lock, owner: news.owner,
     folders: move news.folders, originals: move news.originals, by: by,
     userArrangement: userArrangement, userPresets: userPresets,
@@ -8841,6 +8845,9 @@ proc takeOpened(state: var AppState; m: sink Msg) =
                   elif not p.lock.locked: news.owner.words & " has it open"
                   elif p.doc.version > ProjectVersion: "a newer viewSEG made it"
                   else: ""
+  if carried.len > 0 and not p.readOnly:
+    p.doc.stationMoves = carried # (the open files already follow them)
+    state.projectChanged()
   inc p.revision
   state.store = Store(home: dir / ProjectStoreFolder)
   if not p.readOnly: state.diskIo.sweep(state.store.home, ProgramStart)
@@ -8878,6 +8885,10 @@ proc takeOpened(state: var AppState; m: sink Msg) =
     (if p.readOnly: ", read-only: " & p.whyReadOnly & "; nothing is written to it" else: "") &
     (if news.brought > 0: "; what is remembered about " & $news.brought &
       (if news.brought == 1: " file" else: " files") & " was copied into it" else: "") & ".")
+  if carried.len > 0:
+    state.log.add(sevInfo, "project", plural(carried.len, "station move") & " made before the " &
+      "project " & (if carried.len == 1: "is" else: "are") & (if p.readOnly: " not kept in it " &
+      "(it is read-only): they hold for this run only" else: " kept in it") & ".")
   var missing: seq[string] = @[]
   var first = ""
   for i, f in p.folders:
@@ -9142,7 +9153,9 @@ proc queueOpenMoves(state: var AppState) =
   for s in state.sessions:
     if s.isSignature or s.noSeismic: continue
     # (a move job under way has not posted its bases yet: it is not "nothing to take back")
-    let underWay = state.movesJob != NoJob and state.movesSession == s.id
+    let underWay = (state.movesJob != NoJob and state.movesSession == s.id) or
+      (state.joining.job != NoJob and state.joining.session == s.id and
+        state.joining.step == jpJoining)
     if moves.len == 0 and state.moveBasesOf(s.id).len == 0 and not underWay: continue
     if matchable:
       if state.joining.job != NoJob and state.joining.session == s.id and
@@ -11840,18 +11853,68 @@ func keysInMemory*(state: AppState; trace: int): Option[TraceKeys] =
   template keys: untyped = state.sessions[i].filePtr[].index.keys
   if local in 0 ..< keys.len: result = some(keys[local])
 
+func ownPositionReads*(state: AppState): int {.inline.} =
+  ## How many reads of a trace's own header position were started (`askOwnPosition`).
+  state.ownReadCount
+
 proc askOwnPosition(state: var AppState; cmd: Command) =
   ## `ckOwnPosition`: has a job read the position trace `ownTrace`'s own header gives, unless
-  ## it is known; a file in memory or a derived view has no header of its own to read.
+  ## it is known (an answer of none too) or being read; a file in memory or a derived view has
+  ## no header of its own to read.
   let i = state.findTrace(cmd.ownTrace)
   if i < 0: return
   let s = state.sessions[i]
   if s.derived or s.isSignature or s.noSeismic or s.file.inMemory: return
-  if not state.ownPositionOf(cmd.ownTrace).isNone: return
   let local = cmd.ownTrace - s.base
+  for o in state.ownPositions:
+    if o.session == s.id and o.index == local: return
+  for o in state.ownAsking:
+    if o.session == s.id and o.index == local: return
+  state.ownAsking.add (session: s.id, index: local)
+  inc state.ownReadCount
   discard state.jobs.submit(JobSpec(title: "Read the header position of a trace of " & s.name,
     lane: jlInteractive, reads: @[s.path]), ownPositionWork(s.filePtr, s.path, s.id, local,
-    state.inbox.poster))
+    s.facts.opened.choice, indexCacheFile(state.indexCache, s.path), state.inbox.poster))
+
+func headerUnitsProblem*(state: AppState; trace: int): string =
+  ## Why the position the header of survey-wide trace `trace` gives cannot be taken as a
+  ## station move: the file's positions are in another length unit than the survey's. "" when
+  ## they agree, are not both known, or no join was made.
+  let i = state.findTrace(trace)
+  if i < 0: return ""
+  let j = state.joinedOf(state.sessions[i].id)
+  if j < 0: return ""
+  let (file, survey) = (state.joins[j].units.file, state.joins[j].units.survey)
+  if file.lengthUnitKnown and survey.lengthUnitKnown and file != survey:
+    "the file's positions are in " & $file & " and the survey's in " & $survey &
+      ": type the position instead"
+  else: ""
+
+func movesAppliedTo*(state: AppState; key: StationKey): seq[StationMove] =
+  ## The moves that position receiver station `key`: those of the first station the join
+  ## would find for it (its own index, else an "any index" move, else for index 0 index 1),
+  ## as `movedPosition` takes them; not a move that serves another index.
+  for indexTry in stationIndexTries(key.index):
+    let at = stationKey(key.line, key.point, indexTry)
+    for m in state.project.doc.stationMoves:
+      if m.station == at: result.add m
+    if result.len > 0: return
+
+const
+  MaxStationNumber = 1e8 ## a line or point a move may name (SPS: F10.2)
+  MaxMovePosition = 1e9  ## the largest x, y or elevation of a move, in the survey's units
+  MaxMoveNote = 256      ## characters of a move's note
+
+func moveNoteOf(note: string): string =
+  ## `note` cut to `MaxMoveNote` bytes (at a character's edge), its control characters and
+  ## line breaks made blanks.
+  result = note
+  if result.len > MaxMoveNote:
+    result.setLen MaxMoveNote
+    while result.len > 0 and (ord(result[^1]) and 0xC0) == 0x80: result.setLen result.len - 1
+    if result.len > 0 and ord(result[^1]) >= 0xC0: result.setLen result.len - 1
+  for c in result.mitems:
+    if c < ' ' or c == '\x7f': c = ' '
 
 proc stationMove(state: var AppState; cmd: Command) =
   ## `ckStationMove`: a receiver station sits at another position (from a time on), or its
@@ -11861,14 +11924,23 @@ proc stationMove(state: var AppState; cmd: Command) =
   if not (finite(cmd.moveLine) and finite(cmd.movePoint)) or cmd.moveIndex notin 0 .. 32767:
     state.ignore(cmd, "a receiver station is a line, a point and an index from 0")
     return
+  if abs(cmd.moveLine) >= MaxStationNumber or abs(cmd.movePoint) >= MaxStationNumber:
+    state.ignore(cmd, "a line or point is below " & $int64(MaxStationNumber) &
+      " (a survey file's number has eight digits and two decimals)")
+    return
   if cmd.moveHasFrom and not finite(cmd.moveFrom):
     state.ignore(cmd, "the time a move holds from is not a number")
     return
-  if not cmd.moveForget and not (finite(cmd.moveX) and finite(cmd.moveY) and
-      (not cmd.moveHasElev or finite(cmd.moveElev))):
-    state.ignore(cmd, "the position of a station is a number for x and y, and for the " &
-      "elevation when given")
-    return
+  if not cmd.moveForget:
+    if not (finite(cmd.moveX) and finite(cmd.moveY) and
+        (not cmd.moveHasElev or finite(cmd.moveElev))):
+      state.ignore(cmd, "the position of a station is a number for x and y, and for the " &
+        "elevation when given")
+      return
+    if abs(cmd.moveX) > MaxMovePosition or abs(cmd.moveY) > MaxMovePosition or
+        (cmd.moveHasElev and abs(cmd.moveElev) > MaxMovePosition):
+      state.ignore(cmd, "a position is within " & $int64(MaxMovePosition) & " units of the origin")
+      return
   let key = stationKey(cmd.moveLine, cmd.movePoint, int16(cmd.moveIndex))
   let whenFrom = if cmd.moveHasFrom: some(cmd.moveFrom) else: none(float64)
   var moves = state.project.doc.stationMoves
@@ -11880,11 +11952,13 @@ proc stationMove(state: var AppState; cmd: Command) =
       return
   else:
     moves.add StationMove(station: key, fromTime: whenFrom, x: cmd.moveX, y: cmd.moveY,
-      elev: (if cmd.moveHasElev: some(cmd.moveElev) else: none(float64)), note: cmd.moveNote)
+      elev: (if cmd.moveHasElev: some(cmd.moveElev) else: none(float64)), note: moveNoteOf(cmd.moveNote))
   let keptIn =
     if not state.inProject: "for this run only (no project is open)"
     elif state.project.readOnly: "for this run only (the project is read-only)"
     else: "in the project"
+  let dated = not cmd.moveForget and not cmd.moveHasFrom and
+    moves.anyIt(it.station == key and it.fromTime.isSome)
   state.setStationMoves(moves)
   if cmd.moveForget:
     state.log.add(sevInfo, "project", "The move of " & station & fromWords & " is removed " &
@@ -11900,7 +11974,8 @@ proc stationMove(state: var AppState; cmd: Command) =
           formatFloat(cmd.moveWasY, ffDecimal, 2) & ") → " & target
       else: " is moved to " & target
     state.log.add(sevInfo, "project", station.capitalizeAscii & how & fromWords & ", " &
-      keptIn & ".")
+      keptIn & "." & (if dated: " A move of this station from a time on is kept: the traces " &
+      "from that time on keep its position." else: ""))
 
 const
   NeedProjectBinaries* = "Open or make a project to keep binary header sets."
@@ -13995,6 +14070,7 @@ proc drainInbox*(state: var AppState): bool =
       state.traceReads.add (m.job, m.readKeys, move m.headerRows, move m.readVendor)
       if state.traceReads.len > MaxTraceReads: state.traceReads.delete(0) # never taken
     of mkOwnPosition:
+      state.ownAsking.keepItIf(it.session != m.ownSession or it.index != m.ownIndex)
       state.ownPositions.keepItIf(it.session != m.ownSession or it.index != m.ownIndex)
       state.ownPositions.add (m.ownSession, m.ownIndex, m.ownKeys)
       if state.ownPositions.len > MaxOwnPositions: state.ownPositions.delete(0)

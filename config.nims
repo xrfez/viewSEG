@@ -2,6 +2,9 @@
 import std/[os, strutils]
 
 switch("outdir", "bin")
+# `remote/schema` reads core/state's source at compile time (the command docs): its loops
+# outgrew the default limit of the compile-time interpreter.
+switch("maxLoopIterationsVM", "100000000")
 
 # parseSEG is compiled into this program, so these flags decide its decode
 # speed (parseSEG README, "Build flags"). x86-64-v3 (AVX2: Intel 2013+ / AMD

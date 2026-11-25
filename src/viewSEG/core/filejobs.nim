@@ -21,6 +21,7 @@ import std/[algorithm, monotimes, os, strutils, times]
 import parseSEG
 import cutfile, filelist, filememory, filesystem, identity, inbox, jobs, leapfile, log,
   recordingprobe, session, sweepinfo, threads, vendormaps
+from parseSEG/model/traceindex import mappedSize
 from project import ProjectFileName
 
 const
@@ -264,22 +265,31 @@ proc traceHeadersWork*(file: ptr SeismicFile; path: string; size: int64; index: 
     to.post Msg(job: ctx.id, kind: mkTraceRead, readKeys: keys, headerRows: move rows,
       readVendor: vendor)
 
+const OwnReadLimit* = 64'i64 shl 20
+  ## the size above which a file with no index cache is not opened again for one trace's position
+
 proc ownPositionWork*(file: ptr SeismicFile; path: string; session: SessionId; index: int;
-    to: Poster): JobWork =
+    choice: OpenChoice; cache: string; to: Poster): JobWork =
   ## The work of a job that reads the receiver position trace `index` of open file `file` (at
   ## `path`) has in its own headers, from the file on disk and not from the keys in memory,
-  ## which a survey join or a station move may have replaced (`mkOwnPosition`). It opens the
-  ## file again without reading every trace's keys and reads the one trace. Never writes the
-  ## file. A trace that cannot be read posts a NaN position.
+  ## which a survey join or a station move may have replaced (`mkOwnPosition`). parseSEG gives
+  ## the keys of a file that has them stored only as stored, so the file is opened again
+  ## without keys, as the session opened it (`choice`: the standard forced, the mantissa
+  ## reading) and through its index cache `cache` when that exists, and the one trace is read.
+  ## With no cache a SEG-D file (its demultiplexed copy is made again) or a file above
+  ## `OwnReadLimit` bytes is not opened: the position is none. Never writes the file. A trace that cannot be read posts a NaN position.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "reading a trace's own position"
     var own: array[1, TraceKeys]
     own[0].rcvX = NaN
     own[0].rcvY = NaN
     {.cast(gcsafe).}:
-      if not file[].inMemory and index in 0 ..< file[].len:
+      let cached = cache.len > 0 and choice.usesCache and fs.fileExists(cache)
+      let cheap = cached or (file[].kind != skSegd and file[].mappedSize <= OwnReadLimit)
+      if not file[].inMemory and index in 0 ..< file[].len and cheap:
         fs.mappedRead(path, headers = true)
-        let disk = openSeismic(path, keys = false, opts = OpenOptions(vendors: currentVendors()))
+        let disk = openSeismic(path, keys = false,
+          opts = openOptions(choice, if cached: cache else: "", currentVendors()))
         if index < disk.len: disk.traceKeysInto([index], own)
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkOwnPosition, ownSession: session, ownIndex: index,

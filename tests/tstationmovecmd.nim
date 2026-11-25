@@ -93,7 +93,7 @@ proc main*() =
     withFixtures fx:
       let own = fx.twoSetSegd()
       let sps = fx.surveyFarther()
-      var st = initAppState()
+      var st = initAppState(indexCache = fx.dir / "cache")
       st.apply Command(kind: ckShowFile, panel: MainPanel, path: own)
       doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut and
         st.survey.findTraces(st.sessions[0].id) >= 0)

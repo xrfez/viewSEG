@@ -5,7 +5,7 @@
 ## is read off the UI thread by `ckOwnPosition`, sent when the menu opens. A move is kept in
 ## the project and never written into a survey or seismic file.
 
-import std/[math, options, parseutils, strutils]
+import std/[math, options, parseutils, sequtils, strutils]
 import imguin/cimgui
 import parseSEG
 import ../../core/[join, state, stationindex, stationmoves]
@@ -51,48 +51,47 @@ proc parse(s: string): Option[float64] =
   if t.len > 0 and parseutils.parseFloat(t, v) == t.len and v == v and abs(v) < Inf: some(v)
   else: none(float64)
 
-func movesOf(st: AppState; key: StationKey): seq[StationMove] =
-  ## The moves that apply to the station `key` (found as the join finds a station).
-  for m in st.project.doc.stationMoves:
-    for t in stationIndexTries(key.index):
-      if m.station == stationKey(key.line, key.point, t):
-        result.add m
-        break
-
 proc forgetCommand*(m: StationMove): Command =
   Command(kind: ckStationMove, moveLine: m.station.line, movePoint: m.station.point,
     moveIndex: int(m.station.index), moveForget: true, moveHasFrom: m.fromTime.isSome,
     moveFrom: m.fromTime.get(0.0))
 
-proc drawStationMoveGroup*(ui: var StationMoveUi; st: AppState; under: int; mouse: ImVec2_c;
-    marks: var Marks; cmds: var seq[Command]) =
-  ## The three choices for the receiver station of survey-wide trace `under`, nothing for a
-  ## trace with no station (an auxiliary trace, a file without keys).
-  discard mouse
-  let found = st.keysInMemory(under)
+proc drawStationMoveGroup*(ui: var StationMoveUi; st: AppState; under: int;
+    found: Option[TraceKeys]; marks: var Marks; cmds: var seq[Command]) =
+  ## The three choices for the receiver station of survey-wide trace `under`, whose keys
+  ## `found` is the copy taken when the menu opened; nothing for a trace with no station (an
+  ## auxiliary trace, a file without keys).
   if found.isNone: return
   let keys = found.get
   if not keys.isSeismic or keys.rcvLine != keys.rcvLine or keys.rcvPoint != keys.rcvPoint: return
   let key = stationKey(keys.rcvLine, keys.rcvPoint, keys.rcvIndex)
   let word = "receiver " & stationWords(key)
-  let moves = st.movesOf(key)
+  let moves = st.movesAppliedTo(key)
+  let dated = moves.anyIt(it.fromTime.isSome)
   let inForce = (x: keys.rcvX, y: keys.rcvY)
   let own = st.ownPositionOf(under)
   let d = if own.isSome: hypot(own.get.x - inForce.x, own.get.y - inForce.y) else: NaN
+  let units = st.headerUnitsProblem(under)
   let far = own.isSome and st.headerMoveOffered(d)
+  let offered = far and units.len == 0
   let source = if moves.len > 0: "the move's" elif st.joins.len > 0: "the survey's"
                else: "the present"
-  let label = HeaderItem & (if far: " (" & st.moveDistanceWords(d) & " from " & source &
+  let label = HeaderItem & (if offered: " (" & st.moveDistanceWords(d) & " from " & source &
     " position)" else: "")
-  if igMenuItem_Bool(label.cstring, nil, false, far):
+  let hasElev = own.isSome and own.get.z == own.get.z and own.get.z != 0
+  if igMenuItem_Bool(label.cstring, nil, false, offered):
     cmds.add Command(kind: ckStationMove, moveLine: key.line, movePoint: key.point,
       moveIndex: int(key.index), moveX: own.get.x, moveY: own.get.y,
-      moveElev: own.get.z, moveHasElev: own.get.z == own.get.z, moveHasWas: inForce.x == inForce.x,
+      moveElev: own.get.z, moveHasElev: hasElev, moveHasWas: inForce.x == inForce.x,
       moveWasX: inForce.x, moveWasY: inForce.y, moveNote: "the position in the trace's headers")
   marks.mark("plot.menu.stamove.header")
   marks.mark("plot.menu.stamove.header.item " & label)
-  tip(if far: "Put " & word & " at the position this trace's own header gives, for every trace " &
-        "of the station. Kept in the project; no survey or seismic file is changed."
+  tip(if offered: "Put " & word & " at the position this trace's own header gives, for every " &
+        "trace of the station. Kept in the project; no survey or seismic file is changed. " &
+        "An elevation of exactly 0 in the header counts as not given: the survey's elevation " &
+        "stays." & (if dated: " A move of this station from a time on is kept: the traces " &
+        "from that time on keep that position." else: "")
+      elif units.len > 0: "Not offered: " & units & "."
       elif own.isNone: "This trace's header gives " & word & " no position to move it to " &
         "(or it is still being read)."
       else: "This trace's header agrees with the position in force for " & word & " (within " &
