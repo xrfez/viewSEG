@@ -39,7 +39,13 @@ type
 const ThreadGuards* = not defined(release) or defined(threadGuards)
   ## Whether `assertUiThread` and `assertWorkerThread` check anything.
 
+type
+  JobCancelledError* = object of CatchableError
+    ## Raised by `checkCancelled` of a job's or an item's context; work that
+    ## raises it is cancelled (`core/jobs`).
+
 var role {.threadvar.}: ThreadRole
+var inItemRun {.threadvar.}: bool
 
 proc markUiThread*() =
   ## Marks the calling thread as the UI thread.
@@ -52,6 +58,17 @@ proc markWorkerThread*() =
 proc threadRole*(): ThreadRole =
   ## The calling thread's role, as last marked.
   role
+
+proc markItemThread*(on: bool) =
+  ## Says that the calling thread now runs (or no longer runs) an item of an
+  ## item batch (`core/itempool`): a pool worker for good, a job's thread
+  ## while it runs one of its own batch's items.
+  inItemRun = on
+
+proc inItemThread*(): bool =
+  ## Whether the calling thread is running an item of a batch: a batch must
+  ## not start another one from there.
+  inItemRun
 
 proc clearCycleRoots*() =
   ## Empties the calling thread's list of possible cycle roots, by running

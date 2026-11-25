@@ -212,6 +212,27 @@ so the wait the user notices is never behind a long job.
   does not answer holds no open and no import: only the peeks behind it, until the lane
   goes on beside it (`StallAfter`, 3 s; the Jobs window calls it foreground). Background work uses its own processSEG workspaces, not
   the shared pool, so it cannot stall a panel.
+- **Item batches.** A job whose work is many independent items (the files of a folder
+  report) runs them as a batch: `parallelItems` (`core/jobs`, the loop in `core/itempool`)
+  runs items `0 ..< n` on the job's own thread and the workers of one pool shared by every
+  lane (`setItemThreads`, 1 to 8 threads per batch, the job's thread included; 1 is the
+  reference: no worker starts and the items run one at a time), and hands their outcomes
+  to the job's `take`, on the job's thread, strictly in item order, so a result is the same
+  whatever the number of threads. One leaf lock guards the pool and its batches (nothing is
+  acquired under it, and no cancel or progress hook runs under it); an item is handed out
+  only fewer than `window` items beyond the next to take and fewer than `maxInFlight` run
+  (and, given per-item costs, under a `budget`), so the memory of a batch does not grow with
+  its items; every wait is in a predicate loop and every wake-up is a broadcast. A batch
+  returns only after every item handed out has come back, whatever ended it (a cancel, a
+  raising `take`, a Defect in the job's own item), so the files the job's spec names stay
+  held for its items. An item is a `nimcall` with no environment that reads the job's
+  arguments through a `ptr`, copies no `ref` or closure out of them, returns plain data
+  (checked at compile time: `plainData`) and sees the cancel and reports its own fraction
+  through its `ItemContext`; an exception it raises arrives at `take` as an `ItemFailure`;
+  a batch started from an item is a Defect in every build. The workers start on the first
+  batch that needs them (never once `Jobs.stop` began), clear their ORC cycle roots after
+  each item, and are joined by `stop`. The models are `docs/models/itempool.nif` and
+  `docs/models/itempoollanes.nif`; `tests/titempool.nim` runs the pool under many shapes.
 - **A job** (`JobSpec`, `JobInfo`) has a title in plain words, a lane, a state (queued,
   running, done, failed, cancelled), progress (done of total, a phase label), and the
   files it reads or needs to itself. Queued jobs can be reordered, removed or cancelled;

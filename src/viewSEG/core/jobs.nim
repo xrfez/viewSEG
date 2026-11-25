@@ -52,6 +52,10 @@
 ##   cancelled, its result dropped, and its files stay held until its work
 ##   comes back, so that nothing that reads them is closed under it. A runner
 ##   left so ends after that job.
+## - **Item batches.** Work made of independent items (the files of a folder)
+##   runs them on several threads with `parallelItems`; the pool is shared by
+##   the lanes, and `setItemThreads` sets how many threads one batch uses
+##   (`core/itempool`).
 ##
 ## `Jobs` belongs to the UI thread: call its procs from there. They hold one
 ## lock for a few microseconds and never wait for a job, except `stop`, which
@@ -66,9 +70,11 @@
 ## another thread").
 
 import std/[atomics, locks, monotimes, options, os, sequtils, strutils, times]
-import filesystem, threads
+import filesystem, itempool, threads
 
 export monotimes, options
+export JobCancelledError # from `threads`: a job that raises it is cancelled
+export itempool
 
 const
   DefaultJobHistory* = 100 ## finished jobs kept by `initJobs()`
@@ -140,9 +146,6 @@ type
     abandoned*: bool
       ## cancelled while it did not answer: left to end on its own, its result dropped
 
-  JobCancelledError* = object of CatchableError
-    ## Raised by `checkCancelled`; a job that raises it is cancelled.
-
   JobContext* = object
     ## What a job's work uses to report progress and to see a cancel. Valid
     ## while the work runs; it may be captured by callbacks the work makes,
@@ -196,6 +199,7 @@ type
     waited: bool                           ## `stop` has waited once: a second stop does not
     current: array[JobLane, ptr RunnerObj] ## the runner each lane's next job runs on
     runners: seq[ptr RunnerObj]            ## every runner started, until joined
+    items: ItemPool                        ## the workers of the jobs' item batches (`parallelItems`); its own lock
 
 func `==`*(a, b: JobId): bool {.borrow.}
 func `$`*(id: JobId): string = "job " & $int(id)
@@ -419,6 +423,9 @@ proc shutdown(q: ptr JobsObj; deadline: MonoTime): bool =
   for r in gone:
     joinThread(r.thread)
     deallocShared(r)
+  # The pool's workers, once the jobs that use them are done or left behind: a
+  # job left running that starts a batch then runs it on its own thread.
+  if not shutdownItemPool(q.items, deadline): result = false
 
 # -------------------------------------------------------------------- Jobs --
 
@@ -436,6 +443,7 @@ proc `=destroy`*(jobs: Jobs) =
     # A runner left to its job, or a reader that still holds a file, may use
     # the shared state later: then it stays, to the end of the process.
     if all and held == 0:
+      closeItemPool(jobs.p.items)
       deinitCond(jobs.p.changed)
       deinitLock(jobs.p.lock)
       `=destroy`(jobs.p[])
@@ -458,6 +466,7 @@ proc initJobs*(historyLimit: Natural = DefaultJobHistory): Jobs =
   initLock q.lock
   initCond q.changed
   q.historyLimit = historyLimit
+  q.items = newItemPool(defaultItemThreads())
   result = Jobs(p: q)
   withLock q.lock:
     for lane in JobLane:
@@ -554,6 +563,17 @@ proc stop*(jobs: Jobs; deadline = getMonoTime() + JobStopWait): bool {.discardab
   ## end on their own (a drive that does not answer). Later submissions
   ## never run. Idempotent; destroying `jobs` does it.
   shutdown(jobs.obj, deadline)
+
+proc setItemThreads*(jobs: Jobs; n: Natural) =
+  ## Threads that run the items of one batch (`parallelItems`), the job's own
+  ## thread included, for the batches started from now on; 0 for automatic
+  ## (`defaultItemThreads`), more than `MaxItemThreads` as that. 1 runs the
+  ## items one at a time on the job's thread.
+  jobs.obj.items.setSize(if n == 0: defaultItemThreads() else: n)
+
+proc itemThreads*(jobs: Jobs): int =
+  ## Threads that run the items of one batch, the job's thread included.
+  jobs.obj.items.size
 
 proc notAnsweringFor*(info: JobInfo; now = fs.now()): Duration =
   ## How long running job `info` has not reported, once that is
@@ -793,3 +813,24 @@ proc setDetail*(ctx: JobContext; text: string) {.raises: [].} =
     if i >= 0:
       ctx.q.recs[i].info.progress.phase = text
       inc ctx.q.revision
+
+# ------------------------------------------------------------- item batches --
+
+proc itemCancelled(data: pointer): bool {.nimcall, gcsafe, raises: [].} =
+  cast[ptr JobContext](data)[].cancelled
+
+proc itemReport(data: pointer; done, total: int64): bool {.nimcall, gcsafe, raises: [].} =
+  cast[ptr JobContext](data)[].progress(done, total)
+
+proc parallelItems*[A, R](ctx: JobContext; n: int; args: ptr A; work: ItemWork[A, R];
+    take: ItemTake[R]; opts = ItemOptions()): ItemsRun =
+  ## Runs the independent items `0 ..< n` of the job on the job's own thread and
+  ## the pool's workers (`setItemThreads`), and hands their outcomes to `take`,
+  ## in order, on the job's thread. The job's progress is the items finished,
+  ## `opts.scale` units each; a cancel stops the batch (`stopped`). Returns only
+  ## once every item has returned, so the job's files stay held for them. The
+  ## rules for an item are those of `core/itempool`; a batch inside an item is a
+  ## Defect.
+  var me = ctx
+  ctx.q.items.runBatch(ItemHooks(data: addr me, cancelled: itemCancelled,
+    report: itemReport), n, args, work, take, opts)
