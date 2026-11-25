@@ -448,9 +448,7 @@ proc tableOf(b: QualityBuild): QualityReport =
     weak += acc.weak
     for f in Finding: counts[f] += acc.counts[f]
   result.totals = Totals(files: b.files, outside: b.outside, unknown: b.unknown, traces: traces,
-    killed: killed,
-    bad: bad,
-    stations: stations, badStations: badStations, lacking: lacking,
+    killed: killed, bad: bad, stations: stations, badStations: badStations, lacking: lacking,
     components: b.most, counts: counts, noisyTested: noisyTested, noisy: noisy,
     weakTested: weakTested, weak: weak)
   sortStations(result.stations, DefaultStationSort)
