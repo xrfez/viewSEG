@@ -368,7 +368,7 @@ proc addCounts(dst: var StAcc; src: StAcc) =
   dst.weakTested += src.weakTested
   dst.weak += src.weak
 
-proc absorb*(b: var QualityBuild; part: QualityBuild) =
+proc absorb*(b: var QualityBuild; part: sink QualityBuild) =
   ## Adds everything `part` counted to `b`, its stations after those `b` has
   ## (a station both have is summed), as if `part`'s notes had been added to `b` one by one.
   ## `part` holds whole files.

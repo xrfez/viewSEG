@@ -575,6 +575,10 @@ proc itemThreads*(jobs: Jobs): int =
   ## Threads that run the items of one batch, the job's thread included.
   jobs.obj.items.size
 
+proc itemThreads*(ctx: JobContext): int =
+  ## Threads that run the items of one batch of this job, the job's thread included.
+  ctx.q.items.size
+
 proc notAnsweringFor*(info: JobInfo; now = fs.now()): Duration =
   ## How long running job `info` has not reported, once that is
   ## `StallAfter` or more; zero for a job that answers or does not run.

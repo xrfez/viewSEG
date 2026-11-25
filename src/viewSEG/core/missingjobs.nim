@@ -477,7 +477,7 @@ proc readItem(it: ItemContext; a: ptr MissingItems; i: int): MissingFile {.nimca
         else:
           let isForced = forcedPath(path) in sh.forced
           let kind = if isForced: some(sh.forced[forcedPath(path)])
-            else: autoKindOf(s, path, it)
+            else: autoKindOf(s, path, proc () {.gcsafe.} = it.checkCancelled())
           var whole = initStations()
           for k in s.file.index.keys: whole.note(k)
           fileSide = reportSide(kind, isForced, whole)
