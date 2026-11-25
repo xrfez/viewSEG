@@ -62,6 +62,7 @@ import components, edits, filejobs, filesystem, firstbreakjobs, firstbreaks, fol
   foldjobs, itempool, jobs, join, noisearea, qualityreport, recordingkind, recordqc, relationside,
   reportside, session, settings, state, stationmoves, surveyjobs, threads
 from missingreport import StationSide
+from relationcheck import gatherReceiver
 export StationSide
 
 const
@@ -329,8 +330,8 @@ proc measure(f: ptr SeismicFile; path: string; sides: set[StationSide]; killed: 
   ## others are counted as left out (`leaveOut`), as the map's check marks them, and apart
   ## from them the traces at no station, which the template cannot list. A record
   ## with a seismic trace whose template is not known is measured whole and counted as such
-  ## (`measuredWhole`), with `relation` nil too when `templates` (the scan has relation
-  ## records of the other side).
+  ## (`measuredWhole`; a receiver gather once, `gatherWhole`), with `relation` nil too when
+  ## `templates` (the scan has relation records of the other side).
   let n = f[].len
   var first = 0
   var held: seq[TraceAmplitude] = @[] # statistics of the traces from `heldFrom` on
@@ -428,6 +429,12 @@ proc measure(f: ptr SeismicFile; path: string; sides: set[StationSide]; killed: 
               outside[i] = true
               unplacedAt.incl g.a + i
             if outside[i]: leftAt.incl g.a + i
+        elif domain == rdReceiver:
+          # a receiver gather counts once, whatever its records (a trace each, often) and files
+          let (named, rcv) = f[].index.keys.gatherReceiver(g)
+          for side in sides:
+            if named: b[side].gatherWhole(found.why, path, rcv.line, rcv.point)
+            else: b[side].gatherWhole(found.why, path, NaN, NaN)
         else:
           for side in sides: b[side].measuredWhole(found.why)
       let tick = proc (done, total: int): bool {.closure, gcsafe.} =

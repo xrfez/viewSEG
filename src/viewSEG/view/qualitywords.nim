@@ -123,17 +123,20 @@ func noStationLine*(t: Totals): string =
     " at no station (not placed by the headers or the survey): left out"
 
 func wholeLine*(t: Totals; side: StationSide): string =
-  ## How many records were measured whole although a relation file is loaded, because their
-  ## template is not known, and why; "" for none.
+  ## How many records (of `ssSources`: receiver gathers) were measured whole although a
+  ## relation file is loaded, because their template is not known, and why; "" for none.
   var whole = 0
   var why: seq[string] = @[]
   for w in TemplateUnknown:
     if t.unknown[w] > 0:
       whole += t.unknown[w]
       why.add $t.unknown[w] & " " & unknownWords(w, side)
+  let (one, many) = if side == ssSources: ("receiver gather", "receiver gathers")
+                    else: ("record", "records")
   if whole == 0: ""
-  elif whole == 1: "1 record was measured whole: its template is not known (" & why[0] & ")"
-  else: $whole & " records were measured whole: their template is not known (" &
+  elif whole == 1: "1 " & one & " was measured whole: its template is not known (" & why[0] &
+    ")"
+  else: $whole & " " & many & " were measured whole: their template is not known (" &
     why.join(", ") & ")"
 
 func statisticLines*(t: Totals; side: StationSide; folder: bool): seq[string] =

@@ -364,7 +364,7 @@ proc startExport*(ui: var QualityUi; st: AppState; path: string) =
       raise newException(IOError, ExportIsData)
     let head = "# " & ask.side.stationNoun & " stations\n"
     writeCsv(dest, head & stationsCsv(ask.rows))
-    if ask.withStats: writeCsv(beside, head & totalsCsv(ask.totals)))
+    if ask.withStats: writeCsv(beside, head & totalsCsv(ask.totals, ask.side)))
 
 proc pollExport(ui: var QualityUi; st: AppState) =
   if ui.exportJob == NoJob: return

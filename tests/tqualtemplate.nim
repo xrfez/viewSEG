@@ -37,7 +37,9 @@
 ## before), `the_survey_joined_is_made_once_*` counted 3 joins where 1 was expected and 1
 ## derivation for shot gathers; with `qualityJoin` making a new one for each call,
 ## `the_app_makes_what_a_scan_joins_once_*` saw it made again for the same survey; with it
-## never let go of, it was kept after the survey went.
+## never let go of, it was kept after the survey went. With each record of a receiver gather
+## counted whole (as before), `a_record_whose_template_is_not_known_*` counted 5 where 1
+## receiver gather was expected; with `absorb` summing the gathers of every file, 3 where 2.
 
 import std/[atomics, math, os, strutils, tables]
 import parseSEG
@@ -343,15 +345,37 @@ proc main*() =
       # no relation file at all: every record whole, none counted
       t = scanOne(path, rkShotGather, nil, nil).receivers.totals
       doAssert t.traces == 8 and t.unknown == default(array[TemplateUnknown, int]), $t
-      # a receiver whose O records are not found: each of its five records (a trace each)
+      # a receiver whose O records are not found: one gather, however many its records (five,
+      # a trace each) and files; two receivers are two
       let rpath = fx.dir / "receiver.sgd"
       receiverFile(rpath)
       var other = xRec(1, "20.00", "91.00", 1, 3, 5, 1, 3)
       other[0] = 'O'
-      let r = scanOne(rpath, rkReceiverSliced, nil, surveyOf(other)).sources.totals
-      doAssert r.traces == 5 and r.unknown[tuNoRecord] == 5, $r
-      doAssert wholeLine(r, ssSources) == "5 records were measured whole: their template is " &
-        "not known (5 whose O records are not found)", wholeLine(r, ssSources)
+      let elsewhere = surveyOf(other)
+      let r = scanOne(rpath, rkReceiverSliced, nil, elsewhere).sources.totals
+      doAssert r.traces == 5 and r.unknown[tuNoRecord] == 1, $r
+      doAssert wholeLine(r, ssSources) == "1 receiver gather was measured whole: its template " &
+        "is not known (1 whose O records are not found)", wholeLine(r, ssSources)
+      doAssert csvCell(totalsCsv(r, ssSources), "receiver gathers measured whole: " &
+        $tuNoRecord) == "1", totalsCsv(r, ssSources)
+      let again = fx.dir / "again.sgd"
+      receiverFile(again)
+      let third = fx.dir / "third.sgd"
+      var rows: seq[tuple[rcvLine, rcvPoint, srcLine, srcPoint: float64; dead, loud: bool]]
+      for s in 1 .. 2:
+        rows.add (rcvLine: 20.0, rcvPoint: 92.0, srcLine: 5.0, srcPoint: float64(s),
+          dead: false, loud: false)
+      writeFile(third, rows, true)
+      for threads in [1, 4]:
+        let paths = @[rpath, again, third]
+        let sink = QualitySink()
+        run(scanQuality(paths, initTable[string, FileEdits](), sink, "", NoiseSettings(),
+          forcedKinds(paths, rkReceiverSliced), receivers = addr elsewhere[]), paths, sink,
+          threads)
+        let t = sink.result.sources.totals
+        doAssert t.traces == 12 and t.unknown[tuNoRecord] == 2, $threads & ": " & $t
+        doAssert wholeLine(t, ssSources) == "2 receiver gathers were measured whole: their " &
+          "template is not known (2 whose O records are not found)", wholeLine(t, ssSources)
 
   block an_answer_is_named_by_its_inputs_never_by_an_address:
     withFixtures fx:
