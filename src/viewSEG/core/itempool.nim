@@ -52,7 +52,7 @@
 ## they change hands (`core/threads`): the wrapper does it after each item, on
 ## the thread that ran it.
 
-import std/[atomics, bitops, cpuinfo, locks, monotimes, os, times]
+import std/[atomics, bitops, cpuinfo, locks, macros, monotimes, os, times, typetraits]
 import parseSEG/common/errors
 import threads
 
@@ -67,10 +67,24 @@ func defaultItemThreads*(): int =
   ## fewer.
   clamp(countProcessors() - 1, 1, MaxItemThreads)
 
+proc hasCaseBranch(n: NimNode): bool =
+  ## Whether the record list `n` holds a `case` anywhere.
+  if n.kind == nnkRecCase: return true
+  for c in n:
+    if hasCaseBranch(c): return true
+
+macro isVariantObject(T: typedesc): bool =
+  ## Whether `T` is an object type with a `case` part (a variant object).
+  var n = getTypeImpl(T)
+  if n.kind == nnkBracketExpr and n.len == 2: n = getTypeImpl(n[1]) # typedesc[T]
+  result = newLit(n.kind == nnkObjectTy and hasCaseBranch(n[2]))
+
 func plainData*(T: typedesc): bool =
   ## Whether values of `T` can be handed from one thread to another by move: no
   ## `ref`, `ptr`, `pointer`, `cstring` or `proc` anywhere inside it (objects,
-  ## tuples, arrays, seqs, sets, strings, numbers and enums are looked into).
+  ## tuples, arrays, seqs, sets, strings, numbers, enums and distinct types are
+  ## looked into). A variant object (`case`) is refused outright: its other
+  ## branches cannot be looked into, so none is vouched for.
   when T is (ref | ptr | pointer | cstring | proc):
     false
   elif T is (string | SomeNumber | bool | char | enum | set):
@@ -79,6 +93,8 @@ func plainData*(T: typedesc): bool =
     plainData(distinctBase(T))
   elif T is (seq | array | openArray):
     plainData(typeof(default(T)[0]))
+  elif T is object and isVariantObject(T):
+    false
   elif T is (object | tuple):
     var all = true
     for f in fields(default(T)):
@@ -93,6 +109,7 @@ type
     ## item runs, on whichever thread runs it.
     b: ptr BatchHead
     index*: int ## the item's number, `0 ..< n`
+    onCaller: bool ## it runs on the batch's own thread
 
   ItemFailure* = object
     ## An exception that escaped `work`, as text: the exception object stays on
@@ -156,6 +173,7 @@ type
     full: seq[bool] ## per slot: an outcome is placed
     fracs: ptr UncheckedArray[Atomic[int64]] ## per slot: how far the running item is
     lastWake: Atomic[int64]
+    shown, lastReport: int64 ## the last progress reported and when: the caller's thread only
     ran: Atomic[uint32] ## the threads that ran an item, one bit each
     run: RunProc
     data: pointer
@@ -200,6 +218,7 @@ func startable(b: ptr BatchHead): bool =
 proc handOut(b: ptr BatchHead): int =
   ## Reserves the next item for the caller of this proc.
   result = b.next
+  b.fracs[result mod b.window].store(0, moRelaxed) # the slot's old fraction is not the item's
   inc b.next
   inc b.inFlight
   if b.cost.len > 0: b.costInFlight += b.cost[result]
@@ -320,6 +339,12 @@ proc liveWorkers*(p: ItemPool): int =
     for w in p.workers:
       if w != nil and not w.ended: inc result
 
+proc unjoinedWorkers*(p: ItemPool): int =
+  ## Workers started and not yet joined, those that left included.
+  withLock p.lock:
+    for w in p.workers:
+      if w != nil: inc result
+
 proc shutdownItemPool*(p: ItemPool; deadline: MonoTime): bool =
   ## From now on no worker starts and the workers leave once idle; waits for
   ## them until `deadline` and joins those that ended. True when none is left
@@ -364,9 +389,29 @@ proc checkCancelled*(it: ItemContext) =
   if it.cancelled:
     raise newException(JobCancelledError, "cancelled")
 
+proc reportDue(h: ptr BatchHead): bool =
+  ## The caller's thread only: whether a throttled report is due.
+  h.hooks.report != nil and (h.lastReport == 0 or
+    getMonoTime().ticks - h.lastReport >= ProgressEvery.inNanoseconds)
+
+proc reportNow(h: ptr BatchHead) =
+  ## The caller's thread only, no lock held: tells the owner how far the batch is
+  ## when that is further than it was told, and stops the batch if it answers false.
+  var v: int64
+  withLock h.owner.lock:
+    v = progressValue(h)
+  if v > h.shown:
+    h.shown = v
+    h.lastReport = getMonoTime().ticks
+    if not h.hooks.report(h.hooks.data, v, int64(h.n) * h.scale):
+      withLock h.owner.lock:
+        setStop(h, 1)
+
 proc progress*(it: ItemContext; done, total: int64): bool {.raises: [].} =
   ## Reports the item's own fraction, `done` of `total` units; false once
-  ## `cancelled`. The batch's progress follows, at most every 100 ms.
+  ## `cancelled`. The batch's progress follows, at most every 100 ms: an item
+  ## on the batch's own thread tells the owner itself (so a long item there
+  ## keeps the job's beat), one on a worker wakes the batch's thread to do it.
   let h = it.b
   let s = it.index mod h.window
   h.fracs[s].store(
@@ -377,17 +422,18 @@ proc progress*(it: ItemContext; done, total: int64): bool {.raises: [].} =
       h.lastWake.compareExchange(last, now, moRelaxed):
     withLock h.owner.lock:
       broadcast h.ready
+  if it.onCaller and h.reportDue: h.reportNow
   result = not it.cancelled
 
 proc runItem[A, R](h: ptr BatchHead; i, who: int) {.nimcall.} =
   ## Runs item `i` and leaves its outcome in its slot, unlocked: the slot is the
   ## item's alone from its hand-out until the caller takes it.
   let d = cast[ptr BatchData[A, R]](h.data)
-  h.fracs[i mod h.window].store(0, moRelaxed)
   discard h.ran.fetchOr(1'u32 shl who, moRelaxed)
   try:
     d.slots[i mod h.window] =
-      ItemOutcome[R](ok: true, value: d.work(ItemContext(b: h, index: i), d.args, i))
+      ItemOutcome[R](ok: true, value: d.work(ItemContext(b: h, index: i, onCaller: who == 0),
+          d.args, i))
   except CatchableError as e:
     d.slots[i mod h.window] = ItemOutcome[R](ok: false, failure: ItemFailure(
       name: $e.name, msg: e.msg,
@@ -402,10 +448,17 @@ proc runBatch*[A, R](pool: ItemPool; hooks: ItemHooks; n: int; args: ptr A;
   ## hands their outcomes to `take`, in order, on the calling thread. Returns
   ## once every item handed out has come back. A `take` that raises ends the
   ## batch, and its exception is raised after that. `hooks.cancelled` is asked
-  ## between items and `hooks.report` told how far the batch is; a cancel
+  ## between items. `hooks.report` is told how far the batch is, in `scale`
+  ## units per item of `n * scale`: the items finished whole, plus the mean of
+  ## the running items' own fractions, below one item (`ItemContext.progress`).
+  ## It is called on the calling thread only, never decreasing, when the
+  ## calling thread has nothing to take or run and waits, and, at most every
+  ## 100 ms, after each `take`, after each item the calling thread ran and from
+  ## an item's `progress` on the calling thread, so that a job's beat goes on
+  ## while its own thread runs a long item. A cancel (a `false` answer too)
   ## stops the batch (`stopped`).
   static:
-    doAssert plainData(R), "an item's result must be plain data: no ref, ptr, pointer or proc"
+    doAssert plainData(R), "an item's result must be plain data: no ref, ptr, pointer, proc or variant object"
   doAssert not inItemThread(), "a batch cannot be started from an item"
   if n <= 0: return
   reapWorkers(pool)
@@ -416,7 +469,6 @@ proc runBatch*[A, R](pool: ItemPool; hooks: ItemHooks; n: int; args: ptr A;
   let hp = addr head
   doAssert opts.cost.len in [0, n], "`cost` is empty or has one entry per item"
   var pending: ref CatchableError = nil
-  var shown = -1'i64
   var locked = false
   initCond head.ready
   acquire pool.lock
@@ -455,6 +507,12 @@ proc runBatch*[A, R](pool: ItemPool; hooks: ItemHooks; n: int; args: ptr A;
           acquire pool.lock
           locked = true
           if pending != nil: hp.setStop(2)
+          elif hp.reportDue:
+            release pool.lock
+            locked = false
+            hp.reportNow
+            acquire pool.lock
+            locked = true
       elif startable(hp):
         let i = hp.handOut()
         release pool.lock
@@ -467,16 +525,19 @@ proc runBatch*[A, R](pool: ItemPool; hooks: ItemHooks; n: int; args: ptr A;
           acquire pool.lock # also when an item raised a Defect: the drain needs it placed
           locked = true
           hp.place(i)
-      else:
-        let v = hp.progressValue()
-        if hooks.report != nil and v != shown:
-          shown = v
+        if hp.reportDue:
           release pool.lock
           locked = false
-          let go = hooks.report(hooks.data, v, int64(n) * head.scale)
+          hp.reportNow
           acquire pool.lock
           locked = true
-          if not go: hp.setStop(1)
+      else:
+        if hooks.report != nil and hp.progressValue() > head.shown:
+          release pool.lock
+          locked = false
+          hp.reportNow
+          acquire pool.lock
+          locked = true
         else:
           wait(head.ready, pool.lock)
     result.stopped = head.stop.load(moRelaxed) == 1

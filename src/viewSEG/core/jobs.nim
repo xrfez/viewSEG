@@ -826,8 +826,14 @@ proc parallelItems*[A, R](ctx: JobContext; n: int; args: ptr A; work: ItemWork[A
     take: ItemTake[R]; opts = ItemOptions()): ItemsRun =
   ## Runs the independent items `0 ..< n` of the job on the job's own thread and
   ## the pool's workers (`setItemThreads`), and hands their outcomes to `take`,
-  ## in order, on the job's thread. The job's progress is the items finished,
-  ## `opts.scale` units each; a cancel stops the batch (`stopped`). Returns only
+  ## in order, on the job's thread. The job's progress (`progress`, so its
+  ## beat too) is reported from the job's own thread, never decreasing:
+  ## `opts.scale` units per item of `n * scale`, the items finished whole plus
+  ## the mean of the running items' own fractions (`ItemContext.progress`) below
+  ## one item; at most every 100 ms after each `take`, after each item the job's
+  ## thread ran, and from an item's `progress` on the job's thread, and whenever
+  ## the job's thread has nothing to do but wait for the workers. A cancel stops
+  ## the batch (`stopped`). Returns only
   ## once every item has returned, so the job's files stay held for them. The
   ## rules for an item are those of `core/itempool`; a batch inside an item is a
   ## Defect.

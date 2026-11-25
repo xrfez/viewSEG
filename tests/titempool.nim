@@ -21,6 +21,16 @@
 ## - `runItem` catching `KeyError` instead of `CatchableError` (an exception
 ##   escapes the wrapper): the worker dies and the program ends with the
 ##   item's `ValueError` (`bad item 3`)
+## - `std/typetraits` not imported (a distinct field): `undeclared identifier:
+##   'distinctBase'`
+## - `if p.stopping: return` removed from `startWorkers`: `a worker was started
+##   after the shutdown`
+## - an item's `progress` on the batch's own thread not forwarding, and no
+##   report after a take or the caller's own item: `a long item reported 1
+##   times`, and `progress with 1 threads: nothing was reported`
+## Not seen to fail: the hand-out (not the start) resetting an item's fraction,
+## and the report only when greater: a mean that falls with no item finished
+## needs a report between two hand-outs of a start-up, which no test can aim at.
 ## Under ThreadSanitizer (`-d:useMalloc -d:noSignalHandler --debugger:native
 ## --passC:-fsanitize=thread --passL:-fsanitize=thread`): no report.
 
@@ -36,7 +46,9 @@ type
   Probe = object
     ## The items' arguments: counts and checks, all atomic.
     ran: array[Cap, Atomic[int]]
-    running, peak, started, takenDone, bad, afterEnd: Atomic[int]
+    running, peak, started, finished, takenDone, bad, afterEnd: Atomic[int]
+    napMs: int    ## every item sleeps this long
+    exact: bool   ## one thread: the progress is exactly the items finished
     window: int
     failing: bool
     napEvery: int ## every this many items one sleeps 1 ms; 0 none
@@ -68,12 +80,14 @@ proc work(it: ItemContext; a: ptr Probe; i: int): int {.nimcall, gcsafe.} =
   # (the take in hand counts as taken: one more)
   if i - a.takenDone.load > a.window: a.bad.store(1)
   discard a.started.fetchAdd(1)
+  if a.napMs > 0: sleep a.napMs
   if a.napEvery > 0 and i mod a.napEvery == a.napEvery - 1: sleep 1
   if a.failing:
     if i mod 7 == 3: raise newException(ValueError, "bad item " & $i)
     if i mod 11 == 5: it.checkCancelled() # not cancelled: a no-op
     if i mod 11 == 6: raise newException(JobCancelledError, "cancelled item " & $i)
   discard a.running.fetchAdd(-1)
+  discard a.finished.fetchAdd(1)
   i * 3 + 1
 
 type Seen = object
@@ -135,17 +149,57 @@ proc plainDataChecks() =
       f: proc ()
     Holder = object
       p: ptr int
+    Id = distinct int
+    Keyed = object
+      id: Id
+      ids: seq[Id]
+    BadId = distinct Node
+    Shape = enum
+      sPlain
+      sRef
+    Plain = object
+      case kind: Shape
+      of sPlain: n: int
+      of sRef: s: string
+    RefFirst = object
+      case kind: Shape
+      of sPlain: n: int
+      of sRef: node: Node
+    RefDefault = object
+      case kind: Shape
+      of sPlain: node: Node
+      of sRef: n: int
+    Nested = object
+      inner: seq[RefFirst]
   static:
     doAssert plainData(int) and plainData(string) and plainData(seq[string])
     doAssert plainData(Row) and plainData(seq[Row]) and plainData(ItemFailure)
     doAssert not plainData(Node) and not plainData(Bad) and not plainData(seq[Bad])
     doAssert not plainData(Callback) and not plainData(Holder) and not plainData(pointer)
+    # a distinct type is looked through (a `JobId` field is a plain integer)
+    doAssert plainData(Id) and plainData(Keyed) and plainData(seq[Keyed])
+    doAssert not plainData(BadId)
+    # a variant object is refused whichever branch holds the ref, even the one that
+    # holds none of it, and so is what holds one
+    doAssert not plainData(Plain) and not plainData(RefFirst) and not plainData(RefDefault)
+    doAssert not plainData(Nested)
   # a result type with a ref is refused at compile time
   var pool: ItemPool
   var p: Probe
   doAssert not compiles(runBatch[Probe, Node](pool, ItemHooks(), 1, addr p,
     proc (it: ItemContext; a: ptr Probe; i: int): Node {.nimcall, gcsafe.} = nil,
     proc (i: int; o: sink ItemOutcome[Node]) {.gcsafe.} = discard))
+  # nor a variant object, whatever its branches hold
+  doAssert not compiles(runBatch[Probe, RefFirst](pool, ItemHooks(), 1, addr p,
+    proc (it: ItemContext; a: ptr Probe; i: int): RefFirst {.nimcall, gcsafe.} = RefFirst(),
+    proc (i: int; o: sink ItemOutcome[RefFirst]) {.gcsafe.} = discard))
+  doAssert not compiles(runBatch[Probe, Plain](pool, ItemHooks(), 1, addr p,
+    proc (it: ItemContext; a: ptr Probe; i: int): Plain {.nimcall, gcsafe.} = Plain(),
+    proc (i: int; o: sink ItemOutcome[Plain]) {.gcsafe.} = discard))
+  # and a distinct integer is accepted
+  doAssert compiles(runBatch[Probe, Keyed](pool, ItemHooks(), 1, addr p,
+    proc (it: ItemContext; a: ptr Probe; i: int): Keyed {.nimcall, gcsafe.} = Keyed(),
+    proc (i: int; o: sink ItemOutcome[Keyed]) {.gcsafe.} = discard))
 
 proc matrix() =
   # order and exactly once, for every shape and speed
@@ -356,37 +410,98 @@ proc budget() =
 var reports: array[4096, Atomic[int64]]
 var reportCount, reportTotal: Atomic[int]
 
-proc progressInvariant() =
-  # the batch's progress never goes back, never passes the items finished, and
-  # counts items in `scale` units
-  stage("progress")
-  let pool = newItemPool(4)
-  var p: Probe
-  var seen: Seen
-  p.window = 4
-  p.napEvery = 1
-  reportCount.store(0)
-  let pp = addr p
-  let hooks = ItemHooks(data: pp, cancelled: nil,
-    report: proc (d: pointer; done, total: int64): bool {.nimcall, gcsafe, raises: [].} =
-    let k = reportCount.fetchAdd(1)
-    if k < reports.len: reports[k].store(done)
-    reportTotal.store(int(total))
-    # finished = items whose work returned: at least `done div scale`
-    doAssert done div 1000 <= cast[ptr Probe](d).started.load
-    true)
-  discard runPlain(pool, p, seen, 40, ItemOptions(window: 4), hooks)
-  inOrder(seen, 40, "progress")
+proc recordReport(d: pointer; done, total: int64): bool {.nimcall, gcsafe, raises: [].} =
+  ## The owner's report hook: keeps what it was told and checks it against the
+  ## items: the items taken are finished, and the items finished by now (their
+  ## `work` returned) are at least those counted whole; with one thread, exactly.
+  let a = cast[ptr Probe](d)
+  let k = reportCount.fetchAdd(1)
+  if k < reports.len: reports[k].store(done)
+  reportTotal.store(int(total))
+  let whole = int(done div 1000)
+  if whole < a.takenDone.load or whole > a.finished.load or
+      (a.exact and whole != a.finished.load):
+    a.bad.store(2)
+  true
+
+proc checkReports(n: int; what: string) =
   let k = min(reportCount.load, reports.len)
+  doAssert k > 0, what & ": nothing was reported"
   var last = 0'i64
   for i in 0 ..< k:
     let v = reports[i].load
-    doAssert v >= last, "progress went back: " & $last & " then " & $v
-    doAssert v <= 40 * 1000
+    doAssert v > last, what & ": progress went back or stood: " & $last & " then " & $v
+    doAssert v <= int64(n) * 1000
     last = v
-  doAssert k == 0 or reportTotal.load == 40 * 1000
-  doAssert shutdownItemPool(pool, getMonoTime() + Watchdog)
-  closeItemPool(pool)
+  doAssert reportTotal.load == n * 1000, what & ": the total"
+
+proc longItem1(it: ItemContext; a: ptr Probe; i: int): int {.nimcall, gcsafe.} =
+  ## An item of the batch's own thread that reports its way through.
+  for step in 1 .. 40:
+    sleep 10
+    discard it.progress(step, 40)
+  i
+
+proc halfItem(it: ItemContext; a: ptr Probe; i: int): int {.nimcall, gcsafe.} =
+  ## An item that is nearly done at once and then lingers: every item that starts
+  ## pulls the mean of the running fractions down.
+  discard it.progress(900, 1000)
+  sleep 15
+  discard a.finished.fetchAdd(1)
+  i
+
+proc progressInvariant() =
+  # the batch's progress is reported from the owner's thread, never goes back,
+  # is never ahead of the items finished and never behind the items taken
+  for threads in [1, 2, 4]:
+    stage("progress")
+    let what = "progress with " & $threads & " threads"
+    let pool = newItemPool(threads)
+    var p: Probe
+    var seen: Seen
+    p.window = 4
+    p.napMs = 25
+    p.exact = threads == 1
+    reportCount.store(0)
+    let hooks = ItemHooks(data: addr p, cancelled: nil, report: recordReport)
+    discard runPlain(pool, p, seen, 16, ItemOptions(window: 4), hooks)
+    inOrder(seen, 16, what)
+    doAssert p.bad.load == 0, what & ": a report disagreed with the items"
+    checkReports(16, what)
+    if threads == 1: doAssert reportCount.load >= 2, what & ": " & $reportCount.load & " reports"
+    doAssert shutdownItemPool(pool, getMonoTime() + Watchdog)
+    closeItemPool(pool)
+  # items that are nearly done pull the mean of the running fractions down as
+  # others start: what is reported still never goes back
+  stage("progress of started items")
+  block started:
+    let pool = newItemPool(4)
+    var p: Probe
+    reportCount.store(0)
+    let pp = addr p
+    let take = proc (i: int; outcome: sink ItemOutcome[int]) {.gcsafe.} =
+      discard pp.takenDone.fetchAdd(1)
+    let hooks = ItemHooks(data: pp, cancelled: nil, report: recordReport)
+    discard runBatch[Probe, int](pool, hooks, 40, pp, halfItem, take, ItemOptions(window: 8))
+    checkReports(40, "progress of started items")
+    doAssert p.bad.load == 0
+    doAssert shutdownItemPool(pool, getMonoTime() + Watchdog)
+    closeItemPool(pool)
+  # a long item on the batch's own thread keeps the beat through its own progress
+  stage("progress of a long item")
+  for threads in [1, 2]:
+    let pool = newItemPool(threads)
+    var p: Probe
+    reportCount.store(0)
+    let pp = addr p
+    let take = proc (i: int; outcome: sink ItemOutcome[int]) {.gcsafe.} =
+      discard pp.takenDone.fetchAdd(1)
+    let hooks = ItemHooks(data: pp, cancelled: nil, report: recordReport)
+    discard runBatch[Probe, int](pool, hooks, 1, pp, longItem1, take, ItemOptions(window: 1))
+    # 400 ms of item: a report each 100 ms, before the item came back
+    doAssert reportCount.load >= 3, "a long item reported " & $reportCount.load & " times"
+    doAssert shutdownItemPool(pool, getMonoTime() + Watchdog)
+    closeItemPool(pool)
 
 proc noGrowth() =
   # what a batch keeps on its own thread does not grow with its items (it makes
@@ -442,6 +557,7 @@ proc poolLifecycle() =
   let late = runPlain(pool, r, seen3, 20, ItemOptions(window: 4))
   inOrder(seen3, 20, "after the shutdown")
   doAssert late.threads == 1 and pool.liveWorkers == 0
+  doAssert pool.unjoinedWorkers == 0, "a worker was started after the shutdown"
   closeItemPool(pool)
 
 var
