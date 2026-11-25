@@ -698,8 +698,8 @@ proc submitRun(ui: var OutputUi; st: AppState) =
     pattern: chosenLabel(st))
   if ui.processingOn: ui.record.processingSentence = processingSentence(opts.processing)
   if ui.sortOn: ui.record.sort = sortWords(opts.sortKeys)
-  if opts.headerText.isSome: ui.record.textHeader = opts.headerText.get.name
-  if opts.headerBinary.isSome: ui.record.binaryHeader = opts.headerBinary.get.name
+  if opts.headerText.isSome: ui.record.textName = opts.headerText.get.name
+  if opts.headerBinary.isSome: ui.record.binaryName = opts.headerBinary.get.name
   ui.sink = BatchSink()
   ui.haveResult = false
   ui.stopped = false

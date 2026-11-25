@@ -22,7 +22,7 @@ proc main*() =
     format: ofSegy, revision: orSegy21, reversals: true, dropKilled: true, ownFilters: false,
     processing: true, processingSentence: "The written traces will be filtered: " &
     "band-pass 5-10-40-60 Hz.", shifts: true, sortOn: true, sort: "channel", mirror: true,
-    correlated: true, reference: "Pilot A", pattern: "Line", textHeader: "Survey")
+    correlated: true, reference: "Pilot A", pattern: "Line", textName: "Survey")
   let res = BatchResult(written: 1, failed: 1, skipped: 1, cancelled: true, items: @[
     BatchItemResult(relative: "a.sgy", destination: "/out/a.sgy", outcome: boWritten,
       writtenTraces: 10, droppedTraces: 2, lines: @["first note", "second note", "third"]),

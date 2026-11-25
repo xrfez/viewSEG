@@ -20,7 +20,7 @@ type
     reference*: string                 ## the reference when Correlated
     sort*: string                      ## the plot's keys when the Sort tick was on
     pattern*: string                   ## the file names' pattern, "" for the source's names
-    textHeader*, binaryHeader*: string ## the templates in use, "" for none
+    textName*, binaryName*: string ## the templates in use, "" for none
 
 func logName*(t: DateTime): string =
   ## "viewSEG-output-20261125-140359.txt": the name offered for the file.
@@ -73,9 +73,9 @@ func logText*(rec: RunRecord; r: BatchResult; sizes: openArray[int64]): string =
   lines.add KeepFolders & ": " & onOff(rec.mirror)
   lines.add FileNamesLabel & ": " & (if rec.pattern.len > 0: rec.pattern else: AsSourceFile)
   if rec.format == ofSegy:
-    lines.add TextRowLabel & ": " & (if rec.textHeader.len > 0: rec.textHeader
+    lines.add TextRowLabel & ": " & (if rec.textName.len > 0: rec.textName
       else: TextAsSource)
-    lines.add BinaryRowLabel & ": " & (if rec.binaryHeader.len > 0: rec.binaryHeader
+    lines.add BinaryRowLabel & ": " & (if rec.binaryName.len > 0: rec.binaryName
       else: BinaryAsSource)
   lines.add summaryLine(r.written, r.failed, r.skipped, r.correlatedWith)
   if r.cancelled: lines.add "The run was stopped before every file was written."
