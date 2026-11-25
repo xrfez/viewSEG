@@ -50,6 +50,9 @@ proc main*() =
     doAssert a.source == rsCodes
     let b = order.withCodeRoles([20'i16, 18, 19, 21], "a")
     doAssert (b.reference, b.baseplate, b.mass, b.groundForce) == (3, 2, 1, 0)
+    # only a record of exactly these four traces is the converter's: more traces keep the codes
+    let longer = order.withCodeRoles([21'i16, 19, 18, 20, 30], "a")
+    doAssert (longer.mass, longer.baseplate) == (2, 1), $longer
     # some codes missing: those roles are none
     let c = order.withCodeRoles([21'i16, 20], "a")
     doAssert (c.reference, c.groundForce, c.mass, c.baseplate) == (0, 1, -1, -1)
@@ -106,6 +109,8 @@ proc main*() =
       let r = w.params.roles
       doAssert r.source == rsCodes
       doAssert (r.reference, r.groundForce, r.mass, r.baseplate) == (0, 3, 1, 2), $r
+      doAssert "the baseplate-coded trace is taken as the reaction mass" in st.vibRolesLine(w) and
+        "Swap changes it" in st.vibRolesLine(w), st.vibRolesLine(w)
       doAssert "roles taken from the trace identification codes" in w.result.note,
         w.result.note
       doAssert w.result.problem == "", w.result.problem
@@ -120,6 +125,7 @@ proc main*() =
       doAssert st.settle(not st.plots[0].waiting and st.plots[0].result.gen > 0)
       doAssert st.plots[0].params.roles.source == rsHand
       doAssert "roles taken from the trace" notin st.plots[0].result.note
+      doAssert "taken as the reaction mass" notin st.vibRolesLine(st.plots[0])
     discard st.shutdown()
   echo "tvibroles: ok"
 

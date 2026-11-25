@@ -54,6 +54,8 @@ type
     names*: seq[string]      ## per trace, what the curves call it: "trace 12"
     sig*: SignatureAsk       ## a signature file's vibrator window: its force scale and QC record
     forceNote*: string
+    converterOrder*: bool
+      ## the window's traces are the external converter's layout: check the weights' order
       ## a signature file's vibrator window: the ground force is a trace of the file, so no
       ## typed mass is applied; the words for the note ("" for any other file)
     killed*: seq[int] ## those of `traces` killed, ascending: left out
@@ -708,7 +710,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk; viewOf: var ref CorrelateView;
                 let n = (answer.leftOut, answer.atOtherInterval)
                 answer = vibratorOf(rows, names, at, dtMs, a.params, recorded,
                   a.topHz,
-                  a.exactTopHz, a.forceNote, a.sig)
+                  a.exactTopHz, a.forceNote, a.sig, a.converterOrder)
                 (answer.leftOut, answer.atOtherInterval) = n
                 if answer.problem.len == 0:
                   answer.against = against

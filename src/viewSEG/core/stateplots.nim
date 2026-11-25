@@ -334,6 +334,18 @@ proc signatureAsk(state: AppState; s: Session; p: AnalysisParams): SignatureAsk 
       result.ctl = f.pairQc
   of sgNone: discard
 
+proc vibConverter*(state: AppState; w: AnalysisWindow): bool =
+  ## Whether window `w`'s traces are laid out as the external converter's SEG-Y from a
+  ## signature file lays them out (`isConverterLayout`).
+  var codes: seq[int16] = @[]
+  for n in 0 ..< min(w.traces.len, 5):
+    let i = state.findTrace(w.traces[n])
+    let local = if i >= 0: w.traces[n] - state.sessions[i].base else: -1
+    if i >= 0 and state.sessions[i].filePtr != nil and
+        local in 0 ..< state.sessions[i].filePtr[].len:
+      codes.add state.sessions[i].filePtr[].traceKeys(local).traceCode
+  isConverterLayout(codes)
+
 proc askPlot(state: var AppState; w: int): bool =
   ## Asks the reader for window `plots[w]`'s numbers of its traces, with
   ## the filters it has; false when its file is not open any more or cannot
@@ -355,6 +367,7 @@ proc askPlot(state: var AppState; w: int): bool =
     correlated: s.correlatedView, path: s.path, size: s.size, traces: traces, names: labels,
     processing: pw.processing)
   pw.sweep = identityOf(s.signature)
+  a.converterOrder = pw.view == avVibrator and state.vibConverter(pw)
   if s.isSignature:
     a.forceNote = signatureForceNote(s.signature)
     a.sig = state.signatureAsk(s, pw.params)
@@ -726,18 +739,6 @@ proc codeWordsOf(state: AppState; w: AnalysisWindow; n: int): string =
     if local in 0 ..< state.sessions[i].filePtr[].len:
       result = traceIdText(int(state.sessions[i].filePtr[].traceKeys(local).traceCode))
 
-proc vibConverter*(state: AppState; w: AnalysisWindow): bool =
-  ## Whether window `w`'s traces are laid out as the external converter's SEG-Y from a
-  ## signature file lays them out (`isConverterLayout`).
-  var codes: seq[int16] = @[]
-  for n in 0 ..< min(w.traces.len, 4):
-    let i = state.findTrace(w.traces[n])
-    let local = if i >= 0: w.traces[n] - state.sessions[i].base else: -1
-    if i >= 0 and state.sessions[i].filePtr != nil and
-        local in 0 ..< state.sessions[i].filePtr[].len:
-      codes.add state.sessions[i].filePtr[].traceKeys(local).traceCode
-  isConverterLayout(codes)
-
 proc vibTraceNames*(state: AppState; w: AnalysisWindow): seq[string] =
   ## The window's traces as the vibrator signature's pickers list them: "trace 7 · code
   ## 30 (not in the standard)", "trace 1 · vibrator reference (21)"; the number alone
@@ -827,6 +828,9 @@ proc vibRolesLine*(state: AppState; w: AnalysisWindow; long = true): string =
     of rsHand: "chosen by hand"
     of rsRemembered: "remembered for this file layout")
   let sigAt = if w.traces.len > 0: state.findTrace(w.traces[0]) else: -1
+  if w.params.roles.source == rsCodes and state.vibConverter(w):
+    result.add "; the baseplate-coded trace is taken as the reaction mass: this layout's two " &
+      "force channels are in that order; Swap changes it"
   if long: result.add state.vibChoiceNotes(w)
   if w.params.roles.source in {rsPosition, rsCodes} and state.rememberedNotUsed(w) and
       not (sigAt >= 0 and state.sessions[sigAt].isSignature):

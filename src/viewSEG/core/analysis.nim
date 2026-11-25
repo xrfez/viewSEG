@@ -370,12 +370,12 @@ func samePlaces*(a, b: VibRoles): bool =
     a.baseplate == b.baseplate
 
 func isConverterLayout*(codes: openArray[int16]): bool =
-  ## Whether `codes` start as the external converter's SEG-Y from a vibrator signature file
-  ## writes them: reference (21), then the two force channels coded 19 and 18, then the
+  ## Whether `codes` are exactly the external converter's SEG-Y from a vibrator signature
+  ## file, four traces, as it writes them (a longer record is not taken for it): reference (21), then the two force channels coded 19 and 18, then the
   ## ground force (20). In such a file the trace coded 19 is the converter's second channel,
   ## the reaction mass's, and the one coded 18 the baseplate's: the other way round from the
   ## SEG-Y standard's codes and from a `.dat`'s own traces.
-  codes.len >= 4 and codes[0] == VibReferenceCode and codes[1] == VibBaseplateCode and
+  codes.len == 4 and codes[0] == VibReferenceCode and codes[1] == VibBaseplateCode and
     codes[2] == VibReactionMassCode and codes[3] == VibGroundForceCode
 
 func withCodeRoles*(roles: VibRoles; codes: openArray[int16]; file: string): VibRoles =

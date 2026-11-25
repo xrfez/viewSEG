@@ -16,7 +16,7 @@ proc readAt(f: File; path: string; at: int64; n: int; into: var seq[byte]) =
 
 proc convertedSegy*(path: string): bool =
   ## Whether the SEG-Y file at `path` is laid out as the external converter writes a signature
-  ## file: its first four traces coded 21, 19, 18, 20 (`isConverterLayout`). Reads the binary
+  ## file: exactly four traces, coded 21, 19, 18, 20 (`isConverterLayout`). Reads the binary
   ## header and four trace headers (big-endian files, fixed trace length) and nothing else.
   ## Raises nothing: a file that cannot be read is not one.
   var f: File
@@ -28,14 +28,18 @@ proc convertedSegy*(path: string): bool =
     func be16(b: openArray[byte]; at: int): int = int(b[at]) shl 8 or int(b[at + 1])
     let samples = be16(head, 3220)
     let bytes = case be16(head, 3224)
-      of 1, 2, 4, 5, 10, 11: 4
-      of 3: 2
-      of 8: 1
+      of 1, 2, 4, 5, 10: 4
+      of 3, 11: 2
+      of 8, 16: 1
+      of 7, 15: 3
+      of 6, 9, 12: 8
       else: 0
     let ext = be16(head, 3504)
     if samples == 0 or bytes == 0 or ext < 0 or ext > 100: return false
     let first = 3600'i64 + 3200'i64 * ext
     let step = 240'i64 + int64(samples) * bytes
+    # exactly four traces: a longer record is not the converter's file
+    if fs.getFileSize(path) != first + 4 * step: return false
     var codes: seq[int16] = @[]
     var h: seq[byte] = @[]
     for k in 0 ..< 4:

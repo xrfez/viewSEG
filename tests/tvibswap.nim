@@ -68,7 +68,8 @@ proc main*() =
       doAssert line == "Reference: trace 1 (vibrator reference (21)) · Ground force: trace 4 " &
         "(vibrator estimated ground force (20)) · Mass: trace 2 (vibrator baseplate " &
         "(19)) · Baseplate: trace 3 (vibrator reaction mass (18)) — from the trace " &
-        "identification codes", line
+        "identification codes; the baseplate-coded trace is taken as the reaction mass: " &
+        "this layout's two force channels are in that order; Swap changes it", line
       st.swap(w)
       doAssert st.plots[w].params.roles.places == (0, 3, 2, 1)
       doAssert st.plots[w].params.roles.source == rsHand
@@ -95,7 +96,7 @@ proc main*() =
       # (codes 21, 18, 19, 20: mass is trace 2 and baseplate trace 3 by the codes)
       st.apply Command(kind: ckClosePlot, plot: st.plots[o].id)
       let t = st.open(fx.vibThirteenSegy())
-      doAssert st.plots[t].params.roles.places == (0, 3, 1, 2) and
+      doAssert st.plots[t].params.roles.places == (0, 3, 2, 1) and
         st.plots[t].params.roles.source == rsCodes, $st.plots[t].params.roles
       doAssert st.plots[t].traces.len == 13, "every trace of the record can be picked"
       doAssert st.vibTraceNames(st.plots[t])[4] == "trace 5 · code 29 (not in the standard)",

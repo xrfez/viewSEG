@@ -33,6 +33,10 @@ import analysis, signalend, sweepedge, vibjudge
 export VibRole, VibSignal
 
 const
+  OrderMarginDeg* = 20.0
+    ## the made ground force's mean phase to the reference must be lower by more than this with
+    ## the two weights the other way round for the window to say so (a converter file's right
+    ## order read 1.0 degrees, the wrong one 35.9)
   RecordedRef* = "Ref (recorded)"
     ## the recorded pilot measured against the project's reference: its name in the plots
     ## and the table
@@ -206,7 +210,7 @@ func roundedTop*(est: float64): float64 =
 proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     at: array[VibRole, int]; dtMs: float64; p: AnalysisParams;
     recorded = -1; topHz = NaN; exactTopHz = NaN; forceNote = "";
-    sig = SignatureAsk()): AnalysisResult =
+    sig = SignatureAsk(); converterOrder = false): AnalysisResult =
   ## The vibrator signature of the unit whose role `r` is row `at[r]` of
   ## `rows` (traces from their first sample at `dtMs`, named `names`; -1:
   ## the unit has none), with the masses, polarities, harmonics and limits
@@ -292,6 +296,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   var fitted = NaN # the top frequency read from the reference's samples
   var reading = TopReading(hz: NaN) # ... and how far to trust it
   var readWhy = "" # the sentence shown when that reading is not sure, or unusable
+  var otherPhase = NaN # the made ground force's mean |phase| with the two weights the other way
   try:
     if pair and masses:
       unit.reactionMass = mass(massR, muKilogram)
@@ -347,6 +352,15 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       if cut.isNaN: break
       cutMs = cut
       limits.toMs = if limits.toMs.isNaN: cutMs else: min(limits.toMs, cutMs)
+    if converterOrder and made and masses and pair and not signature:
+      # the converter's two force channels are in one order: is the other order the better fit?
+      var other = unit
+      other.reactionMass = mass(massB, muKilogram)
+      other.baseplateMass = mass(massR, muKilogram)
+      var again: seq[UnitSignature[float32]] = @[]
+      tp.analyzeVibrators(rowBlock(work, rows.len, cols), meta, @[other], limits, again, ws)
+      if vsWeightedSum in again[0].signals:
+        otherPhase = again[0].summaries[vsWeightedSum].meanAbsPhaseDeg
   except ValueError as e:
     result.problem = e.msg
     return
@@ -387,6 +401,14 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   elif made and not canMake and vsGroundForce in u.signals:
     result.judgeWarning = "the ground force cannot be made from M and B: the file has no " &
       "trace for the M or the B role. The ground force in the record is judged"
+  if not otherPhase.isNaN and vsWeightedSum in u.signals:
+    let here = u.summaries[vsWeightedSum].meanAbsPhaseDeg
+    if here - otherPhase > OrderMarginDeg:
+      result.judgeWarning.add (if result.judgeWarning.len > 0: "; " else: "") &
+        "the ground force made from M and B follows the reference better with the two " &
+        "weights on the other traces (mean phase " & number(otherPhase, 1) & "° instead of " &
+        number(here, 1) & "°): check which channel is the reaction mass's (Swap mass and " &
+        "baseplate in Roles); nothing was swapped"
   if canMake and signature and sig.given:
     result.madeNote = if sig.isDat:
         "In this file the two force channels are already weighted: both choices give the " &

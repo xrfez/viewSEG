@@ -63,8 +63,10 @@ func meanForce(r: AnalysisResult; signal: string): float64 =
     if row[0] == signal and at >= 0: return parseFloat(row[at])
   doAssert false, signal & " is not in the table"
 
-proc ask(rows: seq[seq[float32]]; p: AnalysisParams; at: array[VibRole, int]): AnalysisResult =
-  result = vibratorOf(rows, @["Ref", "GF", "M", "B"], at, 1.0, p, -1, 100.0)
+proc ask(rows: seq[seq[float32]]; p: AnalysisParams; at: array[VibRole, int];
+    converterOrder = false): AnalysisResult =
+  result = vibratorOf(rows, @["Ref", "GF", "M", "B"], at, 1.0, p, -1, 100.0,
+    converterOrder = converterOrder)
   doAssert result.problem == "", result.problem
 
 proc converterBlocks() =
@@ -101,6 +103,18 @@ proc converterBlocks() =
     let (bad, _) = agree(ask(rows, swapped, at).curveOf("GF from M and B fundamental"), want,
       sized = false)
     doAssert bad < 0.99, $bad
+  block orderChecked:
+    # the weights on the right traces: no word; the other way round, a line says so (and nothing
+    # is swapped); for a window that is not the converter's layout the check is not made
+    p.roles.judge = joWeighted
+    doAssert ask(rows, p, at, true).judgeWarning.len == 0
+    var turned = p
+    swap(turned.reactionMassKg, turned.baseplateMassKg)
+    let said = ask(rows, turned, at, true)
+    doAssert "follows the reference better" in said.judgeWarning and
+      "nothing was swapped" in said.judgeWarning, said.judgeWarning
+    doAssert said.judged == "GF (M, B)"
+    doAssert ask(rows, turned, at).judgeWarning.len == 0
   block ownHundred:
     # the recorded ground force's 100 % force typed: the made signal has none of its own
     var q = p

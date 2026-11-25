@@ -88,7 +88,8 @@ proc main*() =
     withFixtures fx:
       let shipped = currentSourcePath.parentDir.parentDir / "samples" / "vib" / "field"
       doAssert convertedSegy(shipped / "signature_4trace_a.sgy")
-      doAssert convertedSegy(shipped / "signature_13trace_a.sgy")
+      # (a longer record is not the converter's four-trace file: no swapped roles, no listing)
+      doAssert not convertedSegy(shipped / "signature_13trace_a.sgy")
       doAssert not convertedSegy(fx.vibPlainSegy())
       doAssert not convertedSegy(datFile(fx.dir, "a.dat"))
       doAssert not convertedSegy(fx.dir / "no such file.sgy")
