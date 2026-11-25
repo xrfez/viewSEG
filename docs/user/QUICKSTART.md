@@ -490,7 +490,15 @@ which file is being written. **Stop** finishes the file in progress and skips th
 rest; the line then says **Stopped.** The line above the table is the total (written,
 failed, skipped). The table is one row per file: the relative path, the outcome (and
 the reason when it failed), how many traces were written and dropped, and the notes.
-Columns can be resized. **Copy results** puts that table on the clipboard. **Open
+Columns can be resized. **Copy results** puts that table on the clipboard. **Export log...**
+(dim until a run has finished or was stopped) asks where to save a text file, by default
+`viewSEG-output-<date>-<time>.txt` in the destination folder, and writes it in the
+background, so a slow disk does not stop the window; if it cannot be written, Messages
+says why. The file holds when the run was, the source and destination, the options in
+force (format, revision, every tick, the reference of a correlated run, the sort, the file
+names, the header templates), the totals, and for every file, in file order, where it was
+written, the result, its size, the traces written and dropped, and all its notes, not only
+what the table has room for. A stopped run lists the files it skipped. **Open
 destination** opens the folder.
 
 **File names** (above **Format**) names each file from its own values instead of its

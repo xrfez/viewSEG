@@ -9,7 +9,7 @@
 ## Ticks are not saved. All and None cover every listed file, including ones
 ## the name filter hides. A folder tick counts every file under it.
 
-import std/[algorithm, options, os, strutils, tables]
+import std/[algorithm, options, os, strutils, tables, times]
 from std/unicode import cmpRunesIgnoreCase
 from parseSEG import SeismicFile, TextEncoding, teEbcdic, teAscii
 import sdl3_nim
@@ -17,8 +17,8 @@ import imguin/cimgui
 import ../../core/[edits, filejobs, filekinds, filesystem, geometry, jobs, outputbatch,
   namepreviewjobs, outputbinary, outputjobs, outputtext, panels, processing, references,
   settings, state, vendormaps]
-import ../../view/[filetable, outputbinaryedit, outputtextedit, outputtextimport, outputwords,
-  theme]
+import ../../view/[filetable, outputbinaryedit, outputlog, outputtextedit, outputtextimport,
+  outputwords, theme]
 import fittext, focus, fonts, icons, marks, overflow, style
 from windows import awOutput, beginClosable
 
@@ -118,6 +118,11 @@ type
     valuesJob: JobId = NoJob
     valuesNote: ValuesNote
     valuesGen: int
+    record: RunRecord                          ## what the last run was asked
+    exportJob: JobId = NoJob
+    exportPath: string
+    wantExport: bool
+    askLog: bool                               ## the Export log... dialog is wanted
     importJob: JobId = NoJob
     importNote: ImportNote
     importGen: int
@@ -154,7 +159,7 @@ type
 
   OutputOutput* = object
     commands*: seq[Command]
-    askSource*, askDest*, askText*: bool
+    askSource*, askDest*, askText*, askLog*: bool
     askAt*: string
 
 proc open*(ui: var OutputUi; folder: string) =
@@ -180,6 +185,11 @@ proc setTextFile*(ui: var OutputUi; path: string) =
   ## The text header editor's Import... dialog's answer.
   ui.importPath = path
   ui.wantImport = true
+
+proc setLogFile*(ui: var OutputUi; path: string) =
+  ## The Export log... dialog's answer.
+  ui.exportPath = if path.splitFile.ext.len == 0: path & ".txt" else: path
+  ui.wantExport = true
 
 func slash(path: string): string =
   result = newStringOfCap(path.len)
@@ -364,6 +374,21 @@ proc importWork(path: string; note: ImportNote; gen: int): JobWork =
       note.why = ImportUnreadable
     note.gen = gen
 
+proc exportWork(path: string; rec: RunRecord; res: BatchResult): JobWork =
+  ## Writes the run's log. The sizes of the files written are asked here, off the
+  ## UI thread.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.checkCancelled()
+    ctx.setPhase ExportPhase
+    var sizes: seq[int64] = @[]
+    for item in res.items:
+      var n = -1'i64
+      if item.outcome == boWritten and item.destination.len > 0:
+        try: n = fs.getFileSize(item.destination)
+        except OSError: n = -1
+      sizes.add n
+    fs.writeTextAtomic(path, logText(rec, res, sizes))
+
 proc cancelJob(st: AppState; id: var JobId) =
   if id != NoJob:
     discard st.jobs.cancel(id)
@@ -404,6 +429,13 @@ proc startRefuse(ui: var OutputUi; st: AppState) =
   let gen = ui.refuseGen
   ui.refuseJob = st.jobs.submit(JobSpec(title: CheckTitle, lane: jlBackground),
     refuseWork(source, dest, note, gen))
+
+proc startExport(ui: var OutputUi; st: AppState) =
+  ## A failure is a job that failed, which Messages says with its reason.
+  cancelJob(st, ui.exportJob)
+  if not ui.haveResult: return
+  ui.exportJob = st.jobs.submit(JobSpec(title: ExportTitle, lane: jlBackground),
+    exportWork(ui.exportPath, ui.record, ui.result))
 
 proc startImport(ui: var OutputUi; st: AppState) =
   cancelJob(st, ui.importJob)
@@ -518,6 +550,9 @@ proc consider(ui: var OutputUi; st: AppState) =
   if ui.wantImport:
     ui.wantImport = false
     ui.startImport(st)
+  if ui.wantExport:
+    ui.wantExport = false
+    ui.startExport(st)
 
 proc canRun(ui: OutputUi): bool =
   ui.source.len > 0 and ui.dest.len > 0 and ui.refusal.len == 0 and not ui.checking and
@@ -629,6 +664,16 @@ proc submitRun(ui: var OutputUi; st: AppState) =
   if ui.correlate and sweep.why.len == 0:
     ask.correlate = BatchCorrelate(on: true, name: sweep.name, path: sweep.path,
       pilot: sweep.pilot, projectMarks: projectAuxMarks(st))
+  ui.record = RunRecord(startedAt: nowText(now()), source: ui.source, dest: ui.dest,
+    format: ui.format, revision: opts.revision, reversals: ui.reversals,
+    dropKilled: ui.dropKilled, ownFilters: ui.ownFilters, processing: ui.processingOn,
+    shifts: ui.shifts, sortOn: ui.sortOn, keepOwnPositions: ui.keepOwn,
+    correlated: ask.correlate.on, mirror: ui.mirror, reference: ask.correlate.name,
+    pattern: chosenLabel(st))
+  if ui.processingOn: ui.record.processingSentence = processingSentence(opts.processing)
+  if ui.sortOn: ui.record.sort = sortWords(opts.sortKeys)
+  if opts.headerText.isSome: ui.record.textHeader = opts.headerText.get.name
+  if opts.headerBinary.isSome: ui.record.binaryHeader = opts.headerBinary.get.name
   ui.sink = BatchSink()
   ui.haveResult = false
   ui.stopped = false
@@ -743,8 +788,19 @@ proc drawFileCell(rel: string; marks: var Marks) =
   if shown != rel: hoverFull(rel)
   marks.mark("output.cell.file " & shown)
 
-proc drawResults(ui: OutputUi; marks: var Marks) =
-  if not ui.haveResult: return
+proc drawExportButton(ui: var OutputUi; marks: var Marks; outp: var OutputOutput) =
+  igBeginDisabled(not ui.haveResult)
+  if igButton(ExportLogButton.cstring, ImVec2_c(x: 0, y: 0)):
+    ui.askLog = true
+    outp.askAt = (if ui.dest.len > 0: ui.dest / logName(now()) else: logName(now()))
+  igEndDisabled()
+  marks.mark(if ui.haveResult: "output.exportLog" else: "output.exportLog.dim")
+  tip(ExportLogTip)
+
+proc drawResults(ui: var OutputUi; marks: var Marks; outp: var OutputOutput) =
+  if not ui.haveResult:
+    ui.drawExportButton(marks, outp)
+    return
   let summary = summaryLine(ui.result.written, ui.result.failed, ui.result.skipped,
     ui.result.correlatedWith)
   igTextUnformatted(summary.cstring, nil)
@@ -805,6 +861,8 @@ proc drawResults(ui: OutputUi; marks: var Marks) =
     igSetClipboardText(ui.copyText.cstring)
   marks.mark("output.copy")
   tip(CopyTip)
+  igSameLine(0, -1)
+  ui.drawExportButton(marks, outp)
   igSameLine(0, -1)
   igBeginDisabled(ui.dest.len == 0)
   if igButton(OpenButton.cstring, ImVec2_c(x: 0, y: 0)):
@@ -1939,7 +1997,7 @@ proc drawRight(ui: var OutputUi; st: AppState; t: Theme; phase: string; marks: v
   marks.mark("output.mirror")
   tip(MirrorTip)
   ui.drawRun(st, phase, marks, outp)
-  ui.drawResults(marks)
+  ui.drawResults(marks, outp)
 
 proc drawOutput*(ui: var OutputUi; title: string; st: AppState; fonts: Fonts; t: Theme;
     marks: var Marks): OutputOutput =
@@ -1995,5 +2053,7 @@ proc drawOutput*(ui: var OutputUi; title: string; st: AppState; fonts: Fonts; t:
   result.askDest = ui.askDest
   result.askText = ui.askText
   ui.askText = false
+  result.askLog = ui.askLog
+  ui.askLog = false
   if ui.askSource: ui.askSource = false
   if ui.askDest: ui.askDest = false

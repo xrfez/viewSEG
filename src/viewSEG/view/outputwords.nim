@@ -26,6 +26,12 @@ const
   StopButton* = "Stop"
   CopyButton* = "Copy results"
   OpenButton* = "Open destination"
+  ExportLogButton* = "Export log..."
+  ExportLogTip* = "Save the run's log as a text file: when it ran, the options, the totals, " &
+    "and every file's row with all its notes. Available once a run has ended."
+  ExportTitle* = "Export the output log"
+  ExportPhase* = "writing the log"
+  ExportFailed* = ExportTitle & " failed"
   FilterHint* = "Filter by file name"
   SourceLabel* = "Source"
   DestLabel* = "Destination"

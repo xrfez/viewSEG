@@ -310,6 +310,26 @@ proc tryRemoveFile*(_: FileSystem; path: string): bool {.raises: [].} =
   else:
     os.tryRemoveFile(path)
 
+proc writeTextAtomic*(_: FileSystem; path, text: string) {.raises: [IOError, OSError, Exception].} =
+  ## `text` written to `path` through a temporary file beside it, flushed, then
+  ## moved over `path`: a reader sees the old file or the whole new one. A
+  ## failure leaves no temporary file behind.
+  let tmp = path & "." & $getCurrentProcessId() & ".tmp"
+  var f: File
+  if not fs.open(f, tmp, fmWrite): raise newException(IOError, "cannot write " & tmp)
+  try:
+    if text.len > 0 and fs.writeBuffer(f, tmp, unsafeAddr text[0], text.len) != text.len:
+      raise newException(IOError, "the disk did not take " & tmp)
+    flushFile(f)
+  finally:
+    close(f)
+  var moved = false
+  try:
+    fs.moveFile(tmp, path)
+    moved = true
+  finally:
+    if not moved: discard fs.tryRemoveFile(tmp)
+
 proc setLastModificationTime*(_: FileSystem; path: string; t: Time) {.raises: [OSError].} =
   ## `os.setLastModificationTime`.
   enter(foWrite, path)

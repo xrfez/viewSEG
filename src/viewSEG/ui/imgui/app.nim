@@ -969,6 +969,7 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
     of dkOutputSource: ui.output.setSource(ev.paths[0])
     of dkOutputDest: ui.output.setDest(ev.paths[0])
     of dkOutputText: ui.output.setTextFile(ev.paths[0])
+    of dkOutputLog: ui.output.setLogFile(ev.paths[0])
     of dkCutDest: ui.cut.setFolder(ev.paths[0])
     of dkExportShotSps: ui.shotLog.setSpsDest(ev.paths[0])
     of dkShotLog:
@@ -1652,6 +1653,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     if written.askSource: ui.ask(dkOutputSource, written.askAt)
     if written.askDest: ui.ask(dkOutputDest, written.askAt)
     if written.askText: ui.ask(dkOutputText, written.askAt)
+    if written.askLog: ui.ask(dkOutputLog, written.askAt)
   if ui.windows.shows(awHeaders):
     ui.windows.beforeDrawing(awHeaders)
     # The pick is this frame's: the plot is drawn first.

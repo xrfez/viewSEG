@@ -64,6 +64,7 @@ type
     dkShotLog = "Shot log",                    ## one shot log to import: CSV, text or TSV
     dkCutDest = "Slice destination"            ## the folder a slice by shot log is written into
     dkExportShotSps = "Export SPS"             ## an SPS file to write (a save dialog)
+    dkOutputLog = "Output log"                 ## a text file to write (a save dialog)
     dkOutputText = "Text header file"          ## a text file or a SEG-Y file whose text header is read
 
   ShellEventKind* = enum
@@ -318,7 +319,7 @@ proc showDialog*(kind: DialogKind; parentWindowId = 0'u32; location = "") =
   of dkExportSettings, dkExportLayout:
     SDL_ShowSaveFileDialog(onDialogResult, userdata, parent, addr nifFilters[0],
       nifFilters.len.cint, at)
-  of dkExportLog:
+  of dkExportLog, dkOutputLog:
     SDL_ShowSaveFileDialog(onDialogResult, userdata, parent, addr logFilters[0],
       logFilters.len.cint, at)
   of dkJoinFiles:
