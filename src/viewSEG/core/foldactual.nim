@@ -76,8 +76,9 @@ type
     unplaced*: bool
       ## the file has live traces and none has a position: the survey did not place them
     bins*, counts*: seq[int32] ## the bins the file fills, ascending, and its traces in each
-    noClass*: int
-      ## with a restriction: of `binned`, the traces in no class or sector (`FoldSplit`)
+    noClass*, noSector*: int
+      ## with a restriction: of `binned`, the traces in no offset class and in no azimuth sector
+      ## (`FoldSplit`; each counts only when it is defined)
     classStarts*: seq[int32]
       ## with a restriction: `classes + 1` places in `classBins`, where each class's run starts
     classBins*, classCounts*: seq[int32]
@@ -86,12 +87,12 @@ type
 
   ActualTally* = object
     ## What the count came to over all the files.
-    files*: int      ## files read
+    files*: int              ## files read
     traces*, notLive*, killed*, noCoordinates*, outside*, binned*: int
-    noSource*: int   ## of `noCoordinates`: a receiver position and no source
-    noClass*: int    ## with a restriction: of `binned`, the traces in no class or sector
-    unplaced*: int   ## files read that gave no position
-    duplicates*: int ## files listed twice (one reached through a link), counted once
+    noSource*: int           ## of `noCoordinates`: a receiver position and no source
+    noClass*, noSector*: int ## with a restriction: of `binned`, the traces in none (`ActualPart`)
+    unplaced*: int           ## files read that gave no position
+    duplicates*: int         ## files listed twice (one reached through a link), counted once
     skipped*: seq[tuple[path, why: string]]
 
   ActualItems = object
@@ -201,10 +202,15 @@ proc readActual(it: ItemContext; a: ptr ActualItems; k: int): ActualPart {.nimca
               else:
                 inc result.binned
                 bins.add int32(bin)
-                if split.active:
-                  let cls = split.classOf(keys[j])
+                if split.offsetClasses > 0:
+                  let cls = split.offsetClassOf(keys[j])
                   if cls >= 0: classKeys.add (int64(cls) shl 32) or int64(bin)
                   else: inc result.noClass
+                if split.sectors >= 2:
+                  let cls = split.sectorOf(keys[j])
+                  if cls >= 0:
+                    classKeys.add (int64(split.offsetClasses + cls) shl 32) or int64(bin)
+                  else: inc result.noSector
           t += m
         result.traces = n
         result.unplaced = result.noCoordinates > 0 and result.binned + result.outside == 0
@@ -236,6 +242,7 @@ proc add(tally: var ActualTally; raw, all: ptr UncheckedArray[int32]; pick: int;
   tally.outside += r.outside
   tally.binned += r.binned
   tally.noClass += r.noClass
+  tally.noSector += r.noSector
   if pick < 0:
     for k, bin in r.bins: raw[bin] += r.counts[k]
   else:
@@ -295,7 +302,7 @@ proc countActual*(ctx: JobContext; inp: ptr ActualInputs; known: openArray[ptr A
   var cells = actual.fold # the map's own counts (a tensor shares its storage)
   let raw = cast[ptr UncheckedArray[int32]](cells.unsafe_raw_offset(aligned = false))
   var all: ptr UncheckedArray[int32] = nil
-  let pick = if split.drawn: split.pick else: -1
+  let pick = if split.drawn: split.slot else: -1
   if pick >= 0:
     totals = newSeq[int32](grid.len)
     all = cast[ptr UncheckedArray[int32]](addr totals[0])

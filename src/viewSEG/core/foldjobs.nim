@@ -551,7 +551,7 @@ proc foldWork*(inp: FoldInputs; sink: FoldSink): JobWork =
               (tally.files, tally.traces, tally.notLive, tally.killed, tally.unplaced,
                tally.skipped)
             r.duplicates = tally.duplicates
-            r.noClass = tally.noClass
+            r.noClass = if split.shownKind == spAzimuth: tally.noSector else: tally.noClass
             (r.binned, r.outside, r.noCoordinates) = (tally.binned, tally.outside,
               tally.noCoordinates)
             r.otherSurvey = files.otherSurvey

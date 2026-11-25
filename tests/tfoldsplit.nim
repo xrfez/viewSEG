@@ -12,8 +12,9 @@
 ##   add up to the traces binned, and it is the same on 1, 2, 4 and 8 item threads.
 ## - The rule that puts a trace in a class (`classOf`) is the library's: each trace of the
 ##   edge-case file lands in the class the library's tensors put it in.
-## - Drawing another class reads no file again (every file's part holds all classes); other
-##   class edges or another kind of restriction read every file once.
+## - Drawing another class or sector, or all, reads no file again (every file's part holds all
+##   classes and sectors); other class edges or another sector count read every file once.
+## - The edges are kept exactly (100000.4, 1234567, 1000.0001) and "-0" is 0.
 ## - Class edges that are not numbers, not ascending, negative, one alone or more than 16 classes
 ##   are refused with a sentence; sectors outside 2 to 36 too.
 ##
@@ -177,7 +178,7 @@ proc libraryMap(grid: Binning; opts: FoldOptions; paths: seq[string]): FoldMap =
     result.addFold(chunkMeta(f, traces, dtMs = 2.0))
     f.close()
 
-proc splitCase(name: string; sFile, rFile, xFile: string; files: seq[string]) =
+proc splitCase(name: string; sFile, rFile, xFile: string; files: seq[string]; both = false) =
   ## Every class and sector of the files, counted by the job, against the library.
   var st = initAppState()
   doAssert st.loaded(sFile, rFile, xFile)
@@ -185,21 +186,25 @@ proc splitCase(name: string; sFile, rFile, xFile: string; files: seq[string]) =
   for f in [sFile, rFile, xFile]: g.addSps(f)
   let grid = surveyGrid(g)
   let size = grid.len
+  proc mk(kind: SplitKind; pick: int): FoldSplit =
+    ## With `both`, the parts hold the offset classes and the sectors, whichever is drawn.
+    FoldSplit(kind: kind, edges: (if kind == spOffset or both: @Edges else: @[]),
+      sectors: (if kind == spAzimuth or both: Sectors else: 0), pick: pick)
   for kind in [spOffset, spAzimuth]:
-    let opts = if kind == spOffset: FoldOptions(offsetBounds: @Edges)
+    let opts = if both: FoldOptions(offsetBounds: @Edges, azimuthSectors: Sectors)
+      elif kind == spOffset: FoldOptions(offsetBounds: @Edges)
       else: FoldOptions(azimuthSectors: Sectors)
     let plan = g.preplotFold(grid, opts)
     let rec = libraryMap(grid, opts, files)
     let classes = if kind == spOffset: Edges.len - 1 else: Sectors
     let planTensor = if kind == spOffset: plan.offsetFold else: plan.azimuthFold
     let recTensor = if kind == spOffset: rec.offsetFold else: rec.azimuthFold
-    let label = name & " " & $kind
+    let label = name & " " & $kind & (if both: " with both" else: "")
     var classTotal = 0
     for k in 0 ..< classes: classTotal += recTensor.slice(k).total
     var inClasses = 0
     for pick in -1 ..< classes:
-      let split = FoldSplit(kind: kind, edges: if kind == spOffset: @Edges else: @[],
-        sectors: (if kind == spAzimuth: Sectors else: 0), pick: pick)
+      let split = mk(kind, pick)
       let sink = st.count(inputsOf(files), fkActual, split)
       let (a, d) = (sink.result, sink.other)
       doAssert a.ok and d.ok, label & ": " & a.reason
@@ -227,24 +232,17 @@ proc splitCase(name: string; sFile, rFile, xFile: string; files: seq[string]) =
     doAssert inClasses == classTotal and rec.binned - classTotal > 0,
       label & ": no trace fell in no class"
     # the sum over the classes and the traces in none is the traces binned
-    let all = st.count(inputsOf(files), fkActual, FoldSplit(kind: kind,
-      edges: (if kind == spOffset: @Edges else: @[]),
-      sectors: (if kind == spAzimuth: Sectors else: 0), pick: -1))
+    let all = st.count(inputsOf(files), fkActual, mk(kind, -1))
     doAssert all.result.noClass + inClasses == all.result.binned, label
     # the same on any number of threads
-    let one = st.count(inputsOf(files), fkActual, FoldSplit(kind: kind,
-      edges: (if kind == spOffset: @Edges else: @[]),
-      sectors: (if kind == spAzimuth: Sectors else: 0), pick: 1), threads = 1)
+    let one = st.count(inputsOf(files), fkActual, mk(kind, 1), threads = 1)
     for n in [2, 4, 8]:
-      let many = st.count(inputsOf(files), fkActual, FoldSplit(kind: kind,
-        edges: (if kind == spOffset: @Edges else: @[]),
-        sectors: (if kind == spAzimuth: Sectors else: 0), pick: 1), threads = n)
+      let many = st.count(inputsOf(files), fkActual, mk(kind, 1), threads = n)
       doAssert many.result.counts == one.result.counts and many.other.counts ==
         one.other.counts and many.result.noClass == one.result.noClass and
         many.result.totals == one.result.totals, label & ": differs on " & $n & " threads"
     # the rule on its own, at the edges: the traces `extras` lists, in the order it lists them
-    let split = FoldSplit(kind: kind, edges: (if kind == spOffset: @Edges else: @[]),
-      sectors: (if kind == spAzimuth: Sectors else: 0), pick: 0)
+    let split = mk(kind, 0)
     var f = openSeismic(files[0], keys = true)
     var keys = newSeq[TraceKeys](f.len)
     f.traceKeysInto(0 ..< f.len, keys)
@@ -273,15 +271,33 @@ proc main*() =
     doAssert parseSectors("8").sectors == 8 and parseSectors(" 36 ").sectors == 36
     for bad in ["1", "37", "-2", "x", "2.5"]:
       doAssert parseSectors(bad).error.len > 0, "refused: " & bad
+    # the edges are kept exactly
+    for text in ["0, 100000.4, 100000.6", "0, 1234567", "0, 1000.0001, 1000.0002",
+        "0, 0.00001, 1e14"]:
+      let e = parseEdges(text)
+      doAssert e.error == "", text
+      let kept = edgesText(e.edges)
+      doAssert "e" notin kept and parseEdges(kept).edges == e.edges, "exact: " & kept
+      doAssert splitOf(kept, e.edges.len - 1, 0, 0).drawn and
+        splitOf(kept, 0, 0, 0).offsetClasses == e.edges.len - 1,
+        "stays restricted: " & kept
+    doAssert edgesText(parseEdges("0, 100000.4, 100000.6").edges) == "0, 100000.4, 100000.6"
+    doAssert edgesText(parseEdges("0, 1234567").edges) == "0, 1234567"
+    doAssert edgesText(parseEdges("-0, 10").edges) == "0, 10" and
+      splitOf("-0, 10", 1, 0, 0).drawnLabel("ft") == "offsets 0–10 ft", "-0 is 0"
     # which restriction the settings ask for
     doAssert splitOf("", 0, 0, 0).kind == spNone
-    doAssert splitOf("0, 1000, 2000", 0, 0, 0).kind == spOffset
+    doAssert splitOf("0, 1000, 2000", 0, 0, 0).shownKind == spOffset and
+      not splitOf("0, 1000, 2000", 0, 0, 0).drawn
     doAssert splitOf("0, 1000, 2000", 2, 0, 0).pick == 1
     doAssert splitOf("0, 1000, 2000", 3, 0, 0).pick == -1, "a class that is not there is all"
     doAssert splitOf("", 0, 8, 3) == FoldSplit(kind: spAzimuth, sectors: 8, pick: 2)
     doAssert splitOf("0, 1000", 0, 8, 3).kind == spAzimuth, "a sector drawn wins over edges"
     doAssert splitOf("0, 1000", 1, 8, 3).kind == spOffset, "a class drawn wins"
-    doAssert splitOf("0, 1000", 0, 8, 0).kind == spOffset, "edges stand before sectors"
+    doAssert splitOf("0, 1000", 0, 8, 0).shownKind == spOffset, "edges stand before sectors"
+    doAssert splitOf("0, 1000", 0, 8, 0).offsetClasses == 1 and splitOf("0, 1000", 0, 8,
+        0).sectors == 8,
+      "both are kept"
     let sp = splitOf("0, 1000, 2000", 2, 0, 0)
     doAssert sp.drawnLabel("ft") == "offsets 1000–2000 ft"
     doAssert splitOf("", 0, 8, 2).drawnLabel("ft") == "azimuth 45–90°"
@@ -330,6 +346,7 @@ proc main*() =
         files.add dir / ("shot" & $s & ".sgy")
         shotFile(files[^1], s, sources, receivers, withExtras = s in {1, 4})
       splitCase(name, sFile, rFile, xFile, files)
+      splitCase(name, sFile, rFile, xFile, files, both = true)
 
     block tracker:
       let rec = fx.dir / "recording"
@@ -339,11 +356,10 @@ proc main*() =
       doAssert r.loaded(Land & ".s", Land & ".r", Land & ".x")
       doAssert r.folder(rec)
       var t: FoldTracker
-      proc want(edges: seq[float64]; pick: int; kind = fkActual; sectors = 0): FoldWant =
-        let split = if sectors > 0: FoldSplit(kind: spAzimuth, sectors: sectors, pick: pick)
-          else: FoldSplit(kind: spOffset, edges: edges, pick: pick)
+      proc want(edges: seq[float64]; pick: int; kind = fkActual; sectors = 0;
+          by = spOffset): FoldWant =
         FoldWant(kind: kind, on: true, actual: actualInputs(r), stamp: actualStamp(r),
-          scope: rec, split: split)
+          scope: rec, split: FoldSplit(kind: by, edges: edges, sectors: sectors, pick: pick))
       proc settled(w: FoldWant): bool =
         waitUntil((t.follow(r.jobs, r.survey, w, NaN, NaN); t.status != fmComputing))
       setIoHook(noteRead)
@@ -373,19 +389,29 @@ proc main*() =
       forgetReads()
       doAssert settled(want(@[0.0, 500, 2000], 0)) and t.status == fmReady
       doAssert readNow().len == 6, "other edges: every file is read: " & $readNow()
-      # sectors: every file again; another sector none
+      # sectors defined as well: every file again; then class, sector, all, class: none
       forgetReads()
-      doAssert settled(want(@[], 0, sectors = 4)) and t.status == fmReady
-      doAssert readNow().len == 6 and t.shown.split.kind == spAzimuth
-      forgetReads()
-      doAssert settled(want(@[], 3, sectors = 4)) and readNow().len == 0 and
-        t.shown.split.pick == 3
-      # the difference layer of a class is of the same class
-      doAssert settled(want(@[], 3, fkDifference, sectors = 4)) and readNow().len == 0
+      doAssert settled(want(@Edges, 0, sectors = 4)) and t.status == fmReady
+      doAssert readNow().len == 6
+      for (by, pick) in [(spAzimuth, 3), (spOffset, 1), (spNone, -1), (spAzimuth, 0),
+          (spOffset, 2), (spAzimuth, 3)]:
+        forgetReads()
+        doAssert settled(want(@Edges, pick, sectors = 4, by = by)) and t.status == fmReady
+        doAssert readNow().len == 0, "switching what is drawn reads no file: " & $readNow()
+        doAssert t.shown.split.kind == by and t.shown.split.pick == pick
+      # the difference layer of a sector is of the same sector
+      doAssert settled(want(@Edges, 3, fkDifference, sectors = 4, by = spAzimuth)) and
+        readNow().len == 0
       doAssert t.shown.kind == fkDifference and t.shown.split.pick == 3
+      # the sector count changed: every file is read once; sectors alone: again
+      forgetReads()
+      doAssert settled(want(@Edges, 3, sectors = 8, by = spAzimuth)) and readNow().len == 6
+      forgetReads()
+      doAssert settled(want(@[], 3, sectors = 4, by = spAzimuth)) and t.status == fmReady
+      doAssert readNow().len == 6 and t.shown.split.kind == spAzimuth
       # no restriction: the plain counts, and a part that holds no classes is read again
       forgetReads()
-      var plain = want(@[], -1)
+      var plain = want(@[], -1, sectors = 0)
       plain.split = FoldSplit()
       doAssert settled(plain) and t.status == fmReady and t.shown.split.kind == spNone
       doAssert readNow().len == 6, "no restriction: the parts are of classes: " & $readNow()

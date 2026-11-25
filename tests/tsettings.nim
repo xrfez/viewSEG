@@ -30,7 +30,7 @@
 ## Runs alone: it bounds the time taking in an import holds a frame (25 ms).
 
 import std/[math, monotimes, os, random, sequtils, strutils, times]
-import viewSEG/core/[geometry, itempool, outputrevision, state]
+import viewSEG/core/[foldsplit, geometry, itempool, outputrevision, state]
 import utils/[fixtures, owntime, waiting]
 
 func has(log: MessageLog; part: string; severity = sevInfo): bool =
@@ -242,6 +242,19 @@ proc main*() =
       problems)
     doAssert ok.map.foldOffsets == "0, 1000" and ok.map.foldOffsetClass == 1 and
       ok.map.foldSectors == 8 and ok.map.foldSector == 8 and problems.len == 0, $problems
+
+  block foldEdgesExact:
+    # Edges are kept as typed, not to six digits: these were saved as "0, 100000, 100001",
+    # "1.23457e+06" and "0, 1000, 1000" (which then read back as no restriction).
+    for (text, classes) in [("0, 100000.4, 100000.6", 2), ("0, 1234567", 1),
+        ("0, 1000.0001, 1000.0002", 2)]:
+      var problems: seq[string]
+      let s = readSettings("(settings (version 1) (map (foldOffsets \"" & text & "\")))",
+        "settings.nif", Settings(), problems)
+      doAssert s.map.foldOffsets == text and problems.len == 0, text & ": " & $problems
+      doAssert splitOf(s.map.foldOffsets, 0, 0, 0).offsetClasses == classes
+      let again = readSettings(settingsDocument(s), "settings.nif", Settings(), problems)
+      doAssert again.map.foldOffsets == text, "written and read back: " & again.map.foldOffsets
 
   block gainAmountTo300:
     # The gain amount reads from -300 to +300 dB (60 before: a file of an

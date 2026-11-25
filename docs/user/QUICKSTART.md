@@ -1327,8 +1327,10 @@ bin name the restriction ("Actual fold, offsets 1000–2000 ft": "recorded 3 in 
 bearing). The pre-plot counts the class from the source and receiver positions of the relation
 records; a recorded trace is put in its class by the distance between its source and receiver
 positions, or by the header's offset when it has no positions. The recorded fold keeps every
-class of each file, so picking another class does not read the files again; typing other
-edges does.
+class and every sector of each file (both, when both are typed), so picking another class or
+sector, or All, does not read the files again; typing other edges or another number of
+sectors does. Many sectors on a fine grid need much memory and are refused beyond a budget.
+The edges are kept exactly as typed.
 
 Under the Recorded, **Shots in the folder** rings the survey's sources whose record is in a
 file of the folder listed in Files (read in the background, while a survey file with

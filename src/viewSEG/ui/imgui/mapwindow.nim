@@ -580,7 +580,8 @@ const
     "receiver; the edges are in the survey's length unit, such as 0, 1000, 2000, 4000: a " &
     "class holds its first edge up to but not including the next) or to one sector of the " &
     "bearing from source to receiver (2 to 36 sectors, the first starting at north, " &
-    "clockwise). Draw one of them, or All. Only one restriction applies at a time: " &
+    "clockwise; many sectors on a fine grid need much memory, and are refused beyond the " &
+    "budget). Draw one of them, or All. Only one restriction applies at a time: " &
     "choosing an offset class sets the azimuth to All, and the reverse. The recorded fold " &
     "of every class is counted at once, so another class draws without reading the files " &
     "again."
