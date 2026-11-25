@@ -36,6 +36,7 @@
 ##  (cursorLine false)
 ##  (files (followLatest false) (prepareNext true) (listSignatureFiles false))
 ##  (map (info popup) (lengths survey) (hide recorded) (templateBox false) (folderShots true)
+##   (foldLayer true) (foldAlong 25.0) (foldAcross 25.0)
 ##   (filters noisy clipped)
 ##   (template (shape patch) (lines 8) (channels 120) (inline 1500.0) (crossline 500.0)))
 ##  (noise (area auto) (timeMs 100.0) (radius 500.0) (steps 8) (allLines false)
@@ -485,6 +486,9 @@ proc settingsDocument*(s: Settings): string =
   w.close()
   w.value("templateBox", s.map.templateBox)
   w.value("folderShots", s.map.folderShots)
+  if s.map.foldLayer: w.value("foldLayer", true)
+  if s.map.foldAlong > 0: w.value("foldAlong", s.map.foldAlong)
+  if s.map.foldAcross > 0: w.value("foldAcross", s.map.foldAcross)
   w.open("filters")
   for f in s.map.filters: w.ident MapFilterNames[f]
   w.close()
@@ -1195,6 +1199,9 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
             result.map.hiddenGroups = hidden
           elif k.isTree("templateBox"): r.flag(k, result.map.templateBox)
           elif k.isTree("folderShots"): r.flag(k, result.map.folderShots)
+          elif k.isTree("foldLayer"): r.flag(k, result.map.foldLayer)
+          elif k.isTree("foldAlong"): r.number(k, 1e-6, 1e12, result.map.foldAlong)
+          elif k.isTree("foldAcross"): r.number(k, 1e-6, 1e12, result.map.foldAcross)
           elif k.isTree("filters"):
             var on: set[MapFilter]
             for v in k.kids:

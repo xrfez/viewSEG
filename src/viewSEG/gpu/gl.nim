@@ -137,6 +137,7 @@ var
   glVertexAttribPointer*: proc (index: GLuint; size: GLint; kind: GLenum;
     normalized: GLboolean; stride: GLsizei; offset: pointer) {.glcall.}
   glEnableVertexAttribArray*: proc (index: GLuint) {.glcall.}
+  glVertexAttribDivisor*: proc (index, divisor: GLuint) {.glcall.}
   glDrawArrays*: proc (mode: GLenum; first: GLint; count: GLsizei) {.glcall.}
   glDrawArraysInstanced*: proc (mode: GLenum; first: GLint; count,
     instances: GLsizei) {.glcall.}
@@ -200,6 +201,7 @@ proc loadGl*(getProc: GetProcAddress): seq[string] =
   load glBufferData
   load glVertexAttribPointer
   load glEnableVertexAttribArray
+  load glVertexAttribDivisor
   load glDrawArrays
   load glDrawArraysInstanced
   load glMultiDrawArrays

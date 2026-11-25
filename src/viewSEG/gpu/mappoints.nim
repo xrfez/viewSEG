@@ -28,8 +28,9 @@
 ## current. Objects are freed explicitly (`free`), never by a destructor.
 
 import std/math
-import ../core/[geometry, mapview, maplod, survey]
-import density, gl, textures
+import ../core/[foldgrid, geometry, mapview, maplod, survey]
+import density, gl, mapfold, textures
+export mapfold.FoldDraw
 
 const
   LodPixels* = 2.0
@@ -99,6 +100,8 @@ type
       ## bumped by the caller whenever the marked points change
     marksAbove*: int = int.high
       ## the first set of marked points drawn over the highlight (the rest under it)
+    fold*: FoldDraw
+      ## the fold layer's bins, drawn first, under every point (`gpu/mapfold`)
 
   LayerBuffer = object
     key: uint64      ## the layer's id and role
@@ -121,6 +124,7 @@ type
       ## the marked points (shots with a file, filters), each set after the one before
     mcounts: seq[int]
     morigin: MapPoint
+    fold: FoldGpu
     fbo, target: GLuint
     width, height: int
     ready: bool
@@ -223,9 +227,28 @@ proc newMapRenderer*(): (MapRenderer, string) =
   r.program = program
   for u in MapUniform:
     r.loc[u] = glGetUniformLocation(program, cstring($u))
+  let (fold, foldErr) = initFoldGpu()
+  if foldErr.len > 0: return (r, foldErr)
+  r.fold = fold
   glGenFramebuffers(1, addr r.fbo)
   r.ready = true
   (r, "")
+
+proc setFoldCells*(r: var MapRenderer; key, cols, rows: int; colours: openArray[uint32]) =
+  ## Gives the fold layer the colours of its blocks, named `key` (what
+  ## `MapFrame.fold.key` says to draw).
+  r.fold.setCells(key, cols, rows, colours)
+
+proc setFoldSpans*(r: var MapRenderer; spans: openArray[FoldSpan]): tuple[count, sum: int] =
+  ## The runs of fold blocks the next images draw (`FoldDraw.spans` and
+  ## `spansSum` are what this returns, so the frame notices a change).
+  r.fold.setSpans(spans)
+
+func foldKey*(r: MapRenderer): int {.inline.} = r.fold.key
+  ## The name of the cells the fold layer holds (0 for none).
+
+func foldDrawn*(r: MapRenderer): int {.inline.} = r.fold.drawn
+  ## The blocks the last image's fold layer drew (for tests).
 
 func ready*(r: MapRenderer): bool {.inline.} = r.ready
   ## Whether it can draw.
@@ -441,6 +464,7 @@ proc render*(r: var MapRenderer; f: MapFrame; s: Survey): GLuint =
   glEnable(GL_PROGRAM_POINT_SIZE)
   glEnable(GL_BLEND)
   glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) # premultiplied
+  r.fold.draw(f.fold, f.area)
   glUseProgram(r.program)
   r.pointsDrawn = 0
   let view = f.area
@@ -535,6 +559,7 @@ proc free*(r: var MapRenderer) =
   if r.hvao != 0: glDeleteVertexArrays(1, addr r.hvao)
   if r.mvbo != 0: glDeleteBuffers(1, addr r.mvbo)
   if r.mvao != 0: glDeleteVertexArrays(1, addr r.mvao)
+  r.fold.free()
   if r.target != 0: glDeleteTextures(1, addr r.target)
   if r.fbo != 0: glDeleteFramebuffers(1, addr r.fbo)
   if r.program != 0: glDeleteProgram(r.program)
