@@ -1405,14 +1405,18 @@ The program proposes a pattern only when it is sure. It does so for a four-digit
 followed by a month and a day (`-`, `/` or `.` between them) or by a day of year, then an
 hour, a minute and a second, with a fraction and a `Z` if every sampled row has them in the
 same form; for a year and a day of year, when some day is above 12 or every day has three
-digits; and for plain numbers in the years 2000 to 2100 as seconds or microseconds since 1970.
+digits; and for plain numbers in the years 2000 to 2100 as seconds since 1970.
 It does not guess a day or a month first (`dd/mo/yy`, `mo/dd/yy`, `yy/mo/dd`), a four-digit
 year in the third place (`dd/mo/yyyy` against `mo/dd/yyyy`), a time with a zone offset
 (`+01`, `-0500`), a column whose rows are in different forms, or GPS seconds. The dialog
 then says "The time's form could not be decided: type the pattern, for example dd/mo/yyyy
 hh:mi:ss", and until a pattern is typed no time is read from that column (one problem at the
-top of Problems says so, not one per row). A column of 16 digits that reads as GPS
-microseconds is GPSTB even when its header says Time, unless the header says UTC. A time that
+top of Problems says so, not one per row). A column of whole microseconds may be GPS
+microseconds or microseconds since 1970, and the number alone cannot tell which: it is GPSTB
+only when its header says GPS (GPSTB, GPS time, TB, Time break), and Time (UTC) read as `epoch
+microseconds` only when its header says UTC, Unix, epoch or posix. Under any other header, or
+none, nothing is read from it until you choose: the dialog and one problem at the top say
+"Time holds microsecond times, GPS or Unix: choose GPSTB or Time (UTC)." A time that
 does not read says so in Problems with the row, the time and the pattern: "time '2024 361
 23:59:xx' does not match yyyy ddd hh:mi:ss".
 

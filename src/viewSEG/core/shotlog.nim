@@ -664,9 +664,8 @@ const Aliases = [
   ("gunid", crSourceId), ("id", crSourceId),
   ("uphole", crUphole), ("upholetime", crUphole), ("tuh", crUphole)]
 
-const ExplicitEpoch = ["utcmicroseconds", "utcus", "unixtimeus", "utcseconds",
-  "epochseconds", "unixtime", "utcs", "posix"]
-  ## header names that say the numbers are on the UTC clock, not GPS
+const ExplicitEpoch = ["utc", "unix", "epoch", "posix"]
+  ## words of a header name that say its numbers are on the UTC clock, not GPS
 
 const SplitNames = ["year", "yr", "dayofyear", "julianday", "julian", "jday", "doy",
   "month", "mon", "dayofmonth", "dom", "day", "hour", "hr", "hh", "minute", "min",
@@ -745,6 +744,20 @@ func isSplitName(raw: string): bool =
   let n = normHeader(raw)
   n in SplitNames
 
+func gpsHeader(raw: string): bool =
+  ## Whether the header name says GPS time: a GPSTB name ("GPS TB", "Time
+  ## break") or a name with "gps" in it.
+  roleOfName(raw) == crGpsMicros or "gps" in nameKey(raw)
+
+func utcHeader(raw: string): bool =
+  ## Whether the header name says its numbers are UTC: "utc", "unix", "epoch"
+  ## or "posix" in it, parentheses included ("Time (UTC)"), and no "gps".
+  let k = nameKey(raw)
+  if "gps" in k: return false
+  for w in ExplicitEpoch:
+    if w in k: return true
+  false
+
 func knownHeader(raw: string): bool =
   roleOfName(raw) != crText or isSplitName(raw)
 
@@ -774,14 +787,6 @@ func firstChar(text: string; a, b: int): char =
   var i = a
   while i < b and text[i] == ' ': inc i
   if i < b: text[i] else: '\0'
-
-proc isGpsMicrosText(s: string): bool =
-  let t = s.strip
-  if t.len != 16: return false
-  for c in t:
-    if c notin Digits: return false
-  let head = (ord(t[0]) - ord('0')) * 10 + (ord(t[1]) - ord('0'))
-  head in 11 .. 16
 
 type NumShape = enum
   nsBlank, nsInt, nsDot, nsComma, nsOther
@@ -992,6 +997,10 @@ const
   UndecidedTime* = "The time's form could not be decided: type the pattern, for example " &
     PatternExample
     ## said when a Time (UTC) column has no pattern the sampled rows decide
+  UndecidedNumbers* = "Time (UTC) holds plain numbers, which may be GPS or Unix times: " &
+    "type epoch seconds or epoch microseconds if they are Unix times, or choose GPSTB " &
+    "for GPS microseconds."
+    ## said instead when those cells are plain numbers: GPS or Unix cannot be told
   SplitTimeFound* = "This log's time is spread over several columns. Choose GPSTB, or " &
     "add one Time (UTC) column to the file."
   SplitTimeOld* = "This log's time was read from several columns before; that is no " &
@@ -1325,7 +1334,8 @@ proc shapeOf(t: string): Shape =
 
 proc detectWith(cells: openArray[string]; epochLike: bool): string =
   ## `detectTimePattern`; with `epochLike` (the column's header says UTC), a
-  ## column of 16 digits that could be GPS microseconds is epoch microseconds.
+  ## column of microseconds since 1970 is epoch microseconds. Without it, the
+  ## same digits may be GPS microseconds, and none is proposed.
   var vals: seq[string] = @[]
   for c in cells:
     let t = c.strip
@@ -1336,9 +1346,9 @@ proc detectWith(cells: openArray[string]; epochLike: bool): string =
     if plainNumber(t): inc numbers
   if numbers > 0:
     if numbers != vals.len: return ""
-    var micros, seconds = true
+    var micros = epochLike
+    var seconds = true
     for t in vals:
-      if isGpsMicrosText(t) and not epochLike: return ""
       let whole = parseWhole(t)
       micros = micros and whole.ok and whole.value in 946_684_800_000_000'i64 ..
         4_102_444_800_000_000'i64
@@ -1369,9 +1379,10 @@ proc detectWith(cells: openArray[string]; epochLike: bool): string =
 
 proc detectTimePattern*(cells: openArray[string]): string =
   ## The pattern that reads every non-blank cell of one column, or "" when
-  ## the cells do not decide one. Proposed: seconds or microseconds since 1970
-  ## when every cell is a plain number in 2000..2100 (a column of GPS
-  ## microseconds is not one); a date and a time, as `shapeOf` says, when
+  ## the cells do not decide one. Proposed: seconds since 1970 when every cell
+  ## is a plain number in 2000..2100 (microseconds are not proposed: they may
+  ## be GPS microseconds, and the number cannot tell); a date and a time, as
+  ## `shapeOf` says, when
   ## every cell has the same form and, for a year and a day of year, a day
   ## above 12 is there or every day has three digits. Not proposed: a leading
   ## one or two digit run (dd/mo/yy, mo/dd/yy, yy/mo/dd), a four-digit year
@@ -1584,14 +1595,19 @@ func gpsPlausible(cells: openArray[string]): bool =
         return false
   n > 0
 
-func gpsLike(cells: openArray[string]): bool =
-  ## Every non-empty cell is 16 digits that read as GPS microseconds.
+func microsLike(cells: openArray[string]): bool =
+  ## Every non-empty cell is a whole number that reads as microseconds in
+  ## about 1999..2100 on the GPS clock or since 1970, and there is one: the
+  ## number cannot tell which.
   var n = 0
   for c in cells:
     let t = c.strip
     if t.len > 0:
       inc n
-      if not isGpsMicrosText(t): return false
+      let whole = parseWhole(t)
+      if not (whole.ok and whole.value in 600_000_000_000_000'i64 ..
+          4_102_444_800_000_000'i64):
+        return false
   n > 0
 
 proc timeLike(cells: openArray[string]): bool =
@@ -1690,15 +1706,18 @@ proc guessMap*(text: string): ShotLogMap {.raises: [].} =
   ## header has more names than the rows have columns (names with spaces, in
   ## a file cut at spaces), the names are grouped to fit, and a header that
   ## cannot be fitted names nothing. A name that is not known, and every
-  ## column when there is no header, is judged from the first data rows: a
-  ## 16-digit integer near 1.4e15 is GPSTB, and an ISO date-time is Time
-  ## (UTC). A role whose cells do not read as that role is not assigned, a
-  ## system column found twice is kept once, and the other columns are user
-  ## defined, named by their header. The time columns are read as one time,
-  ## and the pattern that reads the first rows is `dateTimePattern`; when they
-  ## do not read together, the first that reads alone is the time; the others
-  ## are user defined. The clock stays UTC and the
-  ## length unit stays metres unless a header says feet.
+  ## column when there is no header, is judged from the first data rows: an
+  ## ISO date-time is Time (UTC). Whole microseconds are GPSTB only under a
+  ## header that says GPS, and Time (UTC) (`epoch microseconds`) only under
+  ## one that says UTC, Unix, epoch or posix; under any other header, or none,
+  ## the number cannot tell GPS from Unix, so the column is user defined and
+  ## `timeNote` and `shots` ask which it is. A role whose cells do not read
+  ## as that role is not assigned, a system column found twice is kept once,
+  ## and the other columns are user defined, named by their header. Of the
+  ## columns that read as a time, the first whose form the sampled rows
+  ## decide is Time (UTC), its pattern `dateTimePattern` (with none decided,
+  ## the only one, with no pattern); the others are user defined. The clock stays UTC and the length unit stays metres unless a
+  ## header says feet.
   result = initShotLogMap()
   if text.len > high(int32): return
   var phys = 0
@@ -1818,18 +1837,18 @@ proc guessMap*(text: string): ShotLogMap {.raises: [].} =
     if split:
       inc splitNamed
     else:
-      let utcHeader = name.len > 0 and normHeader(name) in ExplicitEpoch
-      var skipTime = false ## the header says GPSTB over cells that are not
-      if role == crGpsMicros:
-        if not gpsPlausible(cells):
-          role = crText
-          skipTime = true
-      elif not utcHeader and role in {crText, crTime} and gpsLike(cells):
-        role = crGpsMicros
-      if role == crText and not skipTime and detectTimePattern(cells).len > 0:
+      let utcName = name.len > 0 and utcHeader(name)
+      var skipTime = false ## the header says GPS over cells that are not GPSTB
+      if role in {crText, crTime, crGpsMicros} and name.len > 0 and gpsHeader(name):
+        role = if gpsPlausible(cells): crGpsMicros else: crText
+        skipTime = role == crText
+      elif role in {crText, crTime} and not utcName and microsLike(cells):
+        role = crText # GPS or Unix microseconds: the user is asked (`timeAsk`)
+        skipTime = true
+      if role == crText and not skipTime and detectWith(cells, utcName).len > 0:
         role = crTime
       if role == crTime:
-        patterns[c] = detectWith(cells, utcHeader)
+        patterns[c] = detectWith(cells, utcName)
         if patterns[c].len > 0: decided.add c
         elif not timeLike(cells): role = crText
         if role == crTime: timeCols.add c
@@ -1930,43 +1949,74 @@ func timeColumn*(map: ShotLogMap): int =
   for col, role in map.roles:
     if role == crTime: return col
 
+proc sampleCells(log: ShotLog; map: ShotLogMap; col: int): seq[string] =
+  ## The cells of column `col` in the first `SampleRows` rows that are not
+  ## blank or a sentinel.
+  let (sentText, sentVal) = sentinelLists(map)
+  for row in 0 ..< min(log.len, SampleRows):
+    let raw = cell(log, row, col)
+    if not isMissing(raw, sentText, sentVal, map.decimalComma): result.add raw
+
+func allPlainNumbers(cells: openArray[string]): bool =
+  ## Every cell is digits with an optional fraction, and there is one.
+  for c in cells:
+    if not plainNumber(c.strip): return false
+  cells.len > 0
+
 proc timePattern*(log: ShotLog; map: ShotLogMap): string {.raises: [].} =
   ## The pattern that reads `map`'s Time (UTC) column: `map.dateTimePattern`,
   ## or, when that is empty, the one the cells of its first rows decide
-  ## (`detectTimePattern`). Empty when there is no Time (UTC) column or the
-  ## cells decide none.
+  ## (`detectTimePattern`; seconds or microseconds since 1970 only when the
+  ## column's header says UTC, Unix, epoch or posix). Empty when there is no
+  ## Time (UTC) column or the cells decide none.
   let col = timeColumn(map)
   result = map.dateTimePattern.strip
   if col >= 0 and result.len == 0 and log != nil:
-    let (sentText, sentVal) = sentinelLists(map)
-    var cells: seq[string] = @[]
-    for row in 0 ..< min(log.len, SampleRows):
-      let raw = cell(log, row, col)
-      if not isMissing(raw, sentText, sentVal, map.decimalComma): cells.add raw
-    result = detectTimePattern(cells)
+    result = detectWith(sampleCells(log, map, col), utcHeader(log.columnName(col)))
+
+proc undecidedWords(log: ShotLog; map: ShotLogMap): string =
+  ## What is said when the Time (UTC) column's form is not decided.
+  let col = timeColumn(map)
+  if log != nil and col >= 0 and allPlainNumbers(sampleCells(log, map, col)):
+    UndecidedNumbers
+  else:
+    UndecidedTime
+
+proc timeAsk(log: ShotLog; map: ShotLogMap): tuple[col: int; text: string] =
+  ## With neither GPSTB nor Time (UTC) chosen: the first user defined column
+  ## that holds a time that is not read, and what to choose, in words.
+  ## (-1, "") when there is none.
+  result = (-1, "")
+  if log == nil: return
+  for col, role in map.roles:
+    if role == crText:
+      let header = log.columnName(col)
+      let name = if header.len > 0: header else: "Column " & $(col + 1)
+      if microsLike(sampleCells(log, map, col)):
+        return (col, "\"" & name & "\" holds microsecond times, GPS or Unix: choose " &
+          "GPSTB or Time (UTC).")
+      if header.len > 0 and (roleOfName(header) in {crTime, crGpsMicros} or
+          gpsHeader(header)):
+        return (col, "\"" & name & "\" looks like a time, but its values are not in a " &
+          "form that is read (GPS seconds are not). Choose Time (UTC) for it and type " &
+          "the pattern, or choose GPSTB.")
 
 proc timeNote*(log: ShotLog; map: ShotLogMap): string {.raises: [].} =
   ## The sentence the Columns dialog shows about the time, true of `map`:
   ## how Time (UTC) is read, that its form could not be decided or its
   ## pattern cannot be used, that the log's time is spread over several
-  ## columns, or that a column that looks like a time is not read. "" when
-  ## there is nothing to say.
+  ## columns, or that a column that looks like a time is not read (numbers
+  ## that may be GPS or Unix microseconds: which to choose). "" when there is
+  ## nothing to say.
   if timeColumn(map) >= 0:
     let fault = patternFault(map.dateTimePattern)
     if fault.len > 0: return fault
     let used = timePattern(log, map)
-    return if used.len > 0: "Time (UTC) is read as " & used else: UndecidedTime
+    return if used.len > 0: "Time (UTC) is read as " & used else: undecidedWords(log, map)
   if crGpsMicros in map.roles: return ""
   if map.timeSplit == tsOld: return SplitTimeOld
   if map.timeSplit == tsFound: return SplitTimeFound
-  if log != nil:
-    for col, role in map.roles:
-      if role in {crText, crIgnored}:
-        let name = log.columnName(col)
-        if name.len > 0 and roleOfName(name) in {crTime, crGpsMicros}:
-          return "\"" & name & "\" looks like a time, but its values are not in a form " &
-            "that is read (GPS seconds are not). Choose Time (UTC) for it and type " &
-            "the pattern, or choose GPSTB."
+  timeAsk(log, map).text
 
 proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
   ## Typed rows. The instant is the first source that parsed, in this order:
@@ -1994,12 +2044,15 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
   var top = ProblemList()
   if timeCol >= 0:
     if pat.text.len == 0:
-      addProblem(top, pkNoTime, -1, timeCol, UndecidedTime)
+      addProblem(top, pkNoTime, -1, timeCol, undecidedWords(log, map))
     elif pat.fault.len > 0:
       addProblem(top, pkNoTime, -1, timeCol, "Time (UTC) cannot be read: " & pat.fault)
   elif crGpsMicros notin map.roles and map.timeSplit != tsNone:
     addProblem(top, pkNoTime, -1, -1,
       if map.timeSplit == tsOld: SplitTimeOld else: SplitTimeFound)
+  elif crGpsMicros notin map.roles:
+    let ask = timeAsk(log, map)
+    if ask.col >= 0: addProblem(top, pkNoTime, -1, ask.col, ask.text)
   for p in log.problems.items: addProblem(top, p.kind, p.row, p.col, p.text)
   top.count += log.problems.count - log.problems.items.len
   result.problems = top

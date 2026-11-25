@@ -36,6 +36,10 @@
 ## `guessRules` found no `tsFound`; with the digits of a field not capped
 ## (the first mutation the reviewer made), `eachTimeSource` read
 ## 20240301000000 into the wrong fields.
+##
+## Seen to fail on the earlier guess: with 16 digits under Time taken as
+## GPSTB, `microsAsked` read Unix microseconds of 2023 as 2033 and asked
+## nothing, and `noHeaderAndGuess` guessed GPSTB with no header at all.
 
 import std/[math, options, os, strutils, times]
 import viewSEG/core/shotlog
@@ -152,14 +156,19 @@ proc main*() =
     doAssert manual.rows[0].x == 3.0 and manual.rows[0].y == 4.0
 
   block noHeaderAndGuess:
+    # no header says GPS: the 16 digits are not guessed, and the user is asked
     let text = $GpsMarch & ",2024,1.5\n" & $(GpsMarch + 10_000_000) & ",2024,2.5\n"
     let g = guessMap(text)
     doAssert not g.hasHeader and g.delimiter == dlComma
-    doAssert g.roles[0] == crGpsMicros and g.roles[1] == crText
-    doAssert g.roles[2] == crText
+    doAssert g.roles == @[crText, crText, crText]
     let v = shots(parseShotLog(text, g), g)
-    doAssert v.rows[0].timeUtcUs.get == UtcMarch
-    doAssert v.rows[0].texts == @["2024", "1.5"]
+    doAssert v.rows[0].timeUtcUs.isNone
+    doAssert v.rows[0].texts == @[$GpsMarch, "2024", "1.5"]
+    doAssert v.problems.items[0].text == "\"Column 1\" holds microsecond times, GPS or " &
+      "Unix: choose GPSTB or Time (UTC)."
+    var chosen = g
+    chosen.roles[0] = crGpsMicros
+    doAssert shots(parseShotLog(text, chosen), chosen).rows[0].timeUtcUs.get == UtcMarch
 
   block eachTimeSource:
     doAssert toPosixSeconds(UtcMarch) == 1_709_251_200.0
@@ -167,8 +176,9 @@ proc main*() =
     doAssert gpsMicrosToUtcMicros(GpsMarch) == UtcMarch
     let gps = read($GpsMarch & "\n", [crGpsMicros], header = false)
     doAssert gps.rows[0].timeUtcUs.get == UtcMarch
-    doAssert detectTimePattern([$UtcMarch]) == EpochMicros
-    doAssert timeOf($UtcMarch & "\n").rows[0].timeUtcUs.get == UtcMarch
+    doAssert detectTimePattern([$UtcMarch]) == ""
+    doAssert timeOf($UtcMarch & "\n").rows[0].timeUtcUs.isNone
+    doAssert timeOf($UtcMarch & "\n", EpochMicros).rows[0].timeUtcUs.get == UtcMarch
     doAssert timeOf("1709251200\n").rows[0].timeUtcUs.get == UtcMarch
     doAssert detectTimePattern(["1709251200"]) == EpochSeconds
     let frac = timeOf("1709251200.005\n")
@@ -569,8 +579,8 @@ proc main*() =
     doAssert kindText(word.problems, pkBadNumber) == "SourcePoint 'abc' is not a number"
 
   block guessRules:
-    # a column of GPS microseconds is GPSTB whatever its header says, and reads right
-    for header in ["Time", "Timestamp", "Date Time", "TB", "GPS Time Break"]:
+    # a column of GPS microseconds is GPSTB when its header says GPS, and reads right
+    for header in ["GPSTB", "GPS TB", "GPS time", "TB", "GPS Time Break", "Time break"]:
       let text = "FFID," & header & "\n1,1393249473000000\n2,1393249483000000\n"
       let g = guessMap(text)
       doAssert g.roles == @[crFileNumber, crGpsMicros], header
@@ -647,6 +657,51 @@ proc main*() =
       $GpsMarch & "\n", withGps), withGps)
     doAssert gv.rows[0].timeUtcUs.get == UtcMarch and gv.problems.count == 0
     doAssert timeNote(splitLog, withGps) == ""
+
+  block microsAsked:
+    # 16 digits are GPS or Unix microseconds, and the number cannot tell which: under a
+    # header that says neither nothing is read until the user chooses
+    let unix = 1_690_000_000_000_000'i64 ## 2023-07-22 04:26:40 UTC
+    for header in ["Time", "Timestamp", "Date Time", "Counter"]:
+      let text = "FFID," & header & "\n1," & $unix & "\n2," & $(unix + 10_000_000) & "\n"
+      let g = guessMap(text)
+      doAssert g.roles == @[crFileNumber, crText], header
+      doAssert g.dateTimePattern == "", header
+      let log = parseShotLog(text, g)
+      let ask = "\"" & header & "\" holds microsecond times, GPS or Unix: choose GPSTB or " &
+        "Time (UTC)."
+      doAssert timeNote(log, g) == ask, header
+      let v = shots(log, g)
+      doAssert v.rows[0].timeUtcUs.isNone and v.rows[1].timeUtcUs.isNone, header
+      doAssert v.problems.count == 1 and v.problems.items[0].kind == pkNoTime, header
+      doAssert v.problems.items[0].text == ask and v.problems.items[0].row == -1, header
+      # chosen as GPSTB it is GPS; chosen as Time (UTC) the pattern is typed
+      var gps = g
+      gps.roles[1] = crGpsMicros
+      let gv = shots(log, gps)
+      doAssert gv.rows[0].timeUtcUs.get == gpsMicrosToUtcMicros(unix), header
+      doAssert gv.problems.count == 0, header
+      var utc = g
+      utc.roles[1] = crTime
+      let undecided = shots(log, utc)
+      doAssert undecided.rows[0].timeUtcUs.isNone, header
+      doAssert undecided.problems.items[0].text == UndecidedNumbers, header
+      doAssert timeNote(log, utc) == UndecidedNumbers, header
+      utc.dateTimePattern = EpochMicros
+      doAssert shots(log, utc).rows[0].timeUtcUs.get == unix, header
+    # a header that says UTC, Unix, epoch or posix: epoch microseconds
+    for header in ["UTC microseconds", "Unix time us", "Epoch", "Time (UTC)", "posix",
+        "Shot time UTC"]:
+      let text = "FFID," & header & "\n1," & $unix & "\n"
+      let g = guessMap(text)
+      doAssert g.roles == @[crFileNumber, crTime] and g.dateTimePattern == EpochMicros, header
+      doAssert shots(parseShotLog(text, g), g).rows[0].timeUtcUs.get == unix, header
+    # with a time chosen elsewhere nothing is asked
+    let other = "FFID,GPSTB,Counter\n1," & $GpsMarch & "," & $unix & "\n"
+    let og = guessMap(other)
+    doAssert og.roles == @[crFileNumber, crGpsMicros, crText]
+    doAssert shots(parseShotLog(other, og), og).problems.count == 0
+    doAssert timeNote(parseShotLog(other, og), og) == ""
 
   block spacesInHeader:
     # the header names hold spaces, so a header cut at spaces has more fields
