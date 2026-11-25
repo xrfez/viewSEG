@@ -350,10 +350,14 @@ with two O records is checked against the sources of both at once: the record nu
 does not choose between them. A station is its line and point. Traces of one receiver
 point with index 0, 1 or 2 are one receiver, and a shot's source at index 2 is the source
 the survey has at index 1; the index makes two receivers (or two sources) only where the
-survey has the point at two indices. A station a relation record calls for at two indices
+survey has the point at two indices; there a header index that is neither leaves the record
+unmatched, and the reason says so. A station a relation record calls for at two indices
 counts once, and is there when the data holds a trace at its point, whatever the trace's
 index; two traces of one component at one point are that station recorded twice, whatever
 their indices. The Records window, the map's filters and template box count the same way.
+While the O records are being worked out from the X records the map's filters say so; if
+that is cancelled or fails, the cells say why, and **Retry** (or opening a file) works them
+out again.
 A record is never matched to the survey by its record (file) number alone: one whose trace
 headers hold no source station (no receiver station, for a receiver gather) is not checked
 and is listed under **Unmatched**.

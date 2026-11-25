@@ -18,7 +18,7 @@
 ##   (`calledSources`), found by `receiverRecords`; where the survey has the
 ##   receiver's point at several indices the data's index must say which.
 
-import std/[math, sets, tables]
+import std/[algorithm, math, sets, tables]
 import parseSEG
 import processSEG/qc/record
 import processSEG/survey/relwalk
@@ -35,6 +35,18 @@ const
   NoORecord* = "no O record matches this receiver"
   UnknownIndex* = "the trace headers give no receiver index (0) and the survey has this " &
     "point at several indices"
+
+func indexNamesNone*(side: string; index: int16; indices: openArray[int16]): string =
+  ## Why a gather is unmatched when its headers give its station (`side`: "source",
+  ## "receiver") an `index` that is none of the `indices` the survey has the point at.
+  var sorted = @indices
+  sorted.sort
+  result = "the trace headers give " & side & " index " & $index &
+    " and the survey has this point at indices "
+  for i, x in sorted:
+    if i > 0: result.add(if i == sorted.high: " and " else: ", ")
+    result.add $x
+  result.add " only: the index names " & (if sorted.len == 2: "neither" else: "none of them")
 
 func wholeRecord*(f: float64): int64 =
   ## The record number `f`, or −1 when it is not a whole number.
@@ -177,7 +189,12 @@ proc shotCheck*(g: SurveyGeometry; rows: TraceRows; ctx: JobContext; traceMatch 
   let src = result.c.source
   if result.c.hasSource and src.index != 0 and result.c.candidates.len == 0:
     let all = g.recordsAt(stationKey(src.line, src.point, 0))
-    if all.len > 0 and g.fixedIndices(all, rdSource).len == 1:
+    let indices = g.fixedIndices(all, rdSource)
+    if indices.len > 1:
+      # The point is at several indices, and the headers' is none of them.
+      result.why = indexNamesNone("source", src.index, indices)
+      return
+    if indices.len == 1:
       # The X records at the source's point are at another index, and only there: theirs.
       keys = newSeq[TraceKeys](rows.len)
       for i in 0 ..< keys.len:
@@ -252,16 +269,17 @@ proc receiverRecords*(g: SurveyGeometry; rcv: StationKey):
   ## indices; there the records of `rcv`'s index are the receiver's, and where `rcv` names
   ## none (0) they are not told, and `why` says so. `why` is empty when they are.
   let all = g.recordsAt(stationKey(rcv.line, rcv.point, 0), rdReceiver)
+  let indices = g.fixedIndices(all, rdReceiver)
   if all.len == 0:
     result.why = NoORecord
-  elif g.fixedIndices(all, rdReceiver).len <= 1:
+  elif indices.len <= 1:
     result.records = all
   elif rcv.index == 0:
     result.why = UnknownIndex
   else:
     for rec in all:
       if g.fixedIndices([rec], rdReceiver) == @[rcv.index]: result.records.add rec
-    if result.records.len == 0: result.why = NoORecord
+    if result.records.len == 0: result.why = indexNamesNone("receiver", rcv.index, indices)
 
 type Plan* = Table[(float64, float64), set[int16]]
   ## the stations a record plans, by line and point: their indices

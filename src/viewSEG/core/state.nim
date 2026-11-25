@@ -1169,6 +1169,9 @@ type
     source: ref SurveyGeometry    ## the X records derived from (held: its identity)
     relations: ref SurveyGeometry ## the derived O records; nil while none are
     job: JobId = NoJob            ## the job deriving them
+    failed: string
+      ## why the job ended without them (cancelled, or its error); "" when it did not. Not
+      ## derived again until the user asks (`retry` of `derivedFor`)
 
   AppState* = object
     ## Everything the views show. Move-only.
@@ -6325,13 +6328,15 @@ proc pruneDerived(state: var AppState) =
       d.entries.delete k
     else: inc k
 
-proc derivedFor(state: var AppState; source: ref SurveyGeometry; ready: var bool):
-    ref SurveyGeometry =
+proc derivedFor(state: var AppState; source: ref SurveyGeometry; ready: var bool;
+    retry = false): ref SurveyGeometry =
   ## The O records derived from the X records of `source` (the survey's X file,
   ## `surveyXSource`, or a join's own geometry), made on a job once for it
   ## (`state.derived`, found by the identity of `source`; one no longer wanted is
   ## dropped); nil for no `source`. `ready` false while the job runs: the check waits
-  ## for it (`takeDerived`).
+  ## for it (`takeDerived`). A job that ended without them (cancelled, failed) is not
+  ## started again but with `retry` (the user asking: a file opened, Retry); `ready` is
+  ## false then too, and the cells keep the note why.
   ready = true
   if source.isNil: return nil
   template d: untyped = state.derived
@@ -6344,21 +6349,29 @@ proc derivedFor(state: var AppState; source: ref SurveyGeometry; ready: var bool
     at = d.entries.high
   if not d.entries[at].relations.isNil: return d.entries[at].relations
   ready = false
-  if d.entries[at].job != NoJob: return nil
+  if retry: d.entries[at].failed = ""
+  if d.entries[at].job != NoJob or d.entries[at].failed.len > 0: return nil
   inc d.runs
   d.entries[at].job = state.jobs.submit(JobSpec(title: "Derive the receivers' shots from " &
     "the X records", lane: jlBackground, auto: true), deriveReceiversWork(addr source[],
     state.inbox.poster))
   state.checking.add (d.entries[at].job, source)
 
-proc surveyReceivers(state: var AppState; ready: var bool): ref SurveyGeometry =
+proc surveyReceivers(state: var AppState; ready: var bool; retry = false): ref SurveyGeometry =
   ## The O records the survey's receiver gathers are checked against: the first loaded
   ## file's with O records, else those derived from its X file (`derivedFor`; `ready`
   ## false while they are made); nil for none.
   ready = true
   let o = state.survey.listedLayer(rdReceiver)
   if o >= 0: state.survey.layers[o].relations
-  else: state.derivedFor(state.surveyXSource, ready)
+  else: state.derivedFor(state.surveyXSource, ready, retry)
+
+func derivedFailed(state: AppState): string =
+  ## Why the survey's derivation of the O records ended without them; "" when it did not.
+  let x = state.surveyXSource
+  if not x.isNil:
+    for e in state.derived.entries:
+      if e.source == x: return e.failed
 
 func derivedReceivers*(state: AppState): ref SurveyGeometry =
   ## The O records derived from the survey's X file (`relationLayer`), when no loaded file
@@ -6377,11 +6390,12 @@ func madeRelations*(state: AppState; domain: RelationDomain): ref SurveyGeometry
   result = if domain == rdReceiver: state.derivedReceivers else: nil
   if result.isNil: result = state.spreads.relations
 
-proc checkRecords(state: var AppState; s: Session) =
+proc checkRecords(state: var AppState; s: Session; retry = false) =
   ## Checks the records of open file `s` on a job (the Records window's
   ## planned and missing stations): against the survey it was joined with
   ## when that has relation records, else against the loaded relation file;
-  ## or clears the check when there is neither.
+  ## or clears the check when there is neither. `retry`: the user asks, and O records
+  ## whose derivation ended without them are derived again (`derivedFor`).
   if s.noSeismic:
     s.setChecks("", [], []) # nothing of it is on a survey's stations
     return
@@ -6401,8 +6415,8 @@ proc checkRecords(state: var AppState; s: Session) =
     if wantsReceivers and g[].relationCount(rdReceiver) == 0:
       # a loaded survey file's X records are the survey's: its O records, or the ones derived
       # from its X file; a join's own geometry is derived from itself alone
-      orel = if state.isSurveyFile(g): state.surveyReceivers(ready)
-             else: state.derivedFor(g, ready)
+      orel = if state.isSurveyFile(g): state.surveyReceivers(ready, retry)
+             else: state.derivedFor(g, ready, retry)
     if not ready: return
     let job = state.jobs.submit(JobSpec(title: "Check the records of " & s.name &
       " against the survey imported", lane: jlBackground, auto: true, reads: @[s.path]), checkWork(
@@ -6423,7 +6437,7 @@ proc checkRecords(state: var AppState; s: Session) =
   var orel: ref SurveyGeometry = nil
   if l.relations[].relationCount(rdReceiver) == 0 and
       (wantsReceivers or state.survey.listedLayer(rdReceiver) >= 0):
-    orel = state.surveyReceivers(ready)
+    orel = state.surveyReceivers(ready, retry)
   if not ready: return
   # The job reads the layer's relations where they are (a copy of a large X
   # file's took a frame per file opened); they are kept until it ends, also
@@ -6434,6 +6448,15 @@ proc checkRecords(state: var AppState; s: Session) =
     (if orel.isNil: nil else: addr orel[])))
   state.checking.add (job, l.relations)
   if not orel.isNil: state.checking.add (job, orel)
+
+proc retryDerived(state: var AppState) =
+  ## The user asks again (Retry): O records whose derivation ended without them are
+  ## derived again, and the records waiting for them checked.
+  var failed = false
+  for e in state.derived.entries:
+    if e.failed.len > 0: failed = true
+  if failed:
+    for s in state.sessions: state.checkRecords(s, retry = true)
 
 proc takeDerived(state: var AppState; m: sink Msg) =
   ## The O records derived for the check: kept for their source, and every open file's
@@ -7017,7 +7040,7 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
     state.enqueueMoves(id)
   if not state.sessions[^1].isSignature: # (a signature file has no place on the map)
     state.readPositions(state.sessions[^1])
-  if state.checkLayer >= 0: state.checkRecords(state.sessions[^1])
+  if state.checkLayer >= 0: state.checkRecords(state.sessions[^1], retry = true)
   state.watchOpen()
   let k = state.findPanel(panel)
   if holdOpen and state.correlateOn:
@@ -9516,6 +9539,16 @@ func filterHits*(state: AppState): array[MapFilter, FilterHits] =
   for f in TraceFilters * on: result[f] = state.recordQc.hits[f]
   let g = state.selection.activeGather
   let i = state.findSession(g.file)
+  if state.shownDomain == rdReceiver and state.qcRelations(rdReceiver)[0].isNil and
+      not state.surveyXSource.isNil:
+    # The O records are being derived from the X records (or that ended without them).
+    let why = state.derivedFailed
+    for f in [mfMissing, mfUnlisted, mfDuplicate]:
+      if f in on:
+        result[f] = if why.len > 0: FilterHits(state: fsNotChecked,
+                      note: "not checked: the O records were not derived (" & why & ")")
+                    else: FilterHits(state: fsComputing,
+                      note: "the receivers' shots are being derived from the X records")
   if i >= 0 and state.sessions[i].isSignature:
     for f in SignatureNoFilters * on:
       result[f] = FilterHits(state: fsDone, note: "does not apply to a signature file")
@@ -10116,8 +10149,9 @@ proc onFinished(state: var AppState; job: JobInfo) =
     if e.job == job.id:
       e.job = NoJob
       if e.relations.isNil and job.state in {jsCancelled, jsFailed}:
-        # the cells say so; the next open tries again
+        # the cells say so; not derived again until the user asks (a file opened, Retry)
         let why = if job.state == jsCancelled: "cancelled" else: job.error
+        e.failed = why
         for s in state.sessions:
           var receivers = false
           for r in s.records:
@@ -13074,7 +13108,9 @@ proc applyCommand(state: var AppState; cmd: Command) =
     else:
       let k = state.findPanel(cmd.panel)
       if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
-      else: state.retry(k)
+      else:
+        state.retry(k)
+        state.retryDerived()
   of ckStopReading:
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")

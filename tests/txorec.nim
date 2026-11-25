@@ -29,9 +29,12 @@
 ## gather at index 2 unmatched in the Records window (its O records found by index).
 ## `oneDerivation` rejected the map making O records of its own from the X file, beside the
 ## ones the Records window is checked against; `oFileLoadedAfterX` the derived O records
-## kept once an O file was loaded.
+## kept once an O file was loaded. `derivationCancelled` rejected the filters saying "no
+## relation file is loaded" while the O records were derived, and a cancelled derivation
+## started again on its own (run twice, its note gone); `indexNamesNone` the reason "X
+## record 21, matched by file number alone, belongs to another source".
 
-import std/[os, strutils]
+import std/[atomics, os, strutils]
 import parseSEG
 import processSEG/qc/record
 import viewSEG/core/[jobs, join, missingjobs, missingreport, recordqc, relationcheck, session,
@@ -93,6 +96,24 @@ proc open(st: var AppState; surveys: seq[string]; data: string) =
   st.apply Command(kind: ckShowFile, panel: MainPanel, path: data)
   doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut and
     st.jobs.active.len == 0)
+
+var
+  holdDerive: Gate
+  deriveHeld: Gate
+
+proc deriveHook(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
+  ## Holds the derivation of the O records at its phase, so it can be cancelled running.
+  discard id
+  if phase != "deriving the receivers' shots" or back: return
+  deriveHeld.store(true)
+  var n = 0
+  while not holdDerive.load and n < 30000:
+    sleep 1
+    inc n
+
+func deriveJobs(st: AppState): int =
+  for j in st.jobs.active:
+    if j.spec.title == "Derive the receivers' shots from the X records": inc result
 
 func filtersDone(st: AppState): bool =
   st.recordQc.job == NoJob and st.recordQc.hits[mfMissing].state in {fsDone, fsNotChecked}
@@ -331,6 +352,85 @@ proc main*() =
       $st.shownSpread.stations & " / " & $hover.stations & " / " & st.filterHits[mfMissing].note
     doAssert row.plannedMissing == st.filterHits[mfMissing].count
     st.shutdown()
+
+  block derivationCancelled:
+    # X records only, the template box and the "missing" filter on, a receiver gather shown:
+    # while the O records are derived the filters say so; the derivation cancelled is not
+    # started again on its own (the cells' note stays), and Retry starts it again.
+    var st = initAppState()
+    var set = st.settings
+    set.map.templateBox = true
+    set.map.filters = {mfMissing, mfUnlisted, mfDuplicate}
+    st.apply Command(kind: ckSettings, settings: set)
+    st.apply Command(kind: ckLoadSurvey, paths: @[xs])
+    doAssert st.settle(st.survey.layers.len == 1 and st.jobs.active.len == 0)
+    holdDerive.store(false)
+    deriveHeld.store(false)
+    setJobHook(deriveHook)
+    try:
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: rcv)
+      doAssert st.settle(deriveHeld.load), "no derivation ran"
+      doAssert st.settle(st.sessions.len == 1 and st.filtersDone)
+      let waiting = st.filterHits[mfMissing]
+      doAssert waiting.state == fsComputing and "being derived" in waiting.note,
+        $waiting.state & ": " & waiting.note
+      var running = NoJob
+      for j in st.jobs.active:
+        if j.spec.title == "Derive the receivers' shots from the X records": running = j.id
+      doAssert running != NoJob
+      st.apply Command(kind: ckCancelJob, job: running)
+      holdDerive.store(true)
+      doAssert st.settle(st.deriveJobs == 0 and st.sessions[0].checkNote.len > 0)
+      let runs = st.derivedRuns
+      for _ in 0 ..< 20:
+        discard st.drainInbox()
+        doAssert st.deriveJobs == 0, "derived again on its own"
+        sleep 5
+      doAssert st.derivedRuns == runs and "cancelled" in st.sessions[0].checkNote,
+        $st.derivedRuns & ": " & st.sessions[0].checkNote
+      doAssert st.filterHits[mfMissing].state == fsNotChecked and
+        "cancelled" in st.filterHits[mfMissing].note, st.filterHits[mfMissing].note
+      # the user asks again
+      st.apply Command(kind: ckRetry, panel: MainPanel)
+      doAssert st.derivedRuns == runs + 1
+      doAssert st.settle(st.jobs.active.len == 0 and st.sessions[0].records[0].planned == 4 and
+        st.filtersDone), $st.sessions[0].records[0].planned
+      doAssert st.sessions[0].checkNote.len == 0 and st.filterHits[mfMissing].count == 1
+    finally:
+      holdDerive.store(true)
+      setJobHook(nil)
+    st.shutdown()
+
+  block indexNamesNone:
+    # The survey has source point 1/12 at indices 2 and 3; the headers say index 1 (and the
+    # FFID is X record 21's): unmatched, the reason the index, not a record number.
+    let two = dir / "twoidx.x"
+    var a = xRecord(21, 12, 1, 3)
+    a.srcIndex = 2
+    var b = xRecord(22, 12, 1, 3)
+    b.srcIndex = 3
+    surveyFile(two, @[a, b])
+    let shot = dir / "idx1.sgd"
+    dataFile(shot, 21, [(12.0, 1.0), (12.0, 2.0), (12.0, 3.0)])
+    var g = SurveyGeometry()
+    g.addSps(parseSps(readFile(two)), rdSource)
+    var f = openSeismic(shot, keys = true)
+    let (_, why) = g.shotCheck(f.rowsOf(0 ..< f.len), JobContext())
+    doAssert why == "the trace headers give source index 1 and the survey has this point " &
+      "at indices 2 and 3 only: the index names neither", why
+    # the same for a receiver: receiver 10/4's O records at indices 2 and 3, the headers' 1
+    var o = SurveyGeometry()
+    o.addSps(SpsFile(relations: @[oRecord(5, 4, 5, 6), oRecord(6, 4, 7, 8)]), rdReceiver)
+    var p = SurveyGeometry()
+    var atTwo = oRecord(5, 4, 5, 6)
+    atTwo.srcIndex = 2
+    var atThree = oRecord(6, 4, 7, 8)
+    atThree.srcIndex = 3
+    p.addSps(SpsFile(relations: @[atTwo, atThree]), rdReceiver)
+    doAssert o.receiverRecords(stationKey(10, 4, 2)).records.len == 2, "one index: both"
+    let r = p.receiverRecords(stationKey(10, 4, 1))
+    doAssert r.records.len == 0 and r.why == "the trace headers give receiver index 1 and " &
+      "the survey has this point at indices 2 and 3 only: the index names neither", r.why
 
   block oRecordsOnly:
     # Only an O file loaded: its receiver gathers are checked against it; its shots have
