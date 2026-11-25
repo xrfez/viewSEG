@@ -70,8 +70,8 @@ proc everyFieldSet(): Settings =
       "trace.sourceX"], tableScope: tsFile),
     shotLog: ShotLogView(followPlot: true), cutGather: CutGatherView(recordMs: 2500.5),
     output: OutputView(segyRevision: orSegy1, segdRevision: orSegd31),
-    missing: MissingView(folder: "/jobs/line 7", subfolders: true),
-    quality: QualityView(folder: "/jobs/line 8", subfolders: true),
+    missing: MissingView(folder: "/jobs/line 7", subfolders: true, untold: ukReceiver),
+    quality: QualityView(folder: "/jobs/line 8", subfolders: true, untold: ukShot),
     hideKilled: true,
     spectrum: SpectrumOptions(window: SpectrumDisplay(scale: ssLinear, logFrequency: true,
       time: stVisible, raw: false, processed: false, response: false, phase: true,
@@ -275,6 +275,9 @@ proc main*() =
     top.missing.subfolders = true
     let back = roundTrip(top)[0].missing
     doAssert back.folder == "/jobs/line 7" and back.subfolders, "round trip"
+    top.missing.untold = ukShot
+    doAssert roundTrip(top)[0].missing.untold == ukShot, "the choice for files not told"
+    doAssert old.missing.untold == ukNotChecked
 
   block qualityFolderRemembered:
     ## Seen to fail: with the folder not written, the remembered folder read back as "".
@@ -288,6 +291,9 @@ proc main*() =
     top.quality.subfolders = true
     let back = roundTrip(top)[0].quality
     doAssert back.folder == "/jobs/line 8" and back.subfolders, "round trip"
+    top.quality.untold = ukReceiver
+    doAssert roundTrip(top)[0].quality.untold == ukReceiver, "the choice for files not told"
+    doAssert old.quality.untold == ukNotChecked
 
   block outputRevisionRemembered:
     ## Seen to fail: with the SEG-D choice not written, a remembered Rev 3.1

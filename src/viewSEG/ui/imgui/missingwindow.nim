@@ -44,7 +44,6 @@ type
   MissingUi* = object
     file, folder: Scan
     tab: MissingTab
-    side: StationSide
     runAsked: bool
     wantFile: string ## the File tab's key for the file shown now; "" for none
     chosen: string
@@ -309,12 +308,6 @@ proc finish(ui: var MissingUi; s: var Scan; state: JobState; error: string) =
   s.status = Ready
   ui.sortDirty = true
   ui.shownKey = ""
-  if ui.side == ssReceivers and s.result.shot.stats.records == 0 and
-      s.result.receiver.stats.records > 0:
-    ui.side = ssSources
-  elif ui.side == ssSources and s.result.receiver.stats.records == 0 and
-      s.result.shot.stats.records > 0:
-    ui.side = ssReceivers
 
 proc poll(ui: var MissingUi; s: var Scan; st: AppState) =
   if s.job == NoJob: return
@@ -353,7 +346,7 @@ proc submitFolder(ui: var MissingUi; st: AppState; key: string) =
   ui.folder.job = st.jobs.submit(missingSpec(folder, @[folder]),
     folderScan(folder, st.settings.missing.subfolders, st.indexCache,
       st.survey.layers[layer].relations, ui.folder.sink, ui.folder.note, st.forcedKinds,
-      receivers, derived))
+      receivers, derived, st.settings.missing.untold))
 
 proc startFile(ui: var MissingUi; st: AppState) =
   ## Called while the File tab is on screen: starts the computation for the file shown, after
@@ -382,7 +375,8 @@ proc consider(ui: var MissingUi; st: AppState) =
   ui.wantFile = if survey.len > 0 and path.len > 0: path & "|" & survey else: ""
   let folder = st.settings.missing.folder
   let folderKey = if survey.len > 0 and folder.len > 0:
-    folder & "|" & $st.settings.missing.subfolders & "|" & survey else: ""
+    folder & "|" & $st.settings.missing.subfolders & "|" & $st.settings.missing.untold & "|" &
+      survey else: ""
   if ui.folder.key.len > 0 and ui.folder.key != folderKey:
     ui.folder.cancel(st)
     ui.shownKey = ""
@@ -519,6 +513,11 @@ proc drawScan(ui: var MissingUi; st: AppState; folderTab: bool; marks: var Marks
   var status = ""
   if s.capped: status = CappedNote
   if status.len > 0: igTextUnformatted(status.cstring, nil)
+  if r.taken.len > 0 and r.mixed.len == 0:
+    igPushTextWrapPos(0)
+    igTextUnformatted(r.taken.cstring, nil)
+    igPopTextWrapPos()
+    marks.mark("missing.message " & r.taken)
   if r.mixed.len > 0:
     igPushTextWrapPos(0)
     igTextUnformatted(r.mixed.cstring, nil)
@@ -534,10 +533,11 @@ proc drawScan(ui: var MissingUi; st: AppState; folderTab: bool; marks: var Marks
     discard
   elif r.shot.stats.records == 0 and r.receiver.stats.records == 0:
     if not (r.notChecked.len > 0 and not folderTab):
+      let note = if r.notChecked.len > 0: nothingChecked(r.notChecked.len) else: NoTemplateRecord
       igPushTextWrapPos(0)
-      igTextUnformatted(NoTemplateRecord.cstring, nil)
+      igTextUnformatted(note.cstring, nil)
       igPopTextWrapPos()
-      marks.mark("missing.message " & NoTemplateRecord)
+      marks.mark("missing.message " & note)
   else:
     let side = if r.shot.stats.records > 0: r.shot else: r.receiver
     marks.mark("missing.sort " & sortText(ui.sort))
@@ -616,6 +616,16 @@ proc drawFolderControls(ui: var MissingUi; st: AppState; marks: var Marks;
   if igButton(RunButton.cstring, ImVec2_c(x: 0, y: 0)): ui.runAsked = true
   igEndDisabled()
   marks.mark("missing.run")
+  igTextUnformatted(UntoldLabel.cstring, nil)
+  for choice in UntoldKind:
+    igSameLine(0, -1)
+    if igRadioButton_Bool((UntoldNames[choice] & "##untold" & $ord(choice)).cstring,
+        st.settings.missing.untold == choice) and ui.focus.acts:
+      var s = st.settings
+      s.missing.untold = choice
+      out0.commands.add Command(kind: ckSettings, settings: s)
+    marks.mark("missing.untold " & UntoldNames[choice])
+  tip(UntoldTip)
 
 proc drawMissing*(ui: var MissingUi; title: string; st: AppState; marks: var Marks): MissingOutput =
   ## The window titled `title`. Closing it cancels what runs.

@@ -181,15 +181,24 @@ type
     ## What the Slice by shot log window offers again.
     recordMs*: float64 = DefaultRecordMs ## the record length, in ms
 
+  UntoldKind* = enum
+    ## What a report takes the files of a folder whose kind cannot be told (one receiver and
+    ## one source) for.
+    ukNotChecked ## left out, unless every file that is told is of one side
+    ukShot ## shot gathers
+    ukReceiver ## receiver gathers
+
   MissingView* = object
     ## What the Missing traces window offers again.
-    folder*: string   ## the folder its Folder tab checks; "" for none chosen
-    subfolders*: bool ## the Folder tab also checks the folders inside it; off until ticked
+    folder*: string     ## the folder its Folder tab checks; "" for none chosen
+    subfolders*: bool   ## the Folder tab also checks the folders inside it; off until ticked
+    untold*: UntoldKind ## what the files whose kind cannot be told are taken for
 
   QualityView* = object
     ## What the Trace quality window offers again.
-    folder*: string   ## the folder its Folder tab measures; "" for none chosen
-    subfolders*: bool ## the Folder tab also measures the folders inside it; off until ticked
+    folder*: string     ## the folder its Folder tab measures; "" for none chosen
+    subfolders*: bool   ## the Folder tab also measures the folders inside it; off until ticked
+    untold*: UntoldKind ## what the files whose kind cannot be told are taken for
 
   OutputView* = object
     ## What the Output window offers again.

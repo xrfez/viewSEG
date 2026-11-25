@@ -724,8 +724,10 @@ proc main*() =
     let both = dir / "index-1-2.sgd"
     indexFile(both, [(src: 1.0, index: 1), (src: 2.0, index: 1), (src: 4.0, index: 2),
       (src: 5.0, index: 0)])
-    # (the receiver index tells the file's traces apart as receivers: set as a receiver gather)
-    r = run(dir, @[both], split, forced = @[both].forcing(rkReceiverSliced)).sink.result
+    # (one receiver point whose index varies is one receiver, told a receiver gather: a
+    # station is its line and point. Seen to fail with the index in the place compared:
+    # the file read as a shot gather and no receiver was checked.)
+    r = run(dir, @[both], split).sink.result
     t = r.receiver.stats
     doAssert t.records == 2 and t.inTemplate == 6 and t.found == 3 and t.missing == 3, $t
     doAssert t.expectedInRecords == 6 and t.missingInRecords == 3, $t

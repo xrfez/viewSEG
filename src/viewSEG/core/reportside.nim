@@ -13,9 +13,9 @@
 ## the user to set. A folder (or list) holding both shot and receiver gathers is not
 ## calculated (`SideCounts`).
 
-import std/[math, options]
+import std/[math, options, os]
 import parseSEG
-import correlatejobs, jobs, recordingkind, relationside, session, vendormaps
+import correlatejobs, jobs, recordingkind, relationside, session, settings, vendormaps
 
 type
   ReportSide* = enum
@@ -79,6 +79,28 @@ func mixedNote*(c: SideCounts): string =
     result.add " and " & countText(c.untold, " could not be told", " could not be told")
   result.add ". Set the kind of each file in the Files window (right-click the file) " &
     "so that they are all shot gathers or all receiver gathers."
+
+func unanimousSide*(c: SideCounts): ReportSide =
+  ## The side every file whose kind is told is on, when they are all on one; `rsCannotTell`
+  ## when none is told or both sides are (a mix, not a vote).
+  if c.shots > 0 and c.receivers == 0: rsShot
+  elif c.receivers > 0 and c.shots == 0: rsReceiver
+  else: rsCannotTell
+
+func takenNote*(n: int; side: ReportSide; chosen: bool): string =
+  ## What the report says of `n` files that cannot be told and were taken for `side`: as the
+  ## user chose, or like the others in the folder; "" for none.
+  if n == 0 or side notin {rsShot, rsReceiver}: return ""
+  let kind = if side == rsShot: "shot" else: "receiver"
+  $n & (if n == 1: " file of one receiver and one source is" else:
+    " files of one receiver and one source are") & " taken as " & kind & " gathers" &
+    (if chosen: ", as chosen." else: ", like the others in the folder.")
+
+proc forcedPath*(path: string): string =
+  ## `path` as the kinds set in the Files window are keyed (`state.forcedKinds`): absolute
+  ## and normalised.
+  try: absolutePath(path).normalizedPath
+  except OSError, ValueError: path.normalizedPath
 
 proc autoKindOf*(s: Session; path: string; ctx: JobContext): Option[RecordingKind] =
   ## The kind of the open file told from itself, as the Files window tells it; none when

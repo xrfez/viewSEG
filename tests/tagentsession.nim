@@ -115,7 +115,8 @@ const Reached = {
   "headers.asDisplayed": "", "headers.columns": "", "headers.tableFields": "",
   "headers.tableScope": "", "shotLog.followPlot": "", "cutGather.recordMs": "",
   "output.segyRevision": "", "output.segdRevision": "", "missing.folder": "",
-  "missing.subfolders": "", "quality.folder": "", "quality.subfolders": "", "hideKilled": "",
+  "missing.subfolders": "", "missing.untold": "", "quality.folder": "",
+  "quality.subfolders": "", "quality.untold": "", "hideKilled": "",
   "tray.icon": "", "tray.minimize": "",
   # the Seismic gear's Look tab only: no command sets the four component colours
   "componentColours": "",

@@ -34,7 +34,7 @@
 
 import std/[math, monotimes, options, os, strutils]
 import parseSEG
-import viewSEG/core/[geometry, jobs, state]
+import viewSEG/core/[geometry, jobs, settings, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/[missingwords, theme]
 import utils/[fixtures, sigfiles, waiting]
@@ -147,6 +147,10 @@ proc main*() =
     createDir(fx.dir / "slice")
     let slicePath = fx.dir / "slice" / "slice.sgd"
     sliceFile(slicePath)
+    let untoldDir = fx.dir / "untold"
+    createDir(untoldDir)
+    sliceFile(untoldDir / "slice1.sgd")
+    sliceFile(untoldDir / "slice2.sgd")
     let mixed = fx.dir / "mixed"
     createDir(mixed)
     shotFile(mixed / "shot.sgd", 1 .. 2)
@@ -539,6 +543,32 @@ proc main*() =
           f.markNames("missing.stat ").len == 0, "figures for a mix"
     step("a folder of shot and receiver gathers is not calculated, and says so", runMixed,
       mixedSaid)
+
+    proc chooseUntoldDir(f: FrameInfo) =
+      answer = @[untoldDir]
+      f.click(f.markOf("missing.folderbutton").centre)
+    proc untoldDirChosen(f: FrameInfo): bool = f.has("missing.folderpath " & untoldDir)
+    step("Folder... chooses the folder of files that cannot be told", chooseUntoldDir,
+      untoldDirChosen)
+    proc runUntold(f: FrameInfo) = f.click(f.markOf("missing.run").centre)
+    proc nothingChecked(f: FrameInfo): bool =
+      result = f.has("missing.ready") and f.has("missing.message " & nothingChecked(2))
+      if result: doAssert not f.has("missing.message " & NoTemplateRecord)
+    step("files that cannot be told and no file told: not checked, and it says so",
+      runUntold, nothingChecked)
+    proc chooseReceiver(f: FrameInfo) =
+      f.click(f.markOf("missing.untold receiver gathers").centre)
+    proc untoldChosen(f: FrameInfo): bool =
+      result = f.core.settings.missing.untold == ukReceiver and not f.has("missing.ready")
+    step("the choice for them is taken, and drops the answer", chooseReceiver, untoldChosen)
+    proc runAgain(f: FrameInfo) = f.click(f.markOf("missing.run").centre)
+    proc takenAsReceivers(f: FrameInfo): bool =
+      result = f.has("missing.ready") and f.has("missing.message 2 files of one receiver " &
+        "and one source are taken as receiver gathers, as chosen.")
+      if result: doAssert f.has("missing.counts 2 files, 1 receiver"),
+        $f.markNames("missing.counts")
+    step("run again: they are checked as receiver gathers, and it says so", runAgain,
+      takenAsReceivers)
 
     var at = 0
     var started = false

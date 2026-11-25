@@ -3,8 +3,8 @@
 
 import std/strutils
 import ../core/[missingreport, qualityreport]
-from missingwords import ReceiversOption, SourcesOption, stationNoun
-export ReceiversOption, SourcesOption, stationNoun
+from missingwords import UntoldLabel, UntoldTip, UntoldNames, stationNoun
+export UntoldLabel, UntoldTip, UntoldNames, stationNoun
 
 const
   QualityTip* = "Traces that are dead, all zero, constant, clipped, spiky, offset or not " &

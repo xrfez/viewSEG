@@ -13,7 +13,7 @@
 
 import std/[algorithm, os, strutils, tables]
 import imguin/cimgui
-import ../../core/[edits, filesystem, jobs, qualityjobs, qualityreport, state]
+import ../../core/[edits, filesystem, jobs, qualityjobs, qualityreport, settings, state]
 import ../../core/records as filerecs
 import ../../view/qualitywords
 import focus, icons, marks, overflow, windows
@@ -39,7 +39,6 @@ type
 
   QualityUi* = object
     file, folder: Scan
-    side: StationSide
     runAsked: bool
     chosen: string
     exportJob: JobId = NoJob
@@ -248,12 +247,6 @@ proc finish(ui: var QualityUi; s: var Scan; state: JobState; error: string) =
   s.status = Ready
   ui.sortDirty = true
   ui.shownKey = ["", ""]
-  if ui.side == ssReceivers and s.result.receivers.totals.traces == 0 and
-      s.result.sources.totals.traces > 0:
-    ui.side = ssSources
-  elif ui.side == ssSources and s.result.sources.totals.traces == 0 and
-      s.result.receivers.totals.traces > 0:
-    ui.side = ssReceivers
 
 proc poll(ui: var QualityUi; s: var Scan; st: AppState) =
   if s.job == NoJob: return
@@ -298,7 +291,8 @@ proc submitFolder(ui: var QualityUi; st: AppState; key: string) =
   spec.title = if name.len == 0: "Trace quality" else: "Trace quality in " & name
   ui.folder.job = st.jobs.submit(spec,
     folderScan(folder, st.settings.quality.subfolders, st.indexCache, st.editsSnapshot,
-      ui.folder.sink, ui.folder.note, st.settings.noise, st.forcedKinds))
+      ui.folder.sink, ui.folder.note, st.settings.noise, st.forcedKinds,
+      st.settings.quality.untold))
 
 proc consider(ui: var QualityUi; st: AppState) =
   ## Polls the jobs, drops an answer that is stale, and starts the File computation for
@@ -318,7 +312,8 @@ proc consider(ui: var QualityUi; st: AppState) =
     if fileKey.len > 0: ui.submitFile(st, fileKey, path)
   let folder = st.settings.quality.folder
   let folderKey = if folder.len > 0:
-      folder & "|" & $st.settings.quality.subfolders & "|" & st.forcedKey
+      folder & "|" & $st.settings.quality.subfolders & "|" & $st.settings.quality.untold & "|" &
+        st.forcedKey
     else: ""
   if ui.folder.key.len > 0 and ui.folder.key != folderKey:
     ui.folder.cancel(st)
@@ -492,24 +487,25 @@ proc drawScan(ui: var QualityUi; st: AppState; folderTab: bool; marks: var Marks
     igPopTextWrapPos()
     marks.mark("quality.message " & r.mixed)
     return
+  if r.taken.len > 0:
+    igPushTextWrapPos(0)
+    igTextUnformatted(r.taken.cstring, nil)
+    igPopTextWrapPos()
+    marks.mark("quality.message " & r.taken)
   let notChecked = notCheckedNote(r.notChecked)
   if notChecked.len > 0:
     igPushTextWrapPos(0)
     igTextUnformatted(notChecked.cstring, nil)
     igPopTextWrapPos()
     marks.mark("quality.message " & notChecked)
-  if r.receivers.totals.traces > 0 and r.sources.totals.traces > 0:
-    var sources = ui.side == ssSources
-    if igRadioButton_Bool(ReceiversOption.cstring, not sources): ui.side = ssReceivers
-    igSameLine(0, -1)
-    if igRadioButton_Bool(SourcesOption.cstring, sources): ui.side = ssSources
-    marks.mark("quality.side")
-  let report = r.reportOf(ui.side)
+  let side = if r.receivers.totals.traces > 0: ssReceivers
+    elif r.sources.totals.traces > 0: ssSources else: ssReceivers
+  let report = r.reportOf(side)
   marks.mark("quality.sort " & sortText(ui.sort))
   let counts = countsLine(report.totals, folderTab)
   igTextUnformatted(counts.cstring, nil)
   marks.mark("quality.counts " & counts)
-  for line in statisticLines(report.totals, ui.side, folderTab):
+  for line in statisticLines(report.totals, side, folderTab):
     igTextUnformatted(line.cstring, nil)
     marks.mark("quality.stat " & line)
     tip(FiguresTip)
@@ -520,7 +516,7 @@ proc drawScan(ui: var QualityUi; st: AppState; folderTab: bool; marks: var Marks
     for i in filterStations(report.stations, text): rows.add report.stations[i]
     var taken = r.paths
     for session in st.sessions: taken.add normalizedPath($session.diskPath)
-    ui.ask = ExportAsk(rows: rows, totals: report.totals, side: ui.side, taken: taken,
+    ui.ask = ExportAsk(rows: rows, totals: report.totals, side: side, taken: taken,
       withStats: ui.withStats, live: true)
     out0.exportAsked = true
     out0.exportPath = (if folderTab and st.settings.quality.folder.len > 0:
@@ -550,7 +546,7 @@ proc drawScan(ui: var QualityUi; st: AppState; folderTab: bool; marks: var Marks
       cast[cstring](addr ui.filter[int(folderTab)][0]), csize_t(ui.filter[0].len), 0, nil, nil)
     marks.mark("quality.filter")
     tip(FilterStationsTip)
-    ui.drawRows(report, int(folderTab), (if folderTab: "folder" else: "file") & $ui.side, marks)
+    ui.drawRows(report, int(folderTab), (if folderTab: "folder" else: "file") & $side, marks)
 
 proc drawFolderControls(ui: var QualityUi; st: AppState; marks: var Marks;
     out0: var QualityOutput) =
@@ -575,6 +571,16 @@ proc drawFolderControls(ui: var QualityUi; st: AppState; marks: var Marks;
   if igButton(RunButton.cstring, ImVec2_c(x: 0, y: 0)): ui.runAsked = true
   igEndDisabled()
   marks.mark("quality.run")
+  igTextUnformatted(UntoldLabel.cstring, nil)
+  for choice in UntoldKind:
+    igSameLine(0, -1)
+    if igRadioButton_Bool((UntoldNames[choice] & "##untold" & $ord(choice)).cstring,
+        st.settings.quality.untold == choice) and ui.focus.acts:
+      var s = st.settings
+      s.quality.untold = choice
+      out0.commands.add Command(kind: ckSettings, settings: s)
+    marks.mark("quality.untold " & UntoldNames[choice])
+  tip(UntoldTip)
 
 proc drawQuality*(ui: var QualityUi; title: string; st: AppState; marks: var Marks): QualityOutput =
   ## The window titled `title`. Closing it (`stop`, called by the caller while it is

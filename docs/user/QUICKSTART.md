@@ -349,6 +349,14 @@ until you set its kind in the Files window; the File tab says so. A continuous r
 recording is not checked either. A change of a kind in the Files window drops the answer
 on screen and computes it again.
 
+On the Folder tab, many files of one receiver and one source (one slice for each file, say)
+need not be set one by one. When every file whose kind is told is on one side, the files
+that cannot be told are taken as that side too, and the window says so ("12 files of one
+receiver and one source are taken as receiver gathers, like the others in the folder.").
+When the told files are of both sides it is a mix, and when none is told they stay not
+checked. **Files whose kind cannot be told are:** (not checked, shot gathers, receiver
+gathers; remembered) overrides this for the folder; a kind you set for a file always wins.
+
 A folder (or a file list) that holds both shot gathers and receiver gathers is not
 calculated: the window says how many files are of each kind (and how many could not be
 told) and that the kind can be set in the Files window, and shows no figures. Files that
@@ -444,10 +452,13 @@ stations are the receiver stations of a shot gather's traces, the source station
 receiver gather's, by the kind of recording the Files window shows for the file, the one
 told from it or the one you set (the rule the Missing traces window uses). A file of one
 receiver and one source cannot be told: it is not measured until you set its kind there,
-and the window says so, as it does for a continuous receiver recording. A folder that holds
+and the window says so. A folder that holds
 both shot gathers and receiver gathers is not measured: the window says how many files
 are of each kind and that the kind can be set in the Files window. A change of a kind
-there drops the answer on screen. A killed trace is counted as killed, not as bad, and it
+there drops the answer on screen. A continuous receiver recording is measured, at its
+receiver stations. The Folder tab takes files whose kind cannot be told for the side of the
+files that are told when these are all of one, and has the same choice **Files whose kind
+cannot be told are:** as Missing traces. A killed trace is counted as killed, not as bad, and it
 is not measured.
 
 Traces that name no line or no point are one row, **unknown**, which is not counted as a station in the figures (its traces are in the trace figures). The table has one row per station (line and point), whatever its components and files: a

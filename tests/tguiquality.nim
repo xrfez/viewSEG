@@ -15,14 +15,13 @@
 ## ignored by the walk, "Run: the folder without its subfolders" did not happen (2 files,
 ## not 1); with the station counts of the second file not added to the first's, "Run with
 ## subfolders" saw a row of 1 trace; with the menu item disabled without a folder,
-## "Reports > Trace quality" found a disabled mark; with the mix measured as the majority
-## side, "a folder of shot and receiver gathers is not measured" found figures.
+## "Reports > Trace quality" found a disabled mark; with the mix measured as one side, "a folder of shot and receiver gathers is not measured" found figures.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
 import std/[math, monotimes, options, os, strutils]
 import parseSEG
-import viewSEG/core/[geometry, jobs, state]
+import viewSEG/core/[geometry, jobs, settings, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/[qualitywords, theme]
 import utils/[fixtures, waiting]
@@ -94,6 +93,11 @@ proc main*() =
       (line: 101.0, point: 1.0, component: 1'u8, status: tsLive, samples: wave()),
       (line: 101.0, point: 1.0, component: 2'u8, status: tsLive, samples: wave())])
     writeFile(folder / "notes.txt", "not seismic\n")
+    let untoldDir = fx.dir / "untold"
+    createDir(untoldDir)
+    for n in 1 .. 2:
+      seismicFile(untoldDir / ("slice" & $n & ".sgd"), n, @[
+        (line: 5.0, point: float64(n), component: 1'u8, status: tsLive, samples: zeros(32))])
     let mixed = fx.dir / "mixed"
     createDir(mixed)
     seismicFile(mixed / "shot.sgd", 1, @[
@@ -393,6 +397,33 @@ proc main*() =
           f.markNames("quality.row ").len == 0, "figures for a mix"
     step("a folder of shot and receiver gathers is not measured, and says so", runMixed,
       mixedSaid)
+
+    proc chooseUntoldDir(f: FrameInfo) =
+      answer = @[untoldDir]
+      f.click(f.markOf("quality.folderbutton").centre)
+    proc untoldDirChosen(f: FrameInfo): bool = f.core.settings.quality.folder == untoldDir
+    step("Folder... chooses the folder of files that cannot be told", chooseUntoldDir,
+      untoldDirChosen)
+    proc runUntold(f: FrameInfo) = f.click(f.markOf("quality.run").centre)
+    proc nothingMeasured(f: FrameInfo): bool =
+      result = f.has("quality.ready") and
+        f.markNames("quality.message 2 files were not measured").len == 1
+      if result:
+        doAssert f.markNames("quality.message 2 files of one receiver").len == 0
+    step("files that cannot be told and no file told: not measured, and it says so",
+      runUntold, nothingMeasured)
+    proc chooseShot(f: FrameInfo) =
+      f.click(f.markOf("quality.untold shot gathers").centre)
+    proc untoldChosen(f: FrameInfo): bool =
+      result = f.core.settings.quality.untold == ukShot and not f.has("quality.ready")
+    step("the choice for them is taken, and drops the answer", chooseShot, untoldChosen)
+    proc runAgain(f: FrameInfo) = f.click(f.markOf("quality.run").centre)
+    proc takenAsShots(f: FrameInfo): bool =
+      result = f.has("quality.ready") and f.markNames("quality.message 2 files of one " &
+        "receiver and one source are taken as shot gathers, as chosen.").len == 1
+      if result: doAssert f.has("quality.counts 2 files, 2 traces"), $f.markNames("quality.counts")
+    step("run again: they are measured as shot gathers, and it says so", runAgain,
+      takenAsShots)
 
     var at = 0
     var started = false

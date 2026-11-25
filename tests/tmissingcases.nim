@@ -27,7 +27,7 @@
 
 import std/[os, strutils, tables]
 import parseSEG
-import viewSEG/core/[jobs, missingjobs, missingreport, recordingkind, reportside]
+import viewSEG/core/[jobs, missingjobs, missingreport, recordingkind, reportside, settings]
 import utils/waiting
 
 proc put(line: var string; at: int; text: string) =
@@ -168,12 +168,13 @@ proc forcing(paths: openArray[string]; kind: RecordingKind): Table[string, Recor
   for p in paths: result[p.normalizedPath] = kind
 
 proc run(folder: string; paths: seq[string]; relations: ref SurveyGeometry;
-    forced = initTable[string, RecordingKind](); receivers: ref SurveyGeometry = nil):
-    MissingJobResult =
+    forced = initTable[string, RecordingKind](); receivers: ref SurveyGeometry = nil;
+    untold = ukNotChecked; folderRun = false): MissingJobResult =
   let jobs = initJobs()
   let sink = MissingSink()
   let id = jobs.submit(missingSpec(folder, paths),
-    scanMissing(folder, paths, relations, sink, "", forced, receivers))
+    scanMissing(folder, paths, relations, sink, "", forced, receivers, false, untold,
+      folderRun))
   doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}), "the scan did not end"
   doAssert jobs.state(id) == jsDone, jobs.info(id).get.error
   sink.result
@@ -438,6 +439,53 @@ proc main*() =
     # set the other way, the file is a shot gather: its report is of receivers
     let flipped = run(dir / "rg", @[p], sv, @[p].forcing(rkShotGather))
     doAssert flipped.sides.shots == 1 and flipped.receiver.stats.records == 0, $flipped.sides
+
+  block files_that_cannot_be_told_in_a_folder:
+    ## Receivers 1..100 of shots 1..5. Two shot gathers are told; two files of receiver 7
+    ## and one source cannot be. Folder run: they are taken as shots (every told file is a
+    ## shot) and the report says so; the File tab's one file stays not checked; with only
+    ## receiver gathers told, they are receiver gathers; with both told it is a mix (not a
+    ## vote); with none told they stay not checked. The folder's choice wins over what is
+    ## told; a file's own kind wins over the choice. A relative path finds the kind set.
+    var xs: seq[string] = @[]
+    for s in 1 .. 5: xs.add xRec(s, "1.00", $s & ".00", 1, 100, 10, 1, 100)
+    let sv = surveyOf(xs)
+    let f = dir / "unt"
+    createDir(f)
+    let s1 = f / "s1.sgd"
+    let s2 = f / "s2.sgd"
+    traceFile(s1, [(1, 1.0, 1.0, 1, 1), (1, 1.0, 2.0, 1, 1)])
+    traceFile(s2, [(2, 2.0, 1.0, 1, 1), (2, 2.0, 2.0, 1, 1)])
+    let u1 = f / "u1.sgd"
+    let u2 = f / "u2.sgd"
+    traceFile(u1, [(3, 3.0, 7.0, 1, 1)])
+    traceFile(u2, [(4, 4.0, 7.0, 1, 1)])
+    let rg = f / "r.sgd"
+    receiverFile(rg, 9, 8.0, [1.0, 2.0])
+    var r = run(f, @[u1, u2], sv, folderRun = true)
+    doAssert r.notChecked.len == 2 and r.sides.untold == 2 and r.taken.len == 0 and
+      r.shot.stats.records + r.receiver.stats.records == 0
+    r = run(f, @[s1, s2, u1, u2], sv, folderRun = true)
+    doAssert r.notChecked.len == 0 and r.sides.shots == 4 and r.shot.stats.records == 4, $r.sides
+    doAssert r.taken == "2 files of one receiver and one source are taken as shot gathers, " &
+      "like the others in the folder.", r.taken
+    r = run(f, @[s1, s2, u1, u2], sv)
+    doAssert r.notChecked.len == 2 and r.taken.len == 0 and r.shot.stats.records == 2
+    r = run(f, @[rg, u1, u2], sv, folderRun = true)
+    doAssert r.sides.receivers == 3 and r.receiver.stats.records > 0 and
+      r.taken.contains("taken as receiver gathers"), $r.sides
+    r = run(f, @[s1, rg, u1, u2], sv, folderRun = true)
+    doAssert r.mixed.len > 0 and r.sides.untold == 2, $r.sides
+    r = run(f, @[s1, u1, u2], sv, untold = ukReceiver)
+    doAssert r.mixed.len > 0 and r.sides.receivers == 2 and r.taken.contains("as chosen")
+    r = run(f, @[u1, u2], sv, untold = ukShot)
+    doAssert r.sides.shots == 2 and r.shot.stats.records == 2 and r.taken.len > 0
+    r = run(f, @[u1, u2], sv, @[u1].forcing(rkReceiverSliced), untold = ukShot)
+    doAssert r.mixed.len > 0 and r.sides.shots == 1 and r.sides.receivers == 1
+    let rel = relativePath(u1, getCurrentDir())
+    doAssert not rel.isAbsolute
+    r = run(f, @[rel], sv, @[u1].forcing(rkReceiverSliced))
+    doAssert r.sides.receivers == 1 and r.notChecked.len == 0, $r.sides
 
   block a_receiver_keeps_a_bit_for_each_source:
     ## A receiver's sources are a bit each, up to the highest source number of the

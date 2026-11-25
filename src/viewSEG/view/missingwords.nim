@@ -1,7 +1,7 @@
 ## Words for the Missing traces window and the Reports menu. Drawing lives in
 ## the frontend; this module holds the sentences.
 
-import ../core/[missingjobs, missingreport, reportside]
+import ../core/[missingjobs, missingreport, reportside, settings]
 
 const
   MenuTip* = "Stations the survey's relation records call for that a file does not hold: " &
@@ -59,8 +59,18 @@ const
   FilterStationsTip* = "Show only the stations whose line or point holds every word typed here."
 
 const
-  ReceiversOption* = "Receiver stations (shot gathers)"
-  SourcesOption* = "Source stations (receiver gathers)"
+  UntoldLabel* = "Files whose kind cannot be told are:"
+  UntoldTip* = "A file of one receiver and one source may be one slice of a receiver or a " &
+    "shot of one receiver. When every file whose kind is told is of one side, such files " &
+    "are taken as that side; here you can say what they are taken as instead. A kind set " &
+    "in the Files window always wins."
+  UntoldNames*: array[UntoldKind, string] = ["not checked", "shot gathers", "receiver gathers"]
+
+func nothingChecked*(files: int): string =
+  ## What the tab says when no file was checked and some were left out on purpose.
+  $files & (if files == 1: " file was" else: " files were") & " not checked, so there is " &
+    "nothing to show. A file of one receiver and one source cannot be told: set its kind " &
+    "in the Files window (right-click the file), or say above what such files are."
 
 func columnNames*(side: StationSide): array[3, string] =
   ## The table's headers: the stations are the receivers missing from shot gathers, or the
