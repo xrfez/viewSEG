@@ -140,6 +140,23 @@ func calledSources*(records: openArray[ORecord]): seq[StationKey] =
     for s in rec.sources:
       if not listed.containsOrIncl(s): result.add s
 
+func sourceAlternatives*(source: StationKey): array[2, StationKey] =
+  ## The keys a source station of a template is heard under: its own, else the same
+  ## point with no index (0) in the headers, an index 0 of the template taking the
+  ## usual 1. The one rule of Missing traces and of the Records window.
+  [stationKey(source.line, source.point, source.index),
+   stationKey(source.line, source.point, (if source.index == 0: 1'i16 else: 0'i16))]
+
+proc calledOf*(g: SurveyGeometry; records: openArray[int64]): seq[StationKey] =
+  ## The sources the O `records` (`rdReceiver`) call for together, each station
+  ## (line, point and index) once: the template of a receiver.
+  var listed = initHashSet[StationKey]()
+  for record in records:
+    for run in g.relationRuns(record, rdReceiver):
+      for i in 0 ..< run.stations:
+        let st = run.station(i)
+        if not listed.containsOrIncl(st): result.add st
+
 proc gatherReceiver*(keys: openArray[TraceKeys]; traces: Slice[int]):
     tuple[found: bool; station: StationKey] =
   ## The receiver station (line, point and index) of the first seismic trace of
@@ -208,7 +225,7 @@ proc placeTraces*(hits: var array[MapFilter, FilterHits]; keys: openArray[TraceK
   ## `recordCompleteness`'s, set before.
   let plan = g.plannedOf(records, domain)
   var seen: Table[(StationKey, uint8), int] # station (index 0 for none) and component: first trace
-  var have: HashSet[(float64, float64)]
+  var have: HashSet[StationKey] # the sources heard, with the headers' index (none: 0)
   var dupStations: HashSet[(float64, float64)]
   var firsts: HashSet[int] # the first trace of each key recorded twice, listed
   for t in traces:
@@ -218,7 +235,7 @@ proc placeTraces*(hits: var array[MapFilter, FilterHits]; keys: openArray[TraceK
                                  else: (k.srcLine, k.srcPoint, k.srcIndex)
       if hasStation(line, point):
         let st = stationKey(line, point, max(index, 0'i16))
-        have.incl (st.line, st.point)
+        have.incl st
         if not plan.planned(st.line, st.point, index) and k.status != tsDead:
           hits[mfUnlisted].traces.add base + t
         let key = (st, componentOf(k))
@@ -229,23 +246,22 @@ proc placeTraces*(hits: var array[MapFilter, FilterHits]; keys: openArray[TraceK
           hits[mfDuplicate].traces.add base + t
         else: seen[key] = t
   if domain == rdReceiver:
-    # Counted here: the O records' stations the gather lacks (as stations).
-    var counted: HashSet[(float64, float64)]
+    # Counted here: the O records' sources the gather lacks, by line, point and index as
+    # Missing traces counts them (`sourceAlternatives`).
     var unlisted: HashSet[(float64, float64)]
-    for record in records:
-      for run in g.relationRuns(record, domain):
-        for i in 0 ..< run.stations:
-          let st = run.station(i)
-          if (st.line, st.point) notin have and
-              not counted.containsOrIncl((st.line, st.point)):
-            hits[mfMissing].stations.add st
+    let called = g.calledOf(records)
+    for st in called:
+      var heard = false
+      for k in sourceAlternatives(st):
+        if k in have: heard = true
+      if not heard: hits[mfMissing].stations.add st
     for t in hits[mfUnlisted].traces:
       let k = keys[t - base]
       let st = stationKey(k.srcLine, k.srcPoint, 0)
       unlisted.incl (st.line, st.point)
     hits[mfMissing].count = hits[mfMissing].stations.len
     let which = (if records.len == 1: "O record " else: "O records ") & recordsWords(records)
-    hits[mfMissing].note = "shots of the " & $plan.len & " " & which & " plans"
+    hits[mfMissing].note = "shots of the " & $called.len & " " & which & " plans"
     hits[mfUnlisted].count = unlisted.len
     hits[mfUnlisted].note = "sources of its traces that " & which & " does not list"
     hits[mfDuplicate].count = dupStations.len

@@ -550,7 +550,7 @@ proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[in
                   var hits: array[MapFilter, FilterHits]
                   hits.placeTraces(file[].index.keys, 0, g, o[], records, rdReceiver)
                   (planned[i], missing[i], unlisted[i], duplicates[i]) =
-                    (o[].plannedOf(records, rdReceiver).len, hits[mfMissing].count,
+                    (o[].calledOf(records).len, hits[mfMissing].count,
                       hits[mfUnlisted].count, hits[mfDuplicate].count)
           of sdNeither: discard
         if i mod 64 == 0 and not ctx.progress(i, gathers.len):

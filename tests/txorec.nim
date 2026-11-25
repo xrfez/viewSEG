@@ -60,12 +60,12 @@ proc xRecord(record: int; src: float64; first, last: int): SpsRelation =
     channelIncrement: 1, rcvLine: 10, fromReceiver: float64(first), toReceiver: float64(last),
     rcvIndex: 1)
 
-proc oRecord(record: int; rcv: float64; first, last: int): SpsRelation =
+proc oRecord(record: int; rcv: float64; first, last: int; srcIndex = 1): SpsRelation =
   ## O record `record`: receiver `rcv`, its shots `first` .. `last` of line 1.
   SpsRelation(recordType: 'O', fieldRecord: record, recordIncrement: 1, instrumentCode: '1',
     srcLine: 10, srcPoint: rcv, srcIndex: 1, fromChannel: 1, toChannel: last - first + 1,
     channelIncrement: 1, rcvLine: 1, fromReceiver: float64(first), toReceiver: float64(last),
-    rcvIndex: 1)
+    rcvIndex: srcIndex)
 
 proc surveyFile(path: string; relations: seq[SpsRelation]) =
   let f = SpsFile(headers: @[SpsHeader(code: "00", description: "SPS format version num.",
@@ -165,6 +165,24 @@ proc main*() =
       doAssert row.planned == 5 and row.plannedMissing == 1, what & ": " & $row.planned &
         " planned, " & $row.plannedMissing & " missing"
       doAssert "X record 7" in hits[mfMissing].note, what & ": " & hits[mfMissing].note
+
+  block sourceWithTwoIndices:
+    # Receiver 2's O record 1 has shots 5 to 7 (index 1), O record 2 shot 7 (index 2): four
+    # sources; the data has 5, 6, 7 of index 1. The Records window and the shown record keep
+    # the index as Missing traces' receiver check does (`sourceAlternatives`): 4 planned,
+    # 1 missing; the hover box draws the same 4 stations.
+    let two = dir / "twoindices.o"
+    surveyFile(two, @[oRecord(1, 2, 5, 7), oRecord(2, 2, 7, 7, srcIndex = 2)])
+    var st = initAppState()
+    st.open(@[xs, two], rcv)
+    doAssert st.settle(st.sessions[0].checkedAgainst.len > 0 and st.jobs.active.len == 0 and
+      st.filtersDone)
+    let row = st.sessions[0].records[0]
+    doAssert row.planned == 4 and row.plannedMissing == 1, $row.planned & " planned, " &
+      $row.plannedMissing & " missing"
+    doAssert st.filterHits[mfMissing].count == 1, st.filterHits[mfMissing].note
+    doAssert st.shownSpread.stations == 4, $st.shownSpread.stations
+    st.shutdown()
 
   block derivedOnce:
     # X records only, no map filter: the O records are derived once for two receiver files

@@ -275,9 +275,7 @@ func isHeard(m: ReceiverMerge; r: ReceiverAt; source: StationKey;
   ## Whether the receiver recorded `source` at one of the receiver `indices`.
   ## The source matches as a record check matches a station: with its index,
   ## else with none (0) in the headers; a template index 0 takes the usual 1.
-  let key = stationKey(source.line, source.point, source.index)
-  let alt = stationKey(source.line, source.point, (if source.index == 0: 1'i16 else: 0'i16))
-  for k in [key, alt]:
+  for k in sourceAlternatives(source):
     let id = m.sourceIds.getOrDefault(k, -1)
     if id >= 0:
       for h in r.heard:
