@@ -21,7 +21,10 @@
 ## converter's row was judged in another band than its window; with the unclear polarity lines
 ## left without the reversal, a reversed ground force of noise was not said to be reversed; with
 ## the profile's top kept when the project's top for the stored reference was typed again on a
-## SEG-Y window, the row's distortion was measured in another band than its window's. The
+## SEG-Y window, the row's distortion was measured in another band than its window's; with the
+## profile's ground force switch taken over each layout's own (and the weights only when the
+## profile makes it), a converter's file chosen made was judged on the record without its 100 %
+## force, and a .dat left in the record on the made signal. The
 ## comparison itself (`differences`) was seen to fail on a row's polarity line changed, on its
 ## reason for the force not judged changed to one the window does not give, and on a limit the
 ## row has and the window lacks.
@@ -303,6 +306,48 @@ proc main*() =
       doAssert vibQcConfig(st).ask.topHz == 90, $vibQcConfig(st).ask.topHz
       let files = @[listed(a11)]
       st.parity(files, st.run(files))
+      st.shutdown()
+
+  block judgeByLayout:
+    # the ground force switch is the file layout's, as each window takes it: a converter's file
+    # chosen "made" and a .dat chosen "in the record" are each judged so, whichever was set last
+    # (the profile's), and the converter's made signal has its weights and its own 100 % force
+    # even when the profile's switch is "in the record"
+    withFixtures fx:
+      let dir = fx.dir / "config"
+      createDir(dir)
+      let a11 = sweep(fx.dir / "sweeps", "a11.dat", 11, 7001, 1.0)
+      let c = converterOf()
+      let sgy = fx.dir / "sweeps" / "converted.sgy"
+      writeVibSegy(sgy, [c.reference, c.mass, c.plate, c.record], 1.0, [21'i16, 19, 18, 20])
+      let files = @[listed(a11), listed(sgy)]
+      var st = initAppState()
+      st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      proc judgeOn(st: var AppState; path: string; on: JudgeOn) =
+        let w = st.window(path)
+        var p = st.plots[w].params
+        p.roles.judge = on
+        if path == sgy:
+          (p.reactionMassKg, p.baseplateMassKg, p.forceHundredWeighted) = (Wm, Wb, 1000.0)
+        st.change(w, p)
+        st.close(w)
+      st.judgeOn(sgy, joWeighted)
+      st.judgeOn(a11, joWeighted)
+      st.judgeOn(a11, joRecorded)
+      doAssert st.project.doc.vibProfile.judge == joRecorded
+      let t = st.run(files)
+      st.parity(files, t)
+      doAssert "on GF from M and B" in rowOf(t, sgy).sentence, rowOf(t, sgy).sentence
+      doAssert "from M and B" notin rowOf(t, a11).sentence, rowOf(t, a11).sentence
+      # the converter's switch set last: the profile's is "made", the .dat's layout stays
+      st.judgeOn(sgy, joRecorded)
+      st.judgeOn(sgy, joWeighted)
+      doAssert st.project.doc.vibProfile.judge == joWeighted
+      let next = st.run(files)
+      st.parity(files, next)
+      doAssert "from M and B" notin rowOf(next, a11).sentence, rowOf(next, a11).sentence
       st.shutdown()
 
   block noProject:

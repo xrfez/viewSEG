@@ -97,13 +97,14 @@ proc main*() =
     doAssert "judge" notin plain and "madeReactionKg" notin plain, plain
     doAssert readProject(plain, "project.nif", problems).vibProfile.judge == joRecorded
     doAssert p != profile(joRecorded, Wm, Wb, 1000.0)
-    # the ask: the masses reach the run only when the ground force is made
+    # the ask: the masses reach the run whatever the profile judges (a file layout may have
+    # chosen to make the ground force on its own)
     let made = applied(p, [])
     doAssert made.judge == joWeighted and made.options.reactionMassKg == Wm and
       made.options.forceHundredWeighted == 1000.0
     let record = applied(profile(joRecorded, Wm, Wb, 1000.0), [])
-    doAssert record.judge == joRecorded and record.options.reactionMassKg.isNaN and
-      record.options.forceHundredWeighted.isNaN
+    doAssert record.judge == joRecorded and record.options.reactionMassKg == Wm and
+      record.options.forceHundredWeighted == 1000.0
     # a window that changes only the switch writes only it into the stored profile
     let stored = profile(joRecorded, NaN, NaN, NaN)
     var flipped = stored

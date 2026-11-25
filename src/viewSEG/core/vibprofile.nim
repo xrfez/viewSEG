@@ -92,7 +92,9 @@ type
       ## `forceHundredSet` was stored. False: an older project, the set unknown.
     hundredConflict*: string
       ## `hundredConflict` of the profile: why there is no 100 % force; "": no reason to say
-    judge*: JudgeOn = joRecorded ## the ground force judged (`VibQcProfile.judge`)
+    judge*: JudgeOn = joRecorded
+      ## the ground force judged (`VibQcProfile.judge`) on a file whose layout has no choice of
+      ## its own (`layouts`)
     layouts*: seq[string]
       ## the roles chosen by hand per file layout (`choiceText`), the ones the Vibrator window
       ## uses: a file of a layout with a choice is judged on its places (Swap mass and
@@ -366,11 +368,11 @@ func applied*(p: VibQcProfile; archiveIds: openArray[string]): VibQcAsk =
     forceHundredUnit: p.forceHundredUnit, forceHundredSet: p.forceHundredSet,
     forceHundredSetKnown: p.forceHundredSetKnown, judge: p.judge,
     hundredConflict: p.hundredConflict)
-  if p.judge == joWeighted:
-    # the masses and the made signal's own 100 % force go to the run only when it is made
-    result.options.reactionMassKg = p.madeReactionKg
-    result.options.baseplateMassKg = p.madeBaseplateKg
-    result.options.forceHundredWeighted = p.forceHundredWeighted
+  # the masses and the made signal's own 100 % force go to the run whatever the profile judges:
+  # a file layout may have its own choice, as its window does
+  result.options.reactionMassKg = p.madeReactionKg
+  result.options.baseplateMassKg = p.madeBaseplateKg
+  result.options.forceHundredWeighted = p.forceHundredWeighted
   if p.referenceId.len == 0 or p.referenceId notin archiveIds:
     result.problems.add referenceProblem(p.referenceId)
   if not typedForce(p.forceHundredPct):

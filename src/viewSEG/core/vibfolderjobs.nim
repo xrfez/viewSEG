@@ -153,10 +153,11 @@ func chosenRoles*(roles: VibRoles; layouts: openArray[string]; codes: openArray[
     count, first: int; signature = false): VibRoles =
   ## `roles` with the choice remembered for the layout of a record of `count` traces from
   ## trace `first` whose codes are `codes` (`layoutKey`), as a Vibrator window on that record
-  ## takes it: for a `signature` file the ground force's polarity alone (its places are its
-  ## codes'; M and B stay as recorded), else the places (Swap mass and baseplate among them)
-  ## with the polarities chosen with them. Unchanged when none is remembered for the layout, or
-  ## a place is not in the record. The ground force switch is the profile's (`folderParams`).
+  ## takes it: for a `signature` file the ground force's polarity and the ground force switch
+  ## (its places are its codes'; M and B stay as recorded), else the places (Swap mass and
+  ## baseplate among them) with the polarities and the switch chosen with them. Unchanged when
+  ## none is remembered for the layout, or a place is not in the record: `roles.judge` is then
+  ## the one judged.
   result = roles
   var places: array[4, int]
   var polarity = Recorded
@@ -164,6 +165,7 @@ func chosenRoles*(roles: VibRoles; layouts: openArray[string]; codes: openArray[
     if signature:
       # (Automatic is never offered for a signature file)
       result.groundForcePolarity = if polarity.gf == poAutomatic: poAsRecorded else: polarity.gf
+      result.judge = polarity.judge
       return
     for p in places:
       if p >= count: return
@@ -172,17 +174,17 @@ func chosenRoles*(roles: VibRoles; layouts: openArray[string]; codes: openArray[
     (result.reference, result.groundForce, result.mass, result.baseplate) =
       (places[0], places[1], places[2], places[3])
     (result.source, result.handFile) = (rsRemembered, "")
-    (result.groundForcePolarity, result.massPolarity) = (polarity.gf, polarity.mb)
+    (result.groundForcePolarity, result.massPolarity, result.judge) = (polarity.gf, polarity.mb,
+      polarity.judge)
 
 proc folderParams*(ask: VibQcAsk; roles: VibRoles; kind: SignatureKind): AnalysisParams =
-  ## The ask a Vibrator window would use, with the profile's masses only when it makes the
-  ## ground force from M and B (else none). A 100 % force
-  ## the profile did not type stays unset. Its unit, and the accelerometer set
+  ## The ask a Vibrator window would use, on `roles` as given (the ground force judged among
+  ## them: the one chosen for the file's layout, `chosenRoles`), with the profile's masses and
+  ## the made signal's 100 % force whatever is judged (none when the profile has none). A 100 %
+  ## force the profile did not type stays unset. Its unit, and the accelerometer set
   ## a pound-counts force was typed on, are the ones the profile stored, never
   ## the set now judged and never guessed from the scale. A set an older
   ## project did not store stays unknown.
-  var roles = roles
-  roles.judge = ask.judge
   AnalysisParams(roles: roles, harmonics: ask.options.harmonics,
     accelSet: ask.accelSet, qcWindowMs: ask.options.qcWindowMs, qc: ask.options.qc,
     forceHundredPct: ask.options.forceHundredPct,
@@ -318,10 +320,11 @@ proc loadReference(reference: FolderReference): tuple[held: HeldRef; problem: st
   except CatchableError as e:
     result.problem = e.msg
 
-func forceWhyNot(facts: SignatureFacts; ask: VibQcAsk; measures: seq[FolderMeasure];
-    hundredProblem: string; ownHundred: bool): string =
+func forceWhyNot(facts: SignatureFacts; ask: VibQcAsk; params: AnalysisParams;
+    measures: seq[FolderMeasure]; hundredProblem: string; ownHundred: bool): string =
   ## Why this file's force limits were not judged, in words; "" when they were (or
-  ## are off). The missing piece is named from what the file and the settings hold.
+  ## are off). The missing piece is named from what the file and the settings it was judged
+  ## with (`params`) hold.
   var notJudged = false
   for m in measures:
     if m.limit in {qlAvgForce, qlPeakForce} and m.status == qsNotJudged and
@@ -331,10 +334,10 @@ func forceWhyNot(facts: SignatureFacts; ask: VibQcAsk; measures: seq[FolderMeasu
   result = "the force limits are not judged: "
   if hundredProblem.len > 0:
     result.add "the typed 100 % force does not apply (" & hundredProblem & ")"
-  elif ask.judge == joWeighted and facts.kind == sgNone and
-      typedForce(ask.options.reactionMassKg) and typedForce(ask.options.baseplateMassKg):
+  elif params.roles.judge == joWeighted and facts.kind == sgNone and
+      typedForce(params.reactionMassKg) and typedForce(params.baseplateMassKg):
     # (a converter's file whose ground force is made: its own 100 % force is the one that counts)
-    result.add(if typedForce(ask.options.forceHundredWeighted):
+    result.add(if typedForce(params.forceHundredWeighted):
         "no force was measured in the judged part"
       else: "no 100 % force is set for the ground force made from mass and baseplate")
   elif ownHundred:
@@ -412,6 +415,7 @@ proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo:
     return FolderRow(path: path, kind: facts.kind, pair: pairPath, outcome: foProblem,
       problem: why)
   var roles = folderRoles(codes, facts.kind, ask.accelSet)
+  roles.judge = ask.judge # (the profile's, for a layout with no choice of its own)
   var topHz = ask.topHz
   if first in 0 ..< codes.len and first + count <= codes.len:
     template record: untyped = codes.toOpenArray(first, first + count - 1)
@@ -484,7 +488,7 @@ proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo:
     return FolderRow(path: path, kind: facts.kind, pair: pairPath, outcome: foProblem,
       problem: answer.problem, polarity: answer.polarity.line, warnings: warnings)
   let measures = measuresOf(answer.qc.rows)
-  let forceWhy = forceWhyNot(facts, ask, measures, answer.hundredProblem,
+  let forceWhy = forceWhyNot(facts, ask, params, measures, answer.hundredProblem,
     typedForce(params.forceHundredPct))
   if forceWhy.len > 0:
     addLine(warnings, forceWhy.capitalizeAscii)
