@@ -27,6 +27,8 @@
 ## `receivers_are_checked_across_the_folder` rejected the one-slice files as shots,
 ## `receiver_index_zero_and_one` rejected no receiver checked (a shot of two records)
 ## and `cancel_while_the_receivers_are_checked` rejected a job that finished done.
+## With the X record at a shared source picked by the record number,
+## `several_x_records_at_one_source` rejected found 0 missing 4 at record number 2.
 
 import std/[os, strutils, times]
 when defined(release):
@@ -403,21 +405,48 @@ proc main*() =
     doAssert r.notChecked.len == 1 and r.notChecked[0].path == "cont" / "cont.sgd", $r.notChecked
     doAssert "continuous" in r.notChecked[0].why
 
-  block ambiguous_is_unmatched:
-    let survey = surveyOf(
+  block several_x_records_at_one_source:
+    ## Two X records at source 1. With the same template (a reshoot of the patch) the
+    ## shot is checked once against it, whatever its record number (9 is neither).
+    ## With X1 calling receivers 1..4 and X2 5..8, a shot holding 1..4 with record
+    ## number 2 is checked against X1, the record its data fits: nothing missing, not
+    ## the 4 of X2. A shot holding 3..6 fits both as well: it is listed under
+    ## Unmatched, as the record number alone would decide.
+    let same = surveyOf(
       xRec(1, "1.00", "1.00", 1, 2, 10, 1, 2),
       xRec(2, "1.00", "1.00", 1, 2, 10, 1, 2),
       xRec(3, "1.00", "9.00", 1, 1, 10, 1, 1))
-    let path = dir / "amb.sgd"
+    let path = dir / "reshoot.sgd"
     shotFile(path, [(record: 9, src: 1.0, receivers: 1 .. 2)])
-    let got = run(dir, @[path], survey)
+    var got = run(dir, @[path], same)
     doAssert got.st == jsDone, got.error & " / " & got.sink.result.reason
-    doAssert got.sink.result.shot.stats.records == 0
-    doAssert got.sink.result.unmatched.len == 1, $got.sink.result.unmatched.len
-    let u = got.sink.result.unmatched[0]
-    doAssert u.path == "amb.sgd" and u.record == 9, $u
-    doAssert u.why ==
-      "2 survey records share this source and the record number matches neither", u.why
+    var r = got.sink.result
+    doAssert r.unmatched.len == 0, $r.unmatched
+    doAssert r.shot.stats.records == 1 and r.shot.stats.inTemplate == 2 and
+      r.shot.stats.missing == 0, $r.shot.stats
+    let apart = surveyOf(xRec(1, "1.00", "1.00", 1, 4, 10, 1, 4),
+      xRec(2, "1.00", "1.00", 1, 4, 10, 5, 8))
+    for ffid in [1, 2, 7]:
+      let fits = dir / ("fits-x1-" & $ffid & ".sgd")
+      shotFile(fits, [(record: ffid, src: 1.0, receivers: 1 .. 4)])
+      r = run(dir, @[fits], apart).sink.result
+      doAssert r.unmatched.len == 0, $ffid & " " & $r.unmatched
+      doAssert r.shot.stats.records == 1 and r.shot.stats.inTemplate == 4 and
+        r.shot.stats.found == 4 and r.shot.stats.missing == 0, $ffid & " " & $r.shot.stats
+    let most = dir / "fits-x2-most.sgd"
+    shotFile(most, [(record: 1, src: 1.0, receivers: 4 .. 7)])
+    r = run(dir, @[most], apart).sink.result
+    doAssert r.shot.stats.records == 1 and r.shot.stats.found == 3 and
+      r.shot.stats.missing == 1 and rowAt(r.shot.rows, 10, 8).missing == 1, $r.shot.stats
+    let even = dir / "fits-both.sgd"
+    shotFile(even, [(record: 2, src: 1.0, receivers: 3 .. 6)])
+    got = run(dir, @[even], apart)
+    r = got.sink.result
+    doAssert r.shot.stats.records == 0, $r.shot.stats
+    doAssert r.unmatched.len == 1 and r.unmatched[0].path == "fits-both.sgd" and
+      r.unmatched[0].record == 2, $r.unmatched
+    doAssert r.unmatched[0].why == "several survey records at this source station fit " &
+      "equally: the record number alone would decide, and it is not trusted", r.unmatched[0].why
 
   block receiver_matches_by_station:
     ## Derived receiver records are numbered after the survey's. A gather

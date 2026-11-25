@@ -38,6 +38,12 @@
 ## `records` are receivers checked, and its `Missing` for a source is the
 ## receivers that lack it.
 ##
+## Several X records at a shot's source station: the record number does not
+## pick one (`recordCompleteness` would). The shot is checked against each, a
+## template shared by several records (a reshoot of one patch) once, and takes
+## the one that shares the most stations with the data; a tie between
+## different templates is listed in `unmatched` (`SeveralFit`).
+##
 ## A receiver is checked here rather than by `recordCompleteness`: its
 ## template is every source its O records call for (two O records of one
 ## receiver are one template), so no record number ever picks between them.
@@ -191,9 +197,6 @@ func unmatchedWhy(c: RecordCompleteness): string =
   if not c.hasSource:
     "no source station in the trace headers: it could only be matched to the survey by " &
       "its record number, which is not trusted"
-  elif c.xpsRecord < 0 and c.candidates.len > 1:
-    $c.candidates.len & " survey records share this source and the record number matches " &
-      "neither"
   elif c.recordMatch == rmFieldRecord and c.sourceMismatch:
     "the record's source station has no X record; X record " & $c.xpsRecord &
       ", matched by file number alone, belongs to another source"
@@ -401,6 +404,47 @@ func templateStations(g: SurveyGeometry; record: int64): seq[StationKey] =
   ## relation (`addGather` counts the stations in them).
   for (_, rel) in g.channelRelations(record): result.add rel.receiver
 
+const SeveralFit = "several survey records at this source station fit equally: the " &
+  "record number alone would decide, and it is not trusted"
+
+proc templateOf(g: SurveyGeometry; record: int64; byChannel: bool):
+    HashSet[tuple[channel: int64; station: StationKey]] =
+  ## What X record `record` calls for, as compared between records: its
+  ## stations, and their channels when traces are matched by channel.
+  result = initHashSet[tuple[channel: int64; station: StationKey]]()
+  for (channel, rel) in g.channelRelations(record):
+    result.incl (channel: (if byChannel: int64(channel) else: 0'i64), station: rel.receiver)
+
+proc bestOfSeveral(g: SurveyGeometry; f: SeismicFile; traces: Slice[int];
+    first: RecordCompleteness; ctx: JobContext): tuple[c: RecordCompleteness; why: string] =
+  ## The shot `traces` checked against each X record at its source station
+  ## (`first.candidates`, more than one), the record number left out: the one
+  ## whose template shares the most stations with the data. Records with the
+  ## same template (a reshoot of one patch) are checked once. A tie between
+  ## different templates is `why` (`SeveralFit`).
+  var keys = newSeq[TraceKeys](traces.len)
+  for i in 0 ..< keys.len: keys[i] = f.index.keys[traces.a + i]
+  let counts = newSeq[int](keys.len)
+  let byChannel = first.traceMatch == tmChannel
+  var templates: seq[HashSet[tuple[channel: int64; station: StationKey]]] = @[]
+  var tied = false
+  result = (c: first, why: SeveralFit)
+  var best = -1
+  for record in first.candidates:
+    ctx.checkCancelled()
+    let calls = g.templateOf(record, byChannel)
+    if calls notin templates:
+      templates.add calls
+      # The number put in the keys only makes the library check that one record.
+      for k in keys.mitems: k.record = float64(record)
+      var c = g.recordCompleteness(rowsOf(keys, counts), rmSourceStation)
+      if c.present > best:
+        c.fieldRecord = first.fieldRecord
+        (best, tied, result.c) = (c.present, false, c)
+      elif c.present == best:
+        tied = true
+  result.why = if tied: SeveralFit else: ""
+
 type Verdict = tuple[known: bool; receiver: bool; continuous: bool]
 
 proc verdictOf(s: Session; path: string; ctx: JobContext): Verdict =
@@ -495,8 +539,15 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
                       case side
                       of sdNeither: discard
                       of sdShot:
-                        let checked = relations[].recordCompleteness(s.file.rowsOf(g.traces))
-                        let why = unmatchedWhy(checked)
+                        var checked = relations[].recordCompleteness(s.file.rowsOf(g.traces))
+                        var why = ""
+                        if checked.recordMatch == rmSourceStation and
+                            checked.candidates.len > 1:
+                          # Several X records at this source: the data decides, never
+                          # the record number.
+                          (checked, why) = relations[].bestOfSeveral(s.file, g.traces,
+                            checked, ctx)
+                        if why.len == 0: why = unmatchedWhy(checked)
                         if why.len > 0:
                           unmatched.add (path: rel, record: fieldId(checked), why: why)
                         else:

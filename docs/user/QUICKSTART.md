@@ -317,7 +317,12 @@ for that a file does not hold. It needs relation records (X records) imported; w
 them the window says so in one sentence and shows no table. A shot gather is checked
 against the X record of its shot (the receiver stations expected). A receiver gather is
 checked against the O record of its receiver (the source stations expected); when no O
-records are loaded they are worked out from the X records.
+records are loaded they are worked out from the X records. When several X records share
+the shot's source station, the record (file) number does not choose between them: the
+shot is checked against each and takes the one whose receivers it holds the most of. X
+records that call for the same receivers (a reshoot of the same patch) count as one. When
+two X records with different receivers fit the shot equally, it is listed under
+**Unmatched**, as only the record number could tell them apart.
 
 Which of the two a file is: a file whose traces hold one receiver station is always
 receiver data, a single shot slice or many, so a file of one receiver is never taken
