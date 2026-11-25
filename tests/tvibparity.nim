@@ -19,7 +19,10 @@
 ## signature files' 100 % force applied raw to the converter's SEG-Y, its row read 0 % average
 ## force and failed; with the top frequency of the window's layout used for every file, the
 ## converter's row was judged in another band than its window; with the unclear polarity lines
-## left without the reversal, a reversed ground force of noise was not said to be reversed.
+## left without the reversal, a reversed ground force of noise was not said to be reversed. The
+## comparison itself (`differences`) was seen to fail on a row's polarity line changed, on its
+## reason for the force not judged changed to one the window does not give, and on a limit the
+## row has and the window lacks.
 
 import std/[math, os, strutils]
 import parseSSDAT
@@ -92,14 +95,42 @@ proc run(st: AppState; files: seq[FolderListed]): FolderTable =
 func same(a, b: float64): bool =
   (a.isNaN and b.isNaN) or abs(a - b) <= 1e-9 * max(1.0, max(abs(a), abs(b)))
 
+const NoForceMeasured = "no force was measured in the judged part"
+
+proc forceDifference(win: AnalysisResult; row: FolderRow): string =
+  ## How the row's reason for its force limits not being judged differs from the window's;
+  ## "" when they agree. The window says it in its own words: a 100 % force not applied (its
+  ## `hundredProblem`, which the row quotes), none given (its `forceNote`), or one applied with
+  ## no force measured.
+  var notJudged = false
+  for q in win.qc.rows:
+    if q.limit in {qlAvgForce, qlPeakForce} and q.status == qsNotJudged and not q.bound.isNaN:
+      notJudged = true
+  if notJudged != (row.forceWhy.len > 0):
+    return "force judged: window " & $(not notJudged) & ", folder \"" & row.forceWhy & "\""
+  if not notJudged: return ""
+  if win.hundredProblem.len > 0:
+    if win.hundredProblem notin row.forceWhy:
+      result = "the window's 100 % force does not apply (" & win.hundredProblem &
+        "), the folder says \"" & row.forceWhy & "\""
+  elif (win.qc.forceNote.len == 0) != (NoForceMeasured in row.forceWhy):
+    result = "the window " & (if win.qc.forceNote.len == 0: "applied a 100 % force"
+      else: "has no 100 % force (" & win.qc.forceNote & ")") & ", the folder says \"" &
+      row.forceWhy & "\""
+
 proc differences(win: AnalysisResult; row: FolderRow): seq[string] =
-  ## What the row says otherwise than the window, limit by limit.
+  ## What the row says otherwise than the window, limit by limit, with its polarity line and its
+  ## reason for not judging the force.
   if row.outcome != foJudged:
     return @["the row is " & $row.outcome & ": " & row.problem]
   if win.qc.verdict != row.verdict:
     result.add "verdict " & $win.qc.verdict & " / " & $row.verdict
   if win.qc.line != row.sentence:
     result.add "sentence \"" & win.qc.line & "\" / \"" & row.sentence & "\""
+  if win.polarity.line != row.polarity:
+    result.add "polarity \"" & win.polarity.line & "\" / \"" & row.polarity & "\""
+  let force = forceDifference(win, row)
+  if force.len > 0: result.add force
   for q in win.qc.rows:
     var found = false
     for m in row.measures:
@@ -111,6 +142,11 @@ proc differences(win: AnalysisResult; row: FolderRow): seq[string] =
             $q.bound & "), folder " & $m.status & " " & $m.measured & " (limit " &
             $m.bound & ")"
     if not found: result.add $q.limit & " is not in the row"
+  for m in row.measures:
+    var found = false
+    for q in win.qc.rows:
+      if q.limit == m.limit: found = true
+    if not found: result.add $m.limit & " is in the row, not in the window"
 
 proc rowOf(t: FolderTable; path: string): FolderRow =
   for row in t.rows:
