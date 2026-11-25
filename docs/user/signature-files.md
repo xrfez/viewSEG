@@ -200,8 +200,11 @@ reaction mass's channel and the one coded 18 the baseplate's. For this layout on
 the reaction mass on the trace coded 19 and the baseplate on the one coded 18 (the other way
 round from the codes' usual meaning), so no swap is needed; the Masses group says which trace
 each mass multiplies (trace number and code), and **Swap mass and baseplate** in Roles still
-works and is remembered for the file layout. The role pickers are free for these files. The
-folder QC judges a converter's file on the roles the window takes for its layout, a swap
+works and is remembered for the file layout. The role pickers are free for these files. When
+the ground force is made and the two weights on the other traces follow the reference clearly
+better (a mean phase more than 20° lower), a line says so and nothing is swapped. No such line
+does not prove the order is right: when the two channels are nearly in phase with each other,
+both orders give much the same phase and the check cannot tell them apart. The folder QC judges a converter's file on the roles the window takes for its layout, a swap
 included, and its row carries the same word when the other order fits the reference clearly
 better (the polarity stays as recorded there).
 
