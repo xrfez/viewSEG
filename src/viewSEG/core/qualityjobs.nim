@@ -44,7 +44,7 @@
 ##
 ## `folderScan` lists a folder (its subfolders only when asked) and scans its files.
 
-import std/[algorithm, options, os, sets, sequtils, tables]
+import std/[algorithm, atomics, options, os, sets, sequtils, tables]
 import parseSEG
 import processSEG/core/[pool, rows, types, workspace]
 import processSEG/qc/amplitude
@@ -329,6 +329,12 @@ type
     noise: NoiseSettings
     untold: UntoldKind
     folderRun: bool
+    sizes: seq[int64]   ## the file sizes: what an item can tell of what runs beside it
+    budget: int64
+    narrow, wide: int
+      ## threads for the first-break passes of a file that runs beside others, and of one that
+      ## runs alone (the only file, or too large to share the budget)
+    mixed: Atomic[bool] ## `take` saw shot and receiver gathers together: nothing is measured now
     round: int ## 0: the files; 1: those whose kind cannot be told, taken as `takenAs`
     takenAs: ReportSide
 
@@ -399,13 +405,16 @@ proc qualityItem(it: ItemContext; a: ptr QualityItems; i: int): QualityOne
       result.sided = true
       if a.round == 0 and fileSide.side == rsCannotTell and a.folderRun:
         result.deferred = true
-      elif fileSide.side != rsCannotTell:
+      elif fileSide.side != rsCannotTell and not a.mixed.load:
+        # (a mix seen by the files before this one leaves the rest only counted)
         # (a continuous recording is measured at its receiver stations)
         let side = if fileSide.side == rsReceiver: ssSources else: ssReceivers
         var part: array[StationSide, QualityBuild] = [initQualityBuild(), initQualityBuild()]
         var partUnread: seq[tuple[path, why: string]] = @[]
         try:
-          if s.gathers.len > 0: workers = newProcessPool(1)
+          if s.gathers.len > 0:
+            let alone = a.files.len == 1 or a.sizes[i] * 2 > a.budget
+            workers = newProcessPool(if alone: a.wide else: a.narrow)
           measure(s.filePtr, path, {side}, a.files[i].killed, part, partUnread, s.gathers,
             a.noise, it, addr workers)
           result.measured = true
@@ -469,10 +478,16 @@ proc runRound(ctx: JobContext; st: ptr ScanState; args: ptr QualityItems; at: se
       sizes[k] = max(0'i64, fs.getFileSize(f.path))
     except OSError:
       sizes[k] = 0 # the item says why it cannot be read
+  args.sizes = sizes
+  args.budget = itemBudget
+  let threads = max(1, min(ctx.itemThreads, count))
+  args.wide = defaultBreakWorkers()
+  args.narrow = max(1, args.wide div threads)
   proc take(k: int; outcome: sink ItemOutcome[QualityOne]) {.closure, gcsafe.} =
     if ctx.cancelled: raise newException(JobCancelledError, "cancelled")
     if outcome.ok:
       st[].apply(args.files[k].path, at[k], outcome.value, args.round, args.untold)
+      if st.counts.isMixed: args.mixed.store(true)
     elif outcome.failure.cancelled:
       raise newException(JobCancelledError, "cancelled")
     else:

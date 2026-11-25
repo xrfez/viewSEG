@@ -10,6 +10,9 @@
 ## and leaves nothing unjoined. A watchdog fails the run after 10 s in any one
 ## step instead of hanging.
 ##
+## `plainData` looks into an array indexed by an enum or by a range that does not start at 0
+## (`plainDataChecks`; before, `array[Kind, int]` did not compile).
+##
 ## Seen to fail, then restored (each by a small change in `core/itempool`; the
 ## models' mutants 1, 4, 5 and 7 of `docs/models/itempool.nif`):
 ## - the worker's `broadcast b.ready` after placing removed: the watchdog ends
@@ -177,6 +180,10 @@ proc plainDataChecks() =
       of false: n: int
     PdSub = object of PdBase
       extra: int
+    Kind = enum
+      kA, kB, kC
+    ByKind = array[Kind, int]
+    ByKindRef = array[Kind, ref int]
   static:
     doAssert plainData(int) and plainData(string) and plainData(seq[string])
     doAssert plainData(Row) and plainData(seq[Row]) and plainData(ItemFailure)
@@ -191,6 +198,9 @@ proc plainDataChecks() =
     doAssert not plainData(Nested)
     # an object whose parent is a variant object is refused too
     doAssert not plainData(PdSub), "an object of a variant parent passed"
+    # an array indexed by an enum or by a range that does not start at 0 is looked into
+    doAssert plainData(ByKind) and plainData(array[2 .. 4, string]) and plainData(seq[ByKind])
+    doAssert not plainData(ByKindRef) and not plainData(array[2 .. 4, Node])
   # a result type with a ref is refused at compile time
   var pool: ItemPool
   var p: Probe

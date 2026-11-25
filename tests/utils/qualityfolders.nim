@@ -84,6 +84,10 @@ proc shotsFile*(path: string) =
   ## One shot at six stations.
   shotAt(path, 99, [1, 2, 3, 4, 5, 9])
 
+proc receiverFile*(path: string) =
+  ## One receiver recording five sources.
+  receiverAt(path, 90, [1, 2, 3, 4, 5])
+
 proc partial(path: string; shot: int; two: openArray[int]) =
   ## One shot at the points 1 .. 4 of line 10, each with component 1 and those in `two` also
   ## with component 2: component 2 counts for the file when at least two of its stations, and

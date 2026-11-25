@@ -98,7 +98,9 @@ func plainData*(T: typedesc): bool =
     true
   elif T is distinct:
     plainData(distinctBase(T))
-  elif T is (seq | array | openArray):
+  elif T is array:
+    plainData(typeof(default(T)[low(T)])) # (indexed by an enum or from other than 0 too)
+  elif T is (seq | openArray):
     plainData(typeof(default(T)[0]))
   elif T is object and isVariantObject(T):
     false

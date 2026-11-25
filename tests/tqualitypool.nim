@@ -16,8 +16,8 @@
 ## unread file. With a cancel raised neither by `take`, nor after the batch, nor before the
 ## report, `a_cancel_while_files_are_in_hand_*` found the job done.
 
-import std/[atomics, os, strutils, times]
-import viewSEG/core/[itempool, jobs, noisearea, qualityjobs, qualityreport, recordingkind]
+import std/[atomics, locks, os, sequtils, strutils, tables, times]
+import viewSEG/core/[itempool, jobs, noisearea, qualityjobs, qualityreport, recordingkind, reportside]
 import utils/[faultyfs, fixtures, qualityfolders, waiting]
 
 const Expected = [
@@ -34,6 +34,17 @@ const Expected = [
 
 var mappedCalls, failAt: Atomic[int]
 var failing: string
+
+var readLock: Lock
+var readCounts: Table[string, int]
+initLock readLock
+
+proc readHook(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
+  ## Notes each file whose samples are read.
+  {.cast(gcsafe).}:
+    if op == foMapped:
+      withLock readLock:
+        readCounts.mgetOrPut(path, 0) += 1
 
 proc countingHook(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
   ## Counts the mapped reads of `failing`; the `failAt`th is an I/O error.
@@ -163,6 +174,40 @@ proc main*() =
         doAssert named == 1 and got.unread.len == 1, $got.unread
         doAssert got.receivers.totals.traces == 6 and got.receivers.totals.files == 1,
           "the unread file is counted: " & $got.receivers.totals
+
+    block a_mix_stops_the_measuring_of_the_files_after_it:
+      let dir = fx.dir / "mix"
+      createDir dir
+      var paths: seq[string] = @[]
+      for k in 1 .. 30:
+        let p = dir / ("m" & $k & ".sgd")
+        if k == 3: receiverFile(p) else: shotsFile(p)
+        paths.add p
+      var kinds = forcedKinds(paths, rkShotGather)
+      kinds[forcedPath(paths[2])] = rkReceiverSliced
+      let sc = Scenario(name: "mix", paths: paths, forced: kinds)
+      let cache = fx.dir / "mixcache"
+      let serial = sc.scan(1, cache)
+      doAssert serial.result.mixed.len > 0 and serial.result.receivers.totals.traces == 0
+      setFsHook(readHook)
+      defer: setFsHook(nil)
+      # the cache holds the keys of every file: what is read now is the measuring
+      # a folder with no mix: every file is opened and measured, the reads of one file `full`
+      readCounts.clear()
+      let plain = Scenario(name: "no mix", paths: paths[3 .. ^1], forced: kinds).scan(4, cache)
+      doAssert plain.result.receivers.totals.files == 27
+      var full = 0
+      withLock readLock:
+        for _, n in readCounts: full = max(full, n)
+      readCounts.clear()
+      let got = sc.scan(4, cache)
+      doAssert got.result.digest == serial.result.digest
+      var measured = 0
+      withLock readLock:
+        for _, n in readCounts:
+          if n >= full: inc measured
+      # the files taken before the mix, and as many as the pool holds beyond them
+      doAssert measured <= 2 + 2 * 4, $measured & " of 30 files measured"
 
   echo "tqualitypool: ok"
 
