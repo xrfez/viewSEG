@@ -17,13 +17,13 @@
 ## dropped after each shot ("read 122100 for a union of 8000"); a record's
 ## headers counted short (written 50544, estimated 50160).
 
-import std/[assertions, math, os, sequtils, strutils]
+import std/[assertions, atomics, math, os, sequtils, strutils, times]
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG
 import processSEG/continuous/slice
 import processSEG/core/[rows, workspace]
-import viewSEG/core/[cutgather, cutgatherjobs, jobs, recordtime, shotlog]
+import viewSEG/core/[cutgather, cutgatherjobs, filesystem, jobs, recordtime, shotlog]
 import utils/waiting
 
 const
@@ -103,6 +103,24 @@ const
   Offsets = [2_123_456'i64, 2_600_000, 6_000_000, 6_400_000, 10_300_000, 17_800_000,
     23_700_000]
   Files = [101, 102, 103, 104, 105, 106, 107]
+
+var
+  mappedCalls: Atomic[int] ## reads of the recording's map seen by the hook
+  failFrom: Atomic[int]    ## from this call on the hook raises (0: never)
+  napMs: Atomic[int]       ## each call from `napFrom` on sleeps this long
+  napFrom: Atomic[int]
+  hookPath: string
+
+proc countingHook(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
+  var mine = false
+  {.cast(gcsafe).}:
+    mine = path == hookPath
+  if op in {foMapped, foHeaders} and mine:
+    let n = mappedCalls.fetchAdd(1) + 1
+    let nap = if n >= napFrom.load(): napMs.load() else: high(int)
+    if nap > 0 and nap != high(int): sleep nap
+    let at = failFrom.load()
+    if at > 0 and n >= at: raise newException(OSError, "Input/output error")
 
 type Ran = tuple[st: JobState; res: CutResult; error: string]
 
@@ -540,6 +558,99 @@ proc main*() =
     for kind, path in walkDir(outDir):
       if extractFilename(path).startsWith("nosink.sgd.part-"): stray.add path
     doAssert stray.len == 0, $stray
+
+  block cutter_failure_and_cancel_end_both_threads:
+    # The cutter thread reads the recording and the job thread writes. Fails when a read
+    # that fails on the cutter does not reach the job as its failure ("Writing the file
+    # failed: Input/output error"), leaves the part file, or leaves a thread running (the
+    # job would not end within 10 s); when a cancel while the writer waits for a slow
+    # cutter does not end the cutter (the job ends only after it, so it stays running);
+    # Seen failing: the cutter's failure not raised on the job thread (the job said it was
+    # done); the stop of a failing writer left out (see the block after this one).
+    let limit = initDuration(seconds = 10)
+    hookPath = same.path
+    setFsHook(countingHook)
+    defer: setFsHook(nil)
+    # how many reads a whole cut makes, to put a failure in its last one
+    mappedCalls.store 0
+    failFrom.store 0
+    napMs.store 0
+    napFrom.store 1
+    let whole = runCut(jobs, srcSame, same.path, outDir / "count.sgd", shots, opts)
+    doAssert whole.st == jsDone, whole.error
+    let reads = mappedCalls.load()
+    doAssert reads > 3, $reads
+    for at in 1 .. reads:
+      let what = "read " & $at
+      let dest = outDir / "fault.sgd"
+      mappedCalls.store 0
+      failFrom.store at
+      napFrom.store at # the failing read comes late: the writer has written every record
+      napMs.store 100
+      let sink = CutSink()
+      let id = jobs.submit(cutGatherSpec(same.path, dest),
+        cutGatherWork(addr srcSame, same.path, dest, shots, opts, sink))
+      doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled}, limit),
+        what & ": the job did not end"
+      doAssert jobs.info(id).get.state == jsFailed, what & ": " & $jobs.info(id).get.state
+      doAssert "Input/output error" in sink.result.reason and
+        "partial file was removed" in sink.result.reason, what & ": " & sink.result.reason
+      doAssert not fileExists(dest), what
+      doAssert partFiles(outDir).len == 0, what & ": " & $partFiles(outDir)
+    failFrom.store 0
+    napFrom.store 1
+    # a cancel while the writer waits for a slow cutter
+    napMs.store 40
+    mappedCalls.store 0
+    block:
+      let dest = outDir / "slowcancel.sgd"
+      let sink = CutSink()
+      var calls = 0
+      let f = addr srcSame
+      let id = jobs.submit(cutGatherSpec(same.path, dest), proc (ctx: JobContext) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          cutGather(ctx, f, same.path, dest, shots, opts, sink, report =
+            proc (done, total: int64): bool {.gcsafe.} =
+              {.cast(gcsafe).}:
+                inc calls
+                calls < 3))
+      doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled}, limit),
+        "the cancelled job did not end"
+      doAssert jobs.info(id).get.state == jsCancelled, $jobs.info(id).get.state
+      doAssert sink.result.removed and not fileExists(dest)
+      doAssert partFiles(outDir).len == 0
+      # the cutter stopped at the cancel: it made no more reads once the job had ended
+      let seen = mappedCalls.load()
+      sleep 200
+      doAssert mappedCalls.load() == seen, "the cutter went on after the job ended"
+    napMs.store 0
+    mappedCalls.store 0
+
+  block writer_failure_stops_a_cutter_waiting_for_a_slot:
+    # More shots than the ring holds, and a report that raises on its second call: the
+    # cutter waits for a free slot when the job fails. Fails (the job does not end within
+    # 10 s) when the failing job does not stop the cutter before it joins it.
+    var fs: seq[int] = @[]
+    var offs: seq[int64] = @[]
+    for i in 0 ..< 30:
+      fs.add 500 + i
+      offs.add 300_000'i64 * i
+    let many = shotsInTime(logOf(fs, offs).rows)
+    let dest = outDir / "manyfail.sgd"
+    var calls = 0
+    let f = addr srcSame
+    let id = jobs.submit(cutGatherSpec(same.path, dest), proc (ctx: JobContext) {.gcsafe.} =
+      {.cast(gcsafe).}:
+        cutGather(ctx, f, same.path, dest, many, opts, nil, report =
+          proc (done, total: int64): bool {.gcsafe.} =
+            {.cast(gcsafe).}:
+              inc calls
+              if calls == 2: raise newException(ValueError, "injected failure")
+              true))
+    doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled},
+      initDuration(seconds = 10)), "the failed job did not end"
+    doAssert jobs.info(id).get.state == jsFailed
+    doAssert partFiles(outDir).len == 0
 
   block windows_past_both_ends_of_the_recording:
     # One shot's window starts before the first sample, another ends after the

@@ -41,8 +41,9 @@ import parseSEG/model/traceindex
 import processSEG
 import processSEG/continuous/slice
 import processSEG/core/[rows, workspace]
-import cutcarry, cutfile, cutfills, cutgather, cutheaders, filesystem, jobs, outputbinary,
-    outputjobs, outputtext, recordingkind, segmentclock, shotlog, vendormaps
+import cutcarry, cutfile, cutfills, cutgather, cutheaders, cutpipe, filesystem, jobs,
+    outputbinary, outputjobs, outputtext, recordingkind, segmentclock, shotlog, threads,
+    vendormaps
 
 const
   NamedMax* = 5 ## how many overlaps and timing issues the result names
@@ -370,6 +371,167 @@ func cutLines(res: CutResult; opts: CutOptions): seq[string] =
         " could not be read and are zeros, in " &
       plural(res.shotsWithFailures, "shot", "shots") & "."
 
+type
+  CarryTrace = object
+    ## What the cutter worked out for one carried trace, from the source's headers.
+    source: int        ## the source trace it is written like
+    sourcePlace: bool  ## a Rev 3 trace that takes the shot's source place
+    over: seq[HeaderOverride]
+    counts: StartCount ## what `traceOverrides` counted for this trace alone
+
+  CutRecord = object
+    ## One shot's output record, made by the cutter and written by the job thread, handed
+    ## over through a `CutPipe` (swapped, so each side reuses the buffers it gets back).
+    shotUs, firstUs: int64 ## the shot's time, and its window's first sample
+    shotFailed: bool
+    samples: seq[float32] ## the traces in the order written, `plan.samples` each
+    keys: seq[TraceKeys] ## per trace, with the record number and channel set
+    gaps, failed: seq[int] ## per trace: output samples in gaps, and of unread pieces
+    facts: seq[Facts]
+    hasFacts: seq[bool] ## keys path: the trace's source facts are in `facts`
+    traces: seq[int] ## carried path: the shot's source traces, ascending
+    startsDiffer, rev3: bool ## the channel sets' starts differ; the source is Rev 3
+    patch: SubsetPatch
+    carried: seq[CarryTrace]
+
+  CutterJob = object
+    ## What the cutter thread reads (set before it starts, not changed while it runs) and
+    ## hands back (`fetched`, `report`'s contents: read after the join).
+    pipe: CutPipe[CutRecord]
+    file: ptr SeismicFile
+    source: string
+    plan: ptr SlicePlan
+    shots: ptr CutShots
+    opts: ptr CutOptions
+    numbers: ptr seq[int]
+    rows: ptr CarryRows
+    written: ptr seq[int]
+    vendors: ptr VendorRegistry
+    report: ptr SliceReport
+    carry, startField: bool
+    fetched: int
+
+proc cutShots(c: ptr CutterJob) =
+  ## The cutter: makes the records `0 ..< shots` in order and places them in the pipe, then
+  ## compares what overlaps are left. Reads the source file; never writes.
+  template plan: untyped = c.plan[]
+  template file: untyped = c.file[]
+  let comps = plan.receiverCount
+  let samples = plan.samples
+  var ws = initWorkspace()
+  ws.reserve(sliceWorkspace(float32, plan))
+  var buf = initSourceBuffer()
+  var st = new FetchState
+  st.file = c.file
+  st.source = c.source
+  let fetch = makeFetch(st)
+  var touched: seq[int] = @[]
+  # the facts of the last source trace each receiver was cut from: its segments are
+  # reached in time order, so an earlier one is not asked again
+  var lastFacts = newSeq[tuple[trace: int; facts: Facts]](comps)
+  for r in 0 ..< comps: lastFacts[r] = (-1, initFacts())
+  var rec = CutRecord()
+  try:
+    var first, last = 0
+    while c.pipe.takeChunk(first, last):
+      for s in first ..< last:
+        if c.pipe.stopped() != skNone: return
+        let sh = c.shots[].shots[s]
+        let firstUs = sh.timeUs + int64(round(c.opts[].startMs * 1000))
+        rec.shotUs = sh.timeUs
+        rec.firstUs = firstUs
+        rec.samples.setLen comps * samples
+        rec.keys.setLen comps
+        rec.gaps.setLen comps
+        rec.failed.setLen comps
+        rec.facts.setLen comps
+        rec.hasFacts.setLen comps
+        rec.carried.setLen(if c.carry: comps else: 0)
+        touched.setLen 0
+        var shotFailed = false
+        var want = CarryShot()
+        if c.carry:
+          if not file.inMemory: fs.mappedRead(c.source, headers = true)
+          want = carryShot(file, plan, c.rows[], s)
+          rec.traces = want.traces
+          rec.startsDiffer = want.startsDiffer
+          rec.rev3 = isRev3(file, want.traces[0])
+          # The record's time zero is its first sample's instant less the start of the
+          # carried channel set, which keeps its start: a reader that adds the start finds
+          # the first sample (Rev 3 counts both on the GPS clock). With sets of different
+          # starts, the earliest; each Rev 3 trace's Timestamp is set to its own first sample.
+          let zeroUs = if rec.rev3: gpsUsToUtcUs(utcUsToGpsUs(firstUs) - want.startUs)
+            else: firstUs - want.startUs
+          rec.patch = SubsetPatch(fileNumber: c.numbers[][s], time: toPosixSeconds(zeroUs))
+          if not rec.rev3:
+            rec.patch.headers = sourceHeaders(file, want.traces[0], sh.srcLine, sh.srcPoint,
+              sh.srcIndex)
+        for i in 0 ..< comps:
+          let r = if c.carry: want.comps[i] else: c.written[][i]
+          let trace = s * comps + r
+          for pc in plan.pieces(trace):
+            if pc.row >= 0 and pc.row notin touched: touched.add pc.row
+          let at = i * samples
+          if cutOne(plan, trace, buf, fetch, rec.samples.toOpenArray(at, at + samples - 1),
+              c.report[], ws): shotFailed = true
+          rec.gaps[i] = c.report[].gapSamples(trace)
+          rec.failed[i] = c.report[].failedSamples(trace)
+          var k = plan.sliceKeys(trace)
+          k.record = float64(c.numbers[][s])
+          if c.carry:
+            let source = want.traces[i]
+            k.channel = float64(r + 1)
+            var ct = CarryTrace(source: source)
+            ct.over = traceOverrides(file, source, want.ordinals[i], firstUs, c.vendors[],
+              c.startField, plan.gapSamples(trace) >= plan.samples, ct.counts)
+            if isRev3(file, source) and hasSourcePlace(k):
+              ct.sourcePlace = true
+              k.rcvLine = NaN
+              k.rcvPoint = NaN
+              k.rcvIndex = 0
+              k.rcvX = NaN
+              k.rcvY = NaN
+              k.rcvZ = NaN
+            rec.carried[i] = ct
+          else:
+            k.channel = float64(i + 1) # the trace's place in the record, as written
+            # the facts of the recording's headers come from the segment that holds the
+            # trace's first sample, each trace from its own
+            # (a trace no segment reaches is dead and says nothing of a recording)
+            let origin =
+              if k.status == tsDead: -1
+              else: firstRow(plan, trace, c.rows[].fallback[r])
+            rec.hasFacts[i] = origin >= 0
+            if origin >= 0:
+              if lastFacts[r].trace != origin:
+                if not file.inMemory: fs.mappedRead(c.source, headers = true)
+                lastFacts[r] = (origin, sourceFacts(file, origin))
+              rec.facts[i] = lastFacts[r].facts
+          rec.keys[i] = k
+        rec.shotFailed = shotFailed
+        if not c.pipe.place(s, rec): return
+        discard settleShot(plan, buf, fetch, c.report[], touched, s)
+    discard checkOverlaps(plan, buf, fetch, c.report[], final = true)
+  finally:
+    c.fetched = st.fetched
+
+proc cutterMain(c: ptr CutterJob) {.thread.} =
+  ## The cutter thread. A failure stops the pipe with the first letter of the kind
+  ## (`T` a source cut short, `O` an `OSError`, `D` a `Defect`, `E` any other) and its message.
+  markWorkerThread()
+  {.cast(gcsafe).}:
+    try:
+      cutShots(c)
+    except SegTruncatedError as e:
+      c.pipe.stopWith(skProducer, 'T' & readProblem(e))
+    except OSError as e:
+      c.pipe.stopWith(skProducer, 'O' & e.msg)
+    except CatchableError as e:
+      c.pipe.stopWith(skProducer, 'E' & e.msg)
+    except Defect as e:
+      c.pipe.stopWith(skProducer, 'D' & e.msg)
+    clearCycleRoots()
+
 proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
     shots: CutShots; opts: CutOptions; sink: CutSink; openPaths: seq[string] = @[];
     report: proc (done, total: int64): bool {.gcsafe.} = nil) =
@@ -590,155 +752,159 @@ proc cutGather*(ctx: JobContext; file: ptr SeismicFile; source, dest: string;
           if opts.standard == csSegy: "SEG-Y revision " & $SegyOutputOptions().revision
           else: "SEG-D"
 
-      var ws = initWorkspace()
-      ws.reserve(sliceWorkspace(float32, plan))
+      # Who owns what while the slice runs. The cutter thread owns the source file's reads,
+      # the plan's reads, `ws`, the source buffer, `sliceReport`, its fetch state and the
+      # record it is filling; the job thread (this one) owns `w`, `res`, `startCount`,
+      # `startsNoted`, the progress and the cancel. Nothing else is shared: a record crosses
+      # in the pipe by swap, and `cutter`'s inputs are read-only while the thread runs. What
+      # the cutter hands back at the end (`sliceReport`, `fetched`) is read after the join.
+      # The writer hands the source file to the library for the headers a carried trace
+      # keeps: those are reads of the open file, which parseSEG allows beside the cutter's.
       var sliceReport = initSliceReport(plan)
       prepareSliceReport(plan, sliceReport)
-      var buf = initSourceBuffer()
-      var st = new FetchState
-      st.file = file
-      st.source = source
-      let fetch = makeFetch(st)
-      var dst = newSeq[float32](plan.samples)
-      var touched: seq[int] = @[]
       var startCount = StartCount()
-      # the facts of the last source trace each receiver was cut from: its segments are
-      # reached in time order, so an earlier one is not asked again
-      var lastFacts = newSeq[tuple[trace: int; facts: Facts]](comps)
-      for r in 0 ..< comps: lastFacts[r] = (-1, initFacts())
       var startsNoted = false
       var lastDetail = fs.now() - DetailEvery
       let total = shots.shots.len
       let perShot = expected div total
-      var done = 0'i64
-
-      for s in 0 ..< total:
-        let firstUs = shots.shots[s].timeUs + int64(round(opts.startMs * 1000))
-        touched.setLen 0
-        var shotFailed = false
-        var refusal = ""
-        var started = false
-        var want = CarryShot()
-        if carry:
-          if not file[].inMemory: fs.mappedRead(source, headers = true)
-          want = carryShot(file[], plan, rows, s)
-          let sh = shots.shots[s]
-          # The record's time zero is its first sample's instant less the start of the
-          # carried channel set, which keeps its start: a reader that adds the start finds
-          # the first sample (Rev 3 counts both on the GPS clock). With sets of different
-          # starts, the earliest; each Rev 3 trace's Timestamp is set to its own first sample.
-          let zeroUs = if isRev3(file[], want.traces[0]):
-              gpsUsToUtcUs(utcUsToGpsUs(firstUs) - want.startUs)
-            else: firstUs - want.startUs
-          if want.startsDiffer and not startsNoted:
-            startsNoted = true
-            res.carryNotes.add "The channel sets' start times differ: each record's time is " &
-              "its first sample's less the earliest of them, and " &
-              (if isRev3(file[], want.traces[0]):
-                "each trace's own time stamp holds its first sample's time."
-              else: "the traces of a set that starts later begin that much before the record's " &
-                "time plus their set's start.")
-          var patch = SubsetPatch(fileNumber: numbered.numbers[s], time: toPosixSeconds(zeroUs))
-          if not isRev3(file[], want.traces[0]):
-            patch.headers = sourceHeaders(file[], want.traces[0], sh.srcLine, sh.srcPoint,
-              sh.srcIndex)
-          # `startSubset` also ends the record before it. A record whose traces were all
-          # written cannot fail there: each trace's count and end time are checked when it is
-          # written, so a refusal here is this shot's own (its patch).
-          try:
-            w.startSubset(file[], want.traces, patch)
-            started = true
-          except SegTruncatedError as e:
-            # the recording was cut short while the job runs: the job fails, not the shot
-            raise newException(IOError, readProblem(e))
-          except ValueError, SegFormatError:
-            refusal = getCurrentExceptionMsg()
-        for i in 0 ..< comps:
-          let r = if carry: want.comps[i] else: written[i]
-          let trace = s * comps + r
-          for pc in plan.pieces(trace):
-            if pc.row >= 0 and pc.row notin touched: touched.add pc.row
-          if cutOne(plan, trace, buf, fetch, dst, sliceReport, ws): shotFailed = true
-          res.gapSamples += sliceReport.gapSamples(trace)
-          res.failedSamples += sliceReport.failedSamples(trace)
-          if carry:
-            if refusal.len == 0:
-              let source = want.traces[i]
-              var k = plan.sliceKeys(trace)
-              k.record = float64(numbered.numbers[s])
-              k.channel = float64(r + 1)
-              var over = traceOverrides(file[], source, want.ordinals[i], firstUs, vendors,
-                clock.fromHeaders, plan.gapSamples(trace) >= plan.samples,
-                startCount)
+      let samples = plan.samples
+      # The ring holds at most `ring` records, so the memory the hand-over takes is at most
+      # (ring + 2) records (the cutter's and the writer's own beside the ring): about
+      # 32 MiB of samples, whatever the number of shots (a record bigger than 16 MiB: 4).
+      let recordBytes = comps * (samples * sizeof(float32) + 600)
+      let ring = clamp((32 shl 20) div max(1, recordBytes), 2, 8)
+      let pipe = newCutPipe[CutRecord](total, ring, total)
+      var cutter = CutterJob(pipe: pipe, file: file, source: source, plan: unsafeAddr plan,
+        shots: unsafeAddr shots, opts: unsafeAddr opts, numbers: unsafeAddr numbered.numbers,
+        rows: unsafeAddr rows, written: addr written, vendors: unsafeAddr vendors,
+        report: addr sliceReport, carry: carry, startField: clock.fromHeaders)
+      var thread: Thread[ptr CutterJob]
+      var started = false
+      var cancelled = false
+      var allTaken = false
+      try:
+        try:
+          createThread(thread, cutterMain, addr cutter)
+          started = true
+          var rec = CutRecord()
+          var taken = 0
+          while true:
+            case pipe.takeNext(rec)
+            of tkDone:
+              allTaken = true
+              break
+            of tkStopped: break
+            of tkRecord: discard
+            let s = taken
+            var refusal = ""
+            var recStarted = false
+            if carry:
+              if rec.startsDiffer and not startsNoted:
+                startsNoted = true
+                res.carryNotes.add "The channel sets' start times differ: each record's time " &
+                  "is its first sample's less the earliest of them, and " &
+                  (if rec.rev3: "each trace's own time stamp holds its first sample's time."
+                  else: "the traces of a set that starts later begin that much before the " &
+                    "record's time plus their set's start.")
+              # `startSubset` also ends the record before it. A record whose traces were all
+              # written cannot fail there: each trace's count and end time are checked when it
+              # is written, so a refusal here is this shot's own (its patch).
               try:
-                if isRev3(file[], source) and hasSourcePlace(k):
-                  # the receiver stays the source's own, whatever the session holds
-                  k.rcvLine = NaN
-                  k.rcvPoint = NaN
-                  k.rcvIndex = 0
-                  k.rcvX = NaN
-                  k.rcvY = NaN
-                  k.rcvZ = NaN
-                  w.writeTrace(file[], source, dst, k, over, SourceFields)
-                else:
-                  w.writeTrace(file[], source, dst, over)
+                w.startSubset(file[], rec.traces, rec.patch)
+                recStarted = true
               except SegTruncatedError as e:
+                # the recording was cut short while the job runs: the job fails, not the shot
                 raise newException(IOError, readProblem(e))
               except ValueError, SegFormatError:
-                # a format refusal is the shot's, like a caller error; an IOError is not
                 refusal = getCurrentExceptionMsg()
-                if started: w.abandonRecord()
-          else:
-            var k = plan.sliceKeys(trace)
-            k.record = float64(numbered.numbers[s])
-            k.channel = float64(i + 1) # the trace's place in the record, as written
-            # the facts of the recording's headers come from the segment that holds the
-            # trace's first sample, each trace from its own
-            var fill = TraceFill()
-            # (a trace no segment reaches is dead and says nothing of a recording)
-            let origin =
-              if k.status == tsDead: -1 else: firstRow(plan, trace, rows.fallback[r])
-            if origin >= 0:
-              if lastFacts[r].trace != origin:
-                if not file[].inMemory: fs.mappedRead(source, headers = true)
-                lastFacts[r] = (origin, sourceFacts(file[], origin))
-              let facts = lastFacts[r].facts
-              case opts.standard
-              of csSegdRev3: keysOnly(facts, res.fills)
-              of csSegy:
-                fill = segyFill(facts, res.fills)
-                if fill.traceCode != 0 and k.status != tsDead: k.traceCode = fill.traceCode
-            case opts.standard
-            of csSegdRev3:
-              k.time = toPosixSeconds(firstUs)
-              k.noteRecordedTime(toFirstSample, firstUs)
-              w.writeTrace(k, dst, fill.overrides, channelType = sctSeismic,
-                externalHeader = external)
-            of csSegy:
-              # The SEG-Y writer takes `time` as time zero.
-              k.time = toPosixSeconds(shots.shots[s].timeUs)
-              k.noteRecordedTime(toRecordTimeZero, shots.shots[s].timeUs)
-              w.writeTrace(k, dst, fill.overrides, channelType = sctSeismic)
-        if shotFailed: inc res.shotsWithFailures
-        discard settleShot(plan, buf, fetch, sliceReport, touched, s)
-        if refusal.len > 0:
-          inc res.shotsRefused
-          if res.refusals.len < NamedMax:
-            res.refusals.add "record " & $numbered.numbers[s] & ": " & refusal
-        else:
-          inc res.shotsWritten
-        done = perShot * int64(s + 1)
-        if not tell(done, expected): abort(sink, dest, part, claimed, "Cancelled.", true)
-        let now = fs.now()
-        if now - lastDetail >= DetailEvery:
-          lastDetail = now
-          ctx.setDetail $(s + 1) & " of " & $total & " shots"
-      ctx.setDetail ""
-      if carry and res.shotsWritten == 0:
-        abort(sink, dest, part, claimed, "The writer refused every shot: " &
-          res.refusals.join("; ") & ".", false)
-      discard checkOverlaps(plan, buf, fetch, sliceReport, final = true)
-      res.samplesRead = st.fetched
+            for i in 0 ..< comps:
+              res.gapSamples += rec.gaps[i]
+              res.failedSamples += rec.failed[i]
+              let first = i * samples
+              if carry:
+                if refusal.len == 0:
+                  let ct = rec.carried[i]
+                  startCount.rewritten += ct.counts.rewritten
+                  startCount.missing += ct.counts.missing
+                  startCount.trigger += ct.counts.trigger
+                  startCount.triggerLeft += ct.counts.triggerLeft
+                  try:
+                    if ct.sourcePlace:
+                      # the receiver stays the source's own, whatever the session holds
+                      w.writeTrace(file[], ct.source,
+                        rec.samples.toOpenArray(first, first + samples - 1), rec.keys[i],
+                        ct.over, SourceFields)
+                    else:
+                      w.writeTrace(file[], ct.source,
+                        rec.samples.toOpenArray(first, first + samples - 1), ct.over)
+                  except SegTruncatedError as e:
+                    raise newException(IOError, readProblem(e))
+                  except ValueError, SegFormatError:
+                    # a format refusal is the shot's, like a caller error; an IOError is not
+                    refusal = getCurrentExceptionMsg()
+                    if recStarted: w.abandonRecord()
+              else:
+                var k = rec.keys[i]
+                var fill = TraceFill()
+                if rec.hasFacts[i]:
+                  case opts.standard
+                  of csSegdRev3: keysOnly(rec.facts[i], res.fills)
+                  of csSegy:
+                    fill = segyFill(rec.facts[i], res.fills)
+                    if fill.traceCode != 0 and k.status != tsDead: k.traceCode = fill.traceCode
+                case opts.standard
+                of csSegdRev3:
+                  k.time = toPosixSeconds(rec.firstUs)
+                  k.noteRecordedTime(toFirstSample, rec.firstUs)
+                  w.writeTrace(k, rec.samples.toOpenArray(first, first + samples - 1),
+                    fill.overrides, channelType = sctSeismic, externalHeader = external)
+                of csSegy:
+                  # The SEG-Y writer takes `time` as time zero.
+                  k.time = toPosixSeconds(rec.shotUs)
+                  k.noteRecordedTime(toRecordTimeZero, rec.shotUs)
+                  w.writeTrace(k, rec.samples.toOpenArray(first, first + samples - 1),
+                    fill.overrides, channelType = sctSeismic)
+            pipe.written()
+            if rec.shotFailed: inc res.shotsWithFailures
+            if refusal.len > 0:
+              inc res.shotsRefused
+              if res.refusals.len < NamedMax:
+                res.refusals.add "record " & $numbered.numbers[s] & ": " & refusal
+            else:
+              inc res.shotsWritten
+            inc taken
+            if not tell(perShot * int64(taken), expected):
+              pipe.stopWith(skCancel, "Cancelled.")
+              cancelled = true
+              break
+            let now = fs.now()
+            if now - lastDetail >= DetailEvery:
+              lastDetail = now
+              ctx.setDetail $taken & " of " & $total & " shots"
+        finally:
+          # Every way out ends here: the cutter is stopped (unless it only has its last
+          # comparison to finish) and joined before anything below reads what it handed
+          # back or `abort` removes the part file.
+          if started:
+            if not allTaken: pipe.stopWith(skWriter)
+            joinThread(thread)
+        ctx.setDetail ""
+        if cancelled: abort(sink, dest, part, claimed, "Cancelled.", true)
+        if allTaken and carry and res.shotsWritten == 0:
+          abort(sink, dest, part, claimed, "The writer refused every shot: " &
+            res.refusals.join("; ") & ".", false)
+        case pipe.stopped()
+        of skProducer:
+          let m = pipe.stopMessage()
+          case m[0]
+          of 'O': raise newException(OSError, m[1 .. ^1])
+          of 'D': raise newException(AssertionDefect, m[1 .. ^1])
+          else: raise newException(IOError, m[1 .. ^1])
+        of skNone: discard
+        else: abort(sink, dest, part, claimed, "The slice stopped before its end.", false)
+      finally:
+        pipe.close()
+      res.samplesRead = cutter.fetched
       res.startRewritten = startCount.rewritten
       res.startMissing = startCount.missing
       res.triggerRewritten = startCount.trigger
