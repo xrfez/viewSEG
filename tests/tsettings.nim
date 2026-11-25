@@ -79,7 +79,7 @@ proc everyFieldSet(): Settings =
     output: OutputView(segyRevision: orSegy1, segdRevision: orSegd31),
     missing: MissingView(folder: "/jobs/line 7", subfolders: true, untold: ukReceiver),
     quality: QualityView(folder: "/jobs/line 8", subfolders: true, untold: ukShot),
-    hideKilled: true, itemThreads: 3,
+    hideKilled: true, itemThreads: 3, amplitudeIn: aiPhysical,
     spectrum: SpectrumOptions(window: SpectrumDisplay(scale: ssLinear, logFrequency: true,
       time: stVisible, raw: false, processed: false, response: false, phase: true,
       phasePicture: ppSigned),
@@ -160,6 +160,7 @@ proc main*() =
     doAssert not s.cursorLine and s.recentFiles.len == 1 and s.plot.display.mode == dmWiggle
     doAssert not s.files.followLatest, "a new setting takes its default"
     doAssert s.units == usMetric, "an older file loads as Metric"
+    doAssert s.amplitudeIn == aiCounts, "an older file reads the amplitude in counts"
     doAssert s.files.prepareNext, "preparing the next file is on by default"
     doAssert s.map.info == miPopup and s.map.lengths == dlSurvey and s.map.hiddenGroups == {} and
       not s.map.templateBox and s.map.spreadTemplate == TemplateSpec() and s.map.folderShots and

@@ -24,11 +24,11 @@
 
 import std/[math, sequtils]
 import components, displaypresets, geometry, itempool, join, log, mapkinds, noisearea,
-  outputrevision, panels, pickerplaces, plotoptions, readout, scales, shotlayout, spectra,
+  outputrevision, panels, pickerplaces, plotoptions, readout, scales, sensors, shotlayout, spectra,
       tracetable, units
 
 export displaypresets, join, mapkinds, noisearea, pickerplaces, plotoptions, readout, scales,
-    shotlayout, spectra, units
+    sensors, shotlayout, spectra, units
 
 const
   DefaultRecordMs* = 10_000.0 ## the Slice by shot log window's record length to begin with
@@ -245,6 +245,9 @@ type
     units*: UnitSystem
       ## how a plot shows a physical value (a mass, a force, a velocity);
       ## Metric, the default. An older file that does not say loads as Metric.
+    amplitudeIn*: AmplitudeIn
+      ## what the raw amplitude of the status bar is given in: counts (the default; an
+      ## older file loads so), volts, or physical units through the project's sensors
     noise*: NoiseSettings
       ## how the noisy-trace test sets its exclusion area: automatic, or a fixed time, a
       ## radius or a number of stations

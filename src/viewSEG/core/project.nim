@@ -22,7 +22,7 @@ import std/[options, os, strutils, times]
 import parseSEG
 import breakmodel, displaypresets, edits, filesystem, join, nif, outputbinary, outputnames,
     outputtext, processing, shotlayout, shotlog,
-  stationmoves, vendormaps, vibprofile
+  sensors, stationmoves, vendormaps, vibprofile
 
 const
   ProjectFileName* = "project.nif"       ## the project document, in the project folder
@@ -207,6 +207,10 @@ type
     stationMoves*: StationMoves
       ## receiver stations moved during a deployment: a new position from a time
       ## on, not written into the seismic file or the survey file
+    sensors*: SensorTable
+      ## the sensors the traces were recorded with, one row per component, as typed
+    sensorsLater*: seq[NifNode]
+      ## children of `(sensors)` this version does not know, written back
     vendorChoice*: VendorChoice
       ## the vendor map rule of the project's files (`core/vendormaps`); automatic when
       ## the document says nothing

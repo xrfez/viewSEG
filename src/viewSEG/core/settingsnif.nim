@@ -30,6 +30,7 @@
 ##  (scale (length inch) (speed false))
 ##  (calibrations (monitor "DELL U2720Q 3840x2160" 163.2))
 ##  (readout time trace channel receiver)
+##  (amplitudeIn counts)   (counts, volts or physical)
 ##  (sortPresets (preset "Line/Station" (key rcvLine) (key rcvPoint)))
 ##  (customOrder (key offset))
 ##  (messages (autoScroll true) (hide info))
@@ -97,6 +98,7 @@ const
   MaxPresets* = 12     ## sort presets kept
   MaxText = 4096       ## the longest path or name taken
 
+  AmplitudeInNames: array[AmplitudeIn, string] = ["counts", "volts", "physical"]
   OrientationNames: array[Orientation, string] = ["timeDown", "timeAcross"]
   BreakSizeNames: array[BreakSize, string] = ["small", "medium", "large"]
   PickBasisNames: array[PickBasis, string] = ["smoothed", "asRecorded"]
@@ -390,6 +392,7 @@ proc settingsDocument*(s: Settings): string =
   w.value("version", SettingsVersion)
   w.value("theme", s.theme)
   w.choice("units", UnitNames[s.units])
+  w.choice("amplitudeIn", AmplitudeInNames[s.amplitudeIn])
   if s.window.width > 0 and s.window.height > 0:
     w.open("window")
     w.value("x", s.window.x)
@@ -1169,6 +1172,7 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
       of "version": r.integer(c, 1, high(int32), version)
       of "theme": r.text(c, result.theme, allowEmpty = true)
       of "units": r.choice(c, UnitNames, result.units)
+      of "amplitudeIn": r.choice(c, AmplitudeInNames, result.amplitudeIn)
       of "window": r.window(c, result.window)
       of "recentFiles": r.strings(c, result.recentFiles)
       of "recentFolders": r.strings(c, result.recentFolders)

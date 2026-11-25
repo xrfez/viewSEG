@@ -363,6 +363,10 @@ type
     ckStationMove = "station move"
       ## say that a receiver station sits at another position (from a time on), or take that
       ## move away; kept in the project, never written into a survey or seismic file
+    ckSensor = "sensor"
+      ## type the sensitivity of the sensor of one component (as wired, in the unit it was
+      ## typed in), or take that row away; kept in the project, for the amplitude readout in
+      ## physical units
     ckOwnPosition = "own position"
       ## read the position a trace's own header gives its receiver, as the file has it on disk,
       ## off the UI thread, for the station move's choice; changes nothing
@@ -735,6 +739,16 @@ type
       moveForget*: bool
         ## ckStationMove: take away the move of this station (at `moveFrom` when `moveHasFrom`,
         ## else the undated one); the position fields are then not used
+    of ckSensor:
+      sensorComponent*: int
+        ## ckSensor: the component (`componentOf`: 2 vertical geophone, 1 hydrophone, ...) whose
+        ## sensor this is, 1 to 255
+      sensorValue*: float64
+        ## ckSensor: the sensitivity as wired, in `sensorUnit`: finite, above 0, within 1e-12
+        ## and 1e12 volts per SI unit
+      sensorUnit*: string
+        ## ckSensor: "V/(m/s)", "V/(in/s)", "V/(m/s²)", "V/g", "V/bar", "V/Pa" or "µV/Pa"
+      sensorForget*: bool ## ckSensor: take away the row of this component; the value is then not used
     of ckOwnPosition:
       ownTrace*: int
         ## ckOwnPosition: the survey-wide id of the trace whose own header position is read
@@ -8852,6 +8866,7 @@ proc takeOpened(state: var AppState; m: sink Msg) =
   if news.created and wasIn: discard
   elif news.created: state.saveMemory(getMonoTime(), force = true)
   let carried = if not wasIn and news.created: p.doc.stationMoves else: StationMoves()
+  let carriedSensors = if not wasIn and news.created: p.doc.sensors else: SensorTable()
   p = ProjectState(dir: dir, doc: move news.doc, lock: news.lock, owner: news.owner,
     folders: move news.folders, originals: move news.originals, by: by,
     userArrangement: userArrangement, userPresets: userPresets,
@@ -8865,6 +8880,9 @@ proc takeOpened(state: var AppState; m: sink Msg) =
                   else: ""
   if carried.len > 0 and not p.readOnly:
     p.doc.stationMoves = carried # (the open files already follow them)
+    state.projectChanged()
+  if carriedSensors.len > 0 and not p.readOnly:
+    p.doc.sensors = carriedSensors
     state.projectChanged()
   inc p.revision
   state.store = Store(home: dir / ProjectStoreFolder)
@@ -11949,6 +11967,63 @@ const
   MaxStationNumber = 1e8 ## a line or point a move may name (SPS: F10.2)
   MaxMovePosition = 1e9  ## the largest x, y or elevation of a move, in the survey's units
 
+proc setSensors*(state: var AppState; table: SensorTable) =
+  ## Replaces the project's sensors. A project with a folder records the change; without
+  ## one the table is kept for this run. Reads no file.
+  assertUiThread()
+  state.project.doc.sensors = table
+  inc state.project.revision
+  if state.project.dir.len > 0 and not state.project.readOnly: state.projectChanged()
+  elif state.project.dir.len > 0:
+    state.log.add(sevWarning, "project", "The project is read-only: the sensors are for " &
+      "this run only.")
+
+func sensorUnitOf(word: string): Option[SensitivityUnit] =
+  ## The unit a command names, by its symbol (`$unit`), or the plain-text form of one.
+  let w = word.strip.replace("u", "µ")
+  for u in OfferedUnits:
+    if $u == w or $u == w.replace("2", "²"): return some(u)
+
+proc sensorCommand(state: var AppState; cmd: Command) =
+  ## `ckSensor`: the sensitivity of one component's sensor is typed, or its row taken away.
+  ## Kept in the project, or for this run when none is open or it is read-only, and said so.
+  if cmd.sensorComponent notin 1 .. 255:
+    state.ignore(cmd, "a component is a number from 1 to 255")
+    return
+  let component = uint8(cmd.sensorComponent)
+  var table = state.project.doc.sensors
+  let keptIn =
+    if not state.inProject: "for this run only (no project is open)"
+    elif state.project.readOnly: "for this run only (the project is read-only)"
+    else: "in the project"
+  if cmd.sensorForget:
+    if not table.remove(component):
+      state.ignore(cmd, "no sensor of " & componentName(component) & " is kept")
+      return
+    state.setSensors(table)
+    state.log.add(sevInfo, "project", "The sensor of " & componentName(component) &
+      " is removed " & keptIn & ".")
+  else:
+    let unit = sensorUnitOf(cmd.sensorUnit)
+    if unit.isNone:
+      state.ignore(cmd, "a sensitivity's unit is one of " & OfferedUnits.mapIt($it).join(", "))
+      return
+    let row = SensorRow(component: component, value: cmd.sensorValue, unit: unit.get)
+    if not row.sensorOk:
+      state.ignore(cmd, "a sensitivity is a finite number above 0 whose value in SI is " &
+        "between " & $MinSensitivity & " and " & $MaxSensitivity & " volts per unit")
+      return
+    let old = table.get(component)
+    if not table.put(row):
+      state.ignore(cmd, "at most " & $MaxSensors & " sensors are kept")
+      return
+    state.setSensors(table)
+    state.log.add(sevInfo, "project", "The sensor of " & componentName(component) & " is " &
+      significant(row.value, 6) & " " & $row.unit & ", " & keptIn & ", as wired (a shunt " &
+      "lowers a data sheet's open-circuit figure); only the flat band is converted." &
+      (if old.isSome: " It replaces " & significant(old.get.value, 6) & " " & $old.get.unit &
+        "." else: ""))
+
 proc stationMove(state: var AppState; cmd: Command) =
   ## `ckStationMove`: a receiver station sits at another position (from a time on), or its
   ## move is taken away. Kept in the project, or for this run when none is open or it is
@@ -13887,6 +13962,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckFileAuxMark: state.fileAuxMark(cmd)
   of ckProjectAuxMark: state.projectAuxMark(cmd)
   of ckStationMove: state.stationMove(cmd)
+  of ckSensor: state.sensorCommand(cmd)
   of ckOwnPosition: state.askOwnPosition(cmd)
   of ckVibProfile: state.storeVibProfile(cmd.origin, cmd.vibProfile)
   of ckVibWeights: state.storeVibWeights(cmd.origin, cmd.vibWeights)

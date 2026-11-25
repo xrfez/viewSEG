@@ -106,12 +106,19 @@
 ## written when given; a move with no `fromTime` holds for every trace of
 ## the station. Absent means no moves. The position is not written into the
 ## seismic file or the survey file.
+##
+## The sensors are `(sensors (sensor (component 2) (value 80.0) (unit vPerMPerS)))`: one
+## per component, the sensitivity as typed and the unit it was typed in (`vPerMPerS`,
+## `vPerInPerS`, `vPerMPerS2`, `vPerG`, `vPerBar`, `vPerPa`, `microVPerPa`), never
+## converted. A row with no usable component, value or unit, a second row of one
+## component, or one past `MaxSensors` is said and left out. A child this version does
+## not know is kept and written back. Absent means no sensors.
 
 import std/[algorithm, math, options, sequtils, strutils, times, unicode]
 import parseSEG
 import analysis, breakmodel, edits, identity, join, nif, outputbinary, outputnames, outputtext,
     processing, project, settings,
-  settingsnif, shotlog, stationmoves, vendormaps, vibprofile
+  sensors, settingsnif, shotlog, stationmoves, vendormaps, vibprofile
 
 const
   KindNames: array[JoinFileKind, string] = ["sps", "p1", "csv"]
@@ -177,6 +184,20 @@ proc writeMove(w: var NifWriter; m: StationMove) =
   w.value("y", m.y)
   if m.elev.isSome: w.value("elev", m.elev.get)
   if m.note.len > 0: w.value("note", m.note)
+  w.close
+
+proc writeSensors(w: var NifWriter; d: ProjectDoc) =
+  w.open "sensors"
+  for r in d.sensors:
+    w.open "sensor"
+    w.value("component", int64(r.component))
+    w.value("value", r.value)
+    w.open "unit"
+    w.ident UnitWords[r.unit]
+    w.close
+    for n in r.later: w.add n
+    w.close
+  for n in d.sensorsLater: w.add n
   w.close
 
 proc choice(w: var NifWriter; tag, name: string) =
@@ -457,6 +478,7 @@ proc projectDocument*(d: ProjectDoc): string =
     w.open "stationMoves"
     for m in d.stationMoves: w.writeMove m
     w.close
+  if d.sensors.len > 0 or d.sensorsLater.len > 0: w.writeSensors d
   if d.lastFolder.len > 0: w.value("lastFolder", d.lastFolder)
   if d.includeSubfolders: w.value("includeSubfolders", true)
   case d.vendorChoice.mode
@@ -693,6 +715,50 @@ proc readMoves(r: var Reading; n: NifNode; moves: var StationMoves) =
   for c in n.kids:
     if c.isTree("move"): r.readMove(c, moves)
     else: r.problem(c, "(stationMoves) holds moves")
+
+proc readSensor(r: var Reading; n: NifNode; d: var ProjectDoc) =
+  ## One `(sensor ...)`: left out, and said, when its component, value or unit is not
+  ## usable, when the component has a row already or the table is full.
+  var
+    row = SensorRow()
+    component = 0'i64
+    hasComponent, hasValue, hasUnit: bool
+  for k in n.kids:
+    if k.kind != nkTree: r.problem(k, "(sensor) holds trees")
+    else:
+      case k.tag
+      of "component":
+        if k.kids.len == 1 and k.kids[0].kind == nkInt and k.kids[0].intVal in 1'i64 .. 255:
+          component = k.kids[0].intVal
+          hasComponent = true
+        else: r.problem(k, "(component) needs a whole number from 1 to 255")
+      of "value":
+        if finiteNumber(k, row.value): hasValue = true
+        else: r.problem(k, "(value) needs a number")
+      of "unit":
+        if k.kids.len == 1 and k.kids[0].kind == nkIdent:
+          for u in SensitivityUnit:
+            if UnitWords[u].len > 0 and UnitWords[u] == k.kids[0].text:
+              row.unit = u
+              hasUnit = true
+        if not hasUnit: r.problem(k, "(unit) needs one of " & OfferedUnits.mapIt(
+          UnitWords[it]).join(", "))
+      else: row.later.add k
+  row.component = uint8(component)
+  if not (hasComponent and hasValue and hasUnit):
+    r.problem(n, "a sensor is left out")
+  elif not row.sensorOk:
+    r.problem(n, "a sensitivity out of range is left out")
+  elif d.sensors.find(row.component) >= 0:
+    r.problem(n, "a second sensor of one component is left out")
+  elif not d.sensors.put(row):
+    r.problem(n, "too many sensors; this one is left out")
+
+proc readSensors(r: var Reading; n: NifNode; d: var ProjectDoc) =
+  for c in n.kids:
+    if c.isTree("sensor"): r.readSensor(c, d)
+    elif c.kind == nkTree: d.sensorsLater.add c
+    else: r.problem(c, "(sensors) holds sensors")
 
 proc store(r: var Reading; n: NifNode; s: var StoreInfo) =
   for k in n.kids:
@@ -1489,6 +1555,7 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
       of "vibProfile": r.vibProfile(c, result)
       of "vibWeights": r.vibWeights(c, result)
       of "stationMoves": r.readMoves(c, result.stationMoves)
+      of "sensors": r.readSensors(c, result)
       of "vendorMap":
         var name = ""
         r.text(c, name)
