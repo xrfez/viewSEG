@@ -32,7 +32,7 @@
 ## Peak values read a little higher or lower with processSEG 0.8.0's 16-tap peak
 ## interpolator; the tolerances below (1 %) are its error, not the old 8-tap one.
 
-import std/[math, strutils]
+import std/[math, random, strutils]
 import viewSEG/core/[analysis, vibalign, vibanalysis, vibjudge]
 import processSEG/core/shift
 import processSEG/vibroseis/vibqc
@@ -705,16 +705,19 @@ proc plotsShowWhatIsJudged() =
       $names
     for c in all.plots[0].curves: doAssert c.style != csLimit, c.name
 
-func planSweep(seconds = 10.0; f1 = 80.0; tailS = 0.001; delayMs = 0.0): SynthSweep =
-  ## The file's sweep for the plan tests: 8 to `f1` Hz in `seconds`, the ground force 1° off
-  ## its own pilot.
-  SynthSweep(f0: 8, f1: f1, seconds: seconds, tailS: tailS, delayMs: delayMs, amp: 1000,
-    phaseDeg: 1, h2: 0.02)
+func planSweep(seconds = 10.0; f1 = 80.0; tailS = 0.001; delayMs = 0.0; f0 = 8.0;
+    taperS = 0.1): SynthSweep =
+  ## The file's sweep for the plan tests: `f0` (8) to `f1` Hz in `seconds`, the ground force 1°
+  ## off its own pilot.
+  SynthSweep(f0: f0, f1: f1, seconds: seconds, tailS: tailS, delayMs: delayMs, amp: 1000,
+    phaseDeg: 1, h2: 0.02, taperS: taperS)
 
-proc againstPlan(file: SynthSweep; stored: seq[float32]; p = AnalysisParams()): AnalysisResult =
+proc againstPlan(file: SynthSweep; stored: seq[float32]; p = AnalysisParams();
+    pilot: seq[float32] = @[]): AnalysisResult =
   ## The file's ground force against the stored reference `stored` as the window reads it:
-  ## the stored samples aligned to the file's recorded pilot, that pilot judged against them.
-  let recorded = file.referenceOf.sweepRow
+  ## the stored samples aligned to the file's recorded pilot (`pilot`, else the file's own
+  ## reference), that pilot judged against them.
+  let recorded = if pilot.len > 0: pilot else: file.referenceOf.sweepRow
   let al = alignStored(recorded, stored, file.dtMs)
   let placed = if al.found: placedSinc(stored, al.shiftMs, file.dtMs) else: stored
   var q = p
@@ -723,6 +726,12 @@ proc againstPlan(file: SynthSweep; stored: seq[float32]; p = AnalysisParams()): 
     [vsReference: 2, vsGroundForce: 1, vsMass: -1, vsBaseplate: -1], file.dtMs, q, 0, 80.0,
     plan = PlanAsk(stored: true, shiftMs: (if al.found: al.shiftMs else: NaN)))
   doAssert result.problem == "", result.problem
+
+proc noisy(x: seq[float32]; share: float64; seed: int64): seq[float32] =
+  ## `x` with uniform noise of `share` of its peak (1) added, from `seed`.
+  var g = initRand(seed)
+  result = x
+  for v in result.mitems: v += float32(share * (g.rand(2.0) - 1.0))
 
 func curveOf(r: AnalysisResult; plot: int; name: string): seq[float64] =
   for c in r.plots[plot].curves:
@@ -823,7 +832,7 @@ proc againstThePlan() =
     # the same sweep out of step: failed, and said
     let r = againstPlan(planSweep(delayMs = 2600), planSweep().referenceOf.sweepRow)
     doAssert r.qc.plan.verdict == qvFail and r.qc.verdict == qvFail, r.qc.line
-    doAssert r.qc.plan.sweep.startsWith("the two are the same sweep (8-80 Hz in 10.0 s) but " &
+    doAssert r.qc.plan.sweep.startsWith("the two are the same sweep (7.9-80 Hz in 10.0 s) but " &
       "not in step: the recorded pilot's sweep starts "), r.qc.plan.sweep
     doAssert "alignment looks no further than 2.0 s either way" in r.qc.line, r.qc.line
   block traces_shorter_than_the_sweep_pass_on_the_part_recorded:
@@ -845,38 +854,109 @@ proc againstThePlan() =
     doAssert names == @[FileRefName, "GF"], $names
 
 proc sweepTolerances() =
-  ## `sweepDifference` on both sides of each tolerance: one tracked step for the length, one
-  ## step's change of frequency for each end.
-  ## Seen to fail: with `>=` for `>`, a length one step off read as another sweep.
+  ## `sweepDifference` on both sides of each tolerance: for the length the most of one tracked
+  ## step, 1 % of the planned length and 50 ms; for each end the most of one step's change of
+  ## frequency, 0.5 Hz and 1 % of the band.
+  ## Seen to fail: with `>=` for `>`, a length 100 ms off read as another sweep; with the
+  ## floors left out, a length 11 ms off and a start 0.08 Hz off read as another sweep.
   let plan = SweepShape(startHz: 8, endHz: 80, lengthMs: 10000, startStepHz: 0.072,
     endStepHz: 0.072, stepMs: 10)
   block lengths:
     var pilot = plan
-    pilot.lengthMs = 10010
+    pilot.lengthMs = 10100
     doAssert sweepDifference(plan, pilot).same
-    pilot.lengthMs = 10011
+    pilot.lengthMs = 10101
     let d = sweepDifference(plan, pilot)
-    doAssert not d.same and d.words == "the project reference sweeps 8-80 Hz in 10.00 s; " &
-      "the recorded pilot sweeps 8-80 Hz in 10.01 s", d.words
+    doAssert not d.same and d.words == "the project reference sweeps 8-80 Hz in 10.0 s; " &
+      "the recorded pilot sweeps 8-80 Hz in 10.1 s", d.words
+    doAssert d.readAs == "sweeps read as 8-80 Hz in 10.0 s (the project reference) and " &
+      "8-80 Hz in 10.1 s (the recorded pilot)", d.readAs
+  block short_sweep_floor:
+    # a 2 s sweep: 1 % is 20 ms, the floor 50 ms
+    var short = plan
+    short.lengthMs = 2000
+    var pilot = short
+    pilot.lengthMs = 2050
+    doAssert sweepDifference(short, pilot).same
+    pilot.lengthMs = 2051
+    doAssert not sweepDifference(short, pilot).same
   block frequencies:
+    # 8-80 Hz: 1 % of the band is 0.72 Hz, more than 0.5 Hz and a step's 0.072 Hz
     var pilot = plan
-    pilot.startHz = 8.07
+    pilot.startHz = 8.71
     doAssert sweepDifference(plan, pilot).same
-    pilot.startHz = 8.08
+    pilot.startHz = 8.73
     doAssert not sweepDifference(plan, pilot).same
     pilot = plan
-    pilot.endHz = 79.93
+    pilot.endHz = 79.29
     doAssert sweepDifference(plan, pilot).same
-    pilot.endHz = 79.9
+    pilot.endHz = 79.2
     let d = sweepDifference(plan, pilot)
-    doAssert not d.same and "8-79.9 Hz" in d.words, d.words
+    doAssert not d.same and "8-79.2 Hz" in d.words, d.words
+  block narrow_band_floor:
+    # 8-20 Hz: 1 % is 0.12 Hz, the floor 0.5 Hz
+    var narrow = plan
+    narrow.endHz = 20
+    var pilot = narrow
+    pilot.endHz = 20.5
+    doAssert sweepDifference(narrow, pilot).same
+    pilot.endHz = 20.51
+    doAssert not sweepDifference(narrow, pilot).same
   block not_compared:
     let d = sweepDifference(SweepShape(why: "too few points of it could be tracked"), plan)
     doAssert not d.same and d.words.startsWith("sweeps not compared: the project " &
       "reference's sweep cannot be read"), d.words
 
+proc sameSweepReadsTheSame() =
+  ## The same planned sweep read off a recorded pilot with noise on it, or with another taper,
+  ## is the same sweep: no sentence that they differ; a sweep 2 s longer, 2 Hz higher at its
+  ## end or 1 Hz higher at its start still differs.
+  ## Seen to fail: with the ends read at -40 dB (in the noise), the fit through every tracked
+  ## point and one step's frequency (0.07 Hz) the tolerance, 1 % noise on the pilot read
+  ## "the recorded pilot sweeps 7.8-80.1 Hz in 10.0 s", 20 % "15.7-81 Hz", and a 0.5 s taper
+  ## against 0.1 s "7.7-80 Hz in 10.04 s"; with a difference put in the verdict whatever the
+  ## pilot's phase, the linear fade-in read "✓ PASS: 6 of 6 limits met; the project reference
+  ## sweeps ...".
+  let base = planSweep().referenceOf.sweepRow
+  for (share, seed) in [(0.01, 7'i64), (0.05, 8'i64), (0.2, 9'i64)]:
+    let r = againstPlan(planSweep(), base, pilot = noisy(base, share, seed))
+    doAssert r.qc.plan.verdict == qvPass and r.qc.verdict == qvPass, r.qc.line
+    doAssert r.qc.plan.sameSweep and r.qc.plan.sweep == "", $share & ": " & r.qc.plan.sweep
+    doAssert "sweeps" notin r.qc.line and "sweeps read as" notin r.note, r.qc.line
+  for taper in [0.25, 0.5, 0.0001]:
+    let r = againstPlan(planSweep(taperS = taper), base)
+    doAssert r.qc.plan.verdict == qvPass and r.qc.verdict == qvPass, r.qc.line
+    doAssert r.qc.plan.sameSweep and r.qc.plan.sweep == "", $taper & ": " & r.qc.plan.sweep
+    doAssert "sweeps" notin r.qc.line and "sweeps read as" notin r.note, r.qc.line
+  block a_pass_in_phase_keeps_a_reading_in_the_note:
+    # a pilot faded in linearly over 2 s (no cos² taper): its ends read 0.4 s apart from the
+    # plan's, but it follows the plan in phase. No word in the verdict, a reading in the note
+    var pilot = base
+    for i in 0 ..< 2000: pilot[i] *= float32(i / 2000)
+    let r = againstPlan(planSweep(), base, pilot = pilot)
+    doAssert r.qc.plan.verdict == qvPass and r.qc.verdict == qvPass, r.qc.line
+    doAssert not r.qc.plan.sameSweep and r.qc.plan.sweep == "", r.qc.plan.sweep
+    doAssert "sweeps" notin r.qc.line and "differ" notin r.note, r.qc.line
+    doAssert "; sweeps read as 8-80 Hz in 10.0 s (the project reference) and " in r.note, r.note
+  block longer:
+    let r = againstPlan(planSweep(), planSweep(seconds = 12).referenceOf.sweepRow)
+    doAssert not r.qc.plan.sameSweep and r.qc.plan.sweep == "the project reference sweeps " &
+      "8-80 Hz in 12.0 s; the recorded pilot sweeps 8-80 Hz in 10.0 s", r.qc.plan.sweep
+  block higher_end:
+    let r = againstPlan(planSweep(), planSweep(f1 = 82).referenceOf.sweepRow)
+    doAssert r.qc.plan.verdict == qvFail and not r.qc.plan.sameSweep, r.qc.line
+    doAssert r.qc.plan.sweep == "the project reference sweeps 7.9-82 Hz in 10.0 s; the " &
+      "recorded pilot sweeps 8-80 Hz in 10.0 s", r.qc.plan.sweep
+    doAssert r.qc.plan.sweep in r.qc.line, r.qc.line
+  block higher_start:
+    let r = againstPlan(planSweep(), planSweep(f0 = 9).referenceOf.sweepRow)
+    doAssert r.qc.plan.verdict == qvFail and not r.qc.plan.sameSweep, r.qc.line
+    doAssert r.qc.plan.sweep == "the project reference sweeps 8.9-80 Hz in 10.0 s; the " &
+      "recorded pilot sweeps 8-80 Hz in 10.0 s", r.qc.plan.sweep
+
 proc main*() =
   againstThePlan()
+  sameSweepReadsTheSame()
   sweepTolerances()
   baseTests()
   judgeChoice()

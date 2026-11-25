@@ -27,6 +27,7 @@
 import std/[algorithm, math, sequtils, strutils]
 import parseSEG
 import processSEG/core/[rows, types, units, workspace]
+import processSEG/fft/hilbert
 import processSEG/vibroseis/[sweeptrack, vibqc]
 import analysis, signalend, sweepedge, vibalign, vibjudge
 
@@ -51,16 +52,34 @@ const
   Shown = [vsReference, vsGroundForce, vsWeightedSum, vsMass, vsBaseplate]
     ## the signals in the order the plots and the table give them
   SweepTimeSteps* = 1.0
-    ## two sweeps' lengths (and a sweep's end against a trace's) agree within this many tracked
-    ## steps (`TrackParams.stepMs`, 10 ms): a sweep's first and last tracked points fall on that
-    ## grid, so an identical sweep can read one step apart, and more is a real difference
+    ## a sweep's end against a trace's agrees within this many tracked steps
+    ## (`TrackParams.stepMs`, 10 ms): a sweep's first and last tracked points fall on that
+    ## grid, so an identical sweep can read one step apart; two sweeps' lengths agree within
+    ## one step at least (`SweepLengthShare`)
+  SweepLengthShare* = 0.01
+    ## two sweeps' lengths agree within this share of the planned one (10 s: 100 ms), or
+    ## `SweepLengthFloorMs`, or one tracked step, whichever is the most: a taper of another
+    ## length, or noise on the pilot, moves its ends by a few tens of ms
+  SweepLengthFloorMs* = 50.0
+    ## ... and never closer than this (a 2 s sweep: 50 ms, not 20)
   SweepHzSteps* = 1.0
     ## two sweeps' start (end) frequencies agree within this many times the frequency the
-    ## sweep moves through in one tracked step at that end: the track's own frequency
-    ## resolution, as fine as its time grid (8-80 Hz in 10 s: 0.07 Hz)
+    ## sweep moves through in one tracked step at that end (8-80 Hz in 10 s: 0.07 Hz), or
+    ## `SweepHzFloor`, or `SweepBandShare` of the band, whichever is the most
+  SweepHzFloor* = 0.5
+    ## ... and never closer than this many hertz: a frequency read off half a second of the
+    ## sweep's phase and taken on through a taper to its end, whose place noise moves by a few
+    ## tens of ms, is no finer
+  SweepBandShare* = 0.01
+    ## ... nor than this share of the planned band (8-80 Hz: 0.72 Hz)
+  SweepEndDb* = -20.0
+    ## a sweep's ends are read where its envelope crosses this level below its peak (and
+    ## half the peak), well above the noise of a recorded pilot (-40 dB, the tracker's own
+    ## level, lies in it)
 
-  FitPoints = 50
-    ## the tracked points (half a second) a sweep's start or end frequency is read from
+  FitMs = 500.0
+    ## the span of the sweep (from its half-peak point inwards) its start or end frequency is
+    ## read from
 
 type
   PlanAsk* = object
@@ -144,13 +163,15 @@ func shortEndMs(track: SweepTrack; p: TrackParams; counts: openArray[int];
           track.timeMs[m] + 500.0 * float64(windowPeriods(p, f)) / f <= last:
         result = track.timeMs[m]
 
-func levelAtMs(x: openArray[float32]; dtMs, level: float64; fromEnd: bool): float64 =
+func levelAtMs(x: openArray[float32]; dtMs, level: float64;
+    fromEnd: bool): tuple[ms: float64; rose: bool] =
   ## Where the envelope of `x` first reaches `level` (from its start, or from its end with
   ## `fromEnd`), in ms: read on the crests of `|x|` (one each half period), between the last
   ## crest below `level` and the first at it or above, so that a slow start is not late by a
-  ## half period; at its first sample that is not zero when no crest comes before. NaN when no
-  ## crest reaches it.
-  result = NaN
+  ## half period. When no crest comes before, it rose from nothing within a half period (a
+  ## sweep from the record's first sample, or after exact zeros): its first sample that is not
+  ## zero, `rose` true. NaN when no crest reaches it.
+  result = (NaN, false)
   var (prevAt, prevV) = (-1, 0.0)
   for k in 1 ..< x.len - 1:
     let i = if fromEnd: x.len - 1 - k else: k
@@ -158,39 +179,73 @@ func levelAtMs(x: openArray[float32]; dtMs, level: float64; fromEnd: bool): floa
     if v > 0 and v >= abs(float64(x[i - 1])) and v >= abs(float64(x[i + 1])):
       if v >= level:
         if prevAt < 0:
-          # it rose from nothing within a half period (a sweep from the record's first
-          # sample, or after exact zeros): it starts at its first sample that is not zero
           for q in 0 ..< x.len:
             let j = if fromEnd: x.len - 1 - q else: q
-            if x[j] != 0: return float64(j) * dtMs
+            if x[j] != 0: return (float64(j) * dtMs, true)
         let f = (level - prevV) / (v - prevV)
-        return (float64(prevAt) + f * float64(i - prevAt)) * dtMs
+        return ((float64(prevAt) + f * float64(i - prevAt)) * dtMs, false)
       (prevAt, prevV) = (i, v)
 
-func sweepEnds(x: openArray[float32]; dtMs: float64): (float64, float64) =
+func sweepEnds(x: openArray[float32];
+    dtMs: float64): tuple[firstMs, lastMs, halfFromMs, halfToMs: float64] =
   ## The first and last samples (ms) of the sweep in `x`: where its envelope leaves zero, read
-  ## where it crosses `minReferenceDb` below its peak and half the peak, and taken on through
-  ## the rest of a cos² taper (that level lies a share of the taper in, half the peak half of
-  ## it). NaN, NaN without both.
+  ## where it crosses `SweepEndDb` below its peak and half the peak, and taken on through the
+  ## rest of a cos² taper (that level lies a share of the taper in, half the peak half of it);
+  ## a sweep that rises to that level from nothing within a half period starts there. With
+  ## the half-peak crossings (`halfFromMs .. halfToMs`), the part of the sweep well above
+  ## the noise. NaN without both levels.
+  result = (NaN, NaN, NaN, NaN)
   var peak = 0.0
   for v in x: peak = max(peak, abs(float64(v)))
-  if not (peak > 0): return (NaN, NaN)
-  let low = pow(10.0, -abs(TrackParams().minReferenceDb) / 20)
+  if not (peak > 0): return
+  let low = pow(10.0, -abs(SweepEndDb) / 20)
   let share = 2 / PI * arcsin(sqrt(low)) # of the taper, at `low`
-  result = (NaN, NaN)
   for fromEnd in [false, true]:
     let a = levelAtMs(x, dtMs, low * peak, fromEnd)
     let b = levelAtMs(x, dtMs, 0.5 * peak, fromEnd)
-    if not (a.isNaN or b.isNaN):
-      let taper = abs(b - a) / (0.5 - share)
-      if fromEnd: result[1] = a + share * taper
-      else: result[0] = a - share * taper
+    if not (a.ms.isNaN or b.ms.isNaN):
+      let taper = if a.rose: 0.0 else: abs(b.ms - a.ms) / (0.5 - share)
+      if fromEnd: (result.lastMs, result.halfToMs) = (a.ms + share * taper, b.ms)
+      else: (result.firstMs, result.halfFromMs) = (a.ms - share * taper, b.ms)
 
-func sweepShape*(t: SweepTrack; x: openArray[float32]; dtMs: float64): SweepShape =
+func phaseLine(x, h: openArray[float32]; lo, hi: int;
+    dtMs: float64): tuple[hz, rate: float64] =
+  ## The frequency (Hz) at sample `lo` and its rate (Hz per ms) of the least-squares
+  ## quadratic through the unwrapped phase of the analytic signal `x + i·h` over samples
+  ## `lo .. hi`: the sweep's frequency there, averaged over the span, as a tracked point's
+  ## instantaneous frequency (one sample's, ±7 Hz with 20 % noise on an 8 Hz pilot) is not.
+  var (s0, s1, s2, s3, s4, t0, t1, t2) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+  let mid = 0.5 * float64(lo + hi)
+  var psi = 0.0
+  for j in lo .. hi:
+    if j > lo:
+      # arg(z_j · conj(z_{j-1})): one sample's step, never a 2π jump
+      let (a, b) = (float64(x[j]), float64(h[j]))
+      let (c, d) = (float64(x[j - 1]), float64(h[j - 1]))
+      psi += arctan2(b * c - a * d, a * c + b * d)
+    let tau = (float64(j) - mid) * dtMs / 1000
+    s0 += 1
+    s1 += tau
+    s2 += tau * tau
+    s3 += tau * tau * tau
+    s4 += tau * tau * tau * tau
+    t0 += psi
+    t1 += psi * tau
+    t2 += psi * tau * tau
+  # psi = c0 + c1·τ + c2·τ²: the normal equations, by Cramer's rule
+  func det(a, b, c, d, e, f, g, k, l: float64): float64 =
+    a * (e * l - f * k) - b * (d * l - f * g) + c * (d * k - e * g)
+  let dd = det(s0, s1, s2, s1, s2, s3, s2, s3, s4)
+  if dd == 0 or dd.isNaN: return (NaN, NaN)
+  let c1 = det(s0, t0, s2, s1, t1, s3, s2, t2, s4) / dd
+  let c2 = det(s0, s1, t0, s1, s2, t1, s2, s3, t2) / dd
+  let tauLo = (float64(lo) - mid) * dtMs / 1000
+  ((c1 + 2 * c2 * tauLo) / (2 * PI), 2 * c2 / (2 * PI) / 1000)
+
+proc sweepShape*(t: SweepTrack; x: openArray[float32]; dtMs: float64): SweepShape =
   ## The sweep of the reference `x` (at `dtMs`) whose own track `t` is: its first and last
-  ## samples (`sweepEnds`), the frequencies there (the line through the first or last
-  ## `FitPoints` tracked points taken on to them: a point lies half a window inside the
-  ## sweep), and its length.
+  ## samples (`sweepEnds`), the frequencies there (`phaseLine` over `FitMs` from each
+  ## half-peak crossing inwards, taken on to them), and its length.
   result = SweepShape(startHz: NaN, endHz: NaN, lengthMs: NaN, startStepHz: NaN,
     endStepHz: NaN, stepMs: NaN, firstMs: NaN, lastMs: NaN)
   let e = t.extent
@@ -198,71 +253,74 @@ func sweepShape*(t: SweepTrack; x: openArray[float32]; dtMs: float64): SweepShap
     result.why = "its envelope is nowhere within " & $TrackParams().minReferenceDb &
       " dB of its peak"
     return
-  var first, last = -1
-  for m in 0 ..< t.len:
-    let f = t.referenceHz[m]
-    if not f.isNaN and f > 0:
-      if first < 0: first = m
-      last = m
-  if first < 0 or last - first < 2:
+  var tracked = 0
+  for f in t.referenceHz:
+    if not f.isNaN and f > 0: inc tracked
+  if tracked < 3:
     result.why = "too few points of it could be tracked"
     return
-  let (hz, ms) = (t.referenceHz, t.timeMs)
-  func rateOf(lo, hi: int): (float64, float64) =
-    ## the line through the tracked points `lo .. hi` (least squares, NaN points left out):
-    ## its frequency at `ms[lo]` and its rate (Hz per ms); a window's frequency ripples by a
-    ## tenth of a hertz near the sweep's ends, a line through half a second of them does not
-    var (sx, sy, sxx, sxy, n) = (0.0, 0.0, 0.0, 0.0, 0.0)
-    for m in lo .. hi:
-      if not hz[m].isNaN:
-        let x = ms[m] - ms[lo]
-        sx += x
-        sy += hz[m]
-        sxx += x * x
-        sxy += x * hz[m]
-        n += 1
-    let d = n * sxx - sx * sx
-    let b = if d == 0: 0.0 else: (n * sxy - sx * sy) / d
-    ((sy - b * sx) / n, b)
-  let (f0, r0) = rateOf(first, min(first + FitPoints, last))
-  let lo = max(last - FitPoints, first)
-  let (f1, r1) = rateOf(lo, last)
-  result.stepMs = (ms[last] - ms[first]) / float64(last - first)
-  let (startMs, endMs) = sweepEnds(x, dtMs)
-  if startMs.isNaN or endMs.isNaN:
+  let ends = sweepEnds(x, dtMs)
+  if ends.firstMs.isNaN or ends.lastMs.isNaN:
     result.why = "its envelope does not rise to half its peak"
     return
-  result.startHz = f0 - r0 * (ms[first] - startMs)
-  result.endHz = f1 + r1 * (endMs - ms[lo])
-  result.lengthMs = endMs - startMs
-  (result.firstMs, result.lastMs) = (startMs, endMs)
-  result.startStepHz = abs(r0) * result.stepMs
-  result.endStepHz = abs(r1) * result.stepMs
+  var h = newSeq[float32](x.len)
+  try:
+    let hp = initHilbertPlan(float32, x.len)
+    var ws = initWorkspace()
+    ws.reserve(hp.workspaceSize)
+    hp.hilbertInto(x, h, ws)
+  except ValueError as err:
+    result.why = err.msg
+    return
+  let (a, b) = (int(round(ends.halfFromMs / dtMs)), int(round(ends.halfToMs / dtMs)))
+  let span = int(round(FitMs / dtMs))
+  if b - a < 2:
+    result.why = "its envelope does not rise to half its peak"
+    return
+  let head = phaseLine(x, h, a, min(b, a + span), dtMs)
+  let tailLo = max(a, b - span)
+  let tail = phaseLine(x, h, tailLo, b, dtMs)
+  result.stepMs = if t.len > 1: t.timeMs[1] - t.timeMs[0] else: TrackParams().stepMs
+  result.startHz = head.hz - head.rate * (float64(a) * dtMs - ends.firstMs)
+  result.endHz = tail.hz + tail.rate * (ends.lastMs - float64(tailLo) * dtMs)
+  result.lengthMs = ends.lastMs - ends.firstMs
+  (result.firstMs, result.lastMs) = (ends.firstMs, ends.lastMs)
+  result.startStepHz = abs(head.rate) * result.stepMs
+  result.endStepHz = abs(tail.rate) * result.stepMs
+  if result.startHz.isNaN or result.endHz.isNaN or result.lengthMs.isNaN:
+    # (a NaN compares as no difference: never the same sweep unread)
+    result.why = "its frequency could not be read off its phase"
 
 func shapeWords(s: SweepShape; hzDigits, sDigits: int): string =
   plain(s.startHz, hzDigits) & "-" & plain(s.endHz, hzDigits) & " Hz in " &
     formatFloat(s.lengthMs / 1000, ffDecimal, sDigits) & " s"
 
-func sweepDifference*(plan, pilot: SweepShape): tuple[same: bool; words: string] =
+func sweepDifference*(plan, pilot: SweepShape): tuple[same: bool; words, readAs: string] =
   ## Whether the recorded pilot's sweep `pilot` is the stored reference's `plan`: the same
-  ## start and end frequencies (within `SweepHzSteps`) and length (within `SweepTimeSteps`).
-  ## When not, both sweeps in words, each number with the decimals that tell the two apart
-  ## ("the project reference sweeps 8-80 Hz in 12.0 s; the recorded pilot sweeps 8-80 Hz in
-  ## 10.0 s"); when either cannot be read, "sweeps not compared" and why, never the same.
+  ## start and end frequencies (within `SweepHzSteps` of a step's change, `SweepHzFloor` and
+  ## `SweepBandShare` of the band, whichever is the most) and length (within one tracked
+  ## step, `SweepLengthShare` and `SweepLengthFloorMs`, the most of them). When not, both
+  ## sweeps in words, each number with the decimals that tell the two apart (`words`: "the
+  ## project reference sweeps 8-80 Hz in 12.0 s; the recorded pilot sweeps 8-80 Hz in 10.0 s";
+  ## `readAs`, for a note: "sweeps read as 8-80 Hz in 12.0 s (the project reference) and 8-80
+  ## Hz in 10.0 s (the recorded pilot)"); when either cannot be read, "sweeps not compared"
+  ## and why, never the same.
   if plan.why.len > 0:
     return (false, "sweeps not compared: the project reference's sweep cannot be read (" &
-      plan.why & ")")
+      plan.why & ")", "")
   if pilot.why.len > 0:
     return (false, "sweeps not compared: the recorded pilot's sweep cannot be read (" &
-      pilot.why & ")")
+      pilot.why & ")", "")
   let step = max(plan.stepMs, pilot.stepMs)
-  let lengthOff = abs(plan.lengthMs - pilot.lengthMs) > SweepTimeSteps * step
+  let lengthOff = abs(plan.lengthMs - pilot.lengthMs) > max([SweepTimeSteps * step,
+    SweepLengthShare * plan.lengthMs, SweepLengthFloorMs])
+  let hzFloor = max(SweepHzFloor, SweepBandShare * abs(plan.endHz - plan.startHz))
   let startOff = abs(plan.startHz - pilot.startHz) >
-    SweepHzSteps * max(plan.startStepHz, pilot.startStepHz)
-  let endOff = abs(plan.endHz - pilot.endHz) > SweepHzSteps * max(plan.endStepHz,
-    pilot.endStepHz)
+    max(SweepHzSteps * max(plan.startStepHz, pilot.startStepHz), hzFloor)
+  let endOff = abs(plan.endHz - pilot.endHz) >
+    max(SweepHzSteps * max(plan.endStepHz, pilot.endStepHz), hzFloor)
   if not (lengthOff or startOff or endOff):
-    return (true, "")
+    return (true, "", "")
   var hzDigits = 1
   while hzDigits < 3 and ((startOff and plain(plan.startHz, hzDigits) ==
       plain(pilot.startHz, hzDigits)) or (endOff and plain(plan.endHz, hzDigits) ==
@@ -272,8 +330,9 @@ func sweepDifference*(plan, pilot: SweepShape): tuple[same: bool; words: string]
   while sDigits < 3 and lengthOff and formatFloat(plan.lengthMs / 1000, ffDecimal, sDigits) ==
       formatFloat(pilot.lengthMs / 1000, ffDecimal, sDigits):
     inc sDigits
-  (false, "the project reference sweeps " & shapeWords(plan, hzDigits, sDigits) &
-    "; the recorded pilot sweeps " & shapeWords(pilot, hzDigits, sDigits))
+  let (a, b) = (shapeWords(plan, hzDigits, sDigits), shapeWords(pilot, hzDigits, sDigits))
+  (false, "the project reference sweeps " & a & "; the recorded pilot sweeps " & b,
+    "sweeps read as " & a & " (the project reference) and " & b & " (the recorded pilot)")
 
 func unusable(r: TopReading; chordHz, nyquistHz: float64): string =
   ## Why a reading is not made the band's edge ("" when it is): the median of the estimates that fit stands in.
@@ -652,6 +711,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   let stepMs = if xs.len > 1: xs[1] - xs[0] else: TrackParams().stepMs
   let e0 = u.reference.extent
   var pilotFails = false
+  var readAs = "" # the two sweeps as read, for the note, when the pilot passes against the plan
   if withRecorded:
     # what the vibrator was told to do (its recorded pilot) against what it should do (the
     # plan), with the ground force's phase limits, after the same alignment
@@ -668,7 +728,12 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       rows[recorded], dtMs)
       else: SweepShape(why: "it was not tracked")
     let d = sweepDifference(planShape, pilotShape)
-    (result.qc.plan.sameSweep, result.qc.plan.sweep) = d
+    (result.qc.plan.sameSweep, result.qc.plan.sweep) = (d.same, d.words)
+    if not pilotFails and d.readAs.len > 0:
+      # the pilot follows the plan in phase: a difference read off the two sweeps' ends is
+      # no finding of the verdict's, only a note
+      result.qc.plan.sweep = ""
+      readAs = d.readAs
     let pe = if pilotOwn.len > 0: pilotOwn[0].tracks[vsReference].extent else: SweepExtent()
     if d.same and pilotFails:
       # the same sweep, out of step: alignment found no clear shift within its reach
@@ -1047,6 +1112,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     words.add "; the fundamental is measured only below 80 % of Nyquist (to " &
       number(u.tracks[vsReference].lastFundamentalMs, 0) & " ms of the reference)"
   for s in said: words.add "; " & s
+  if readAs.len > 0: words.add "; " & readAs
   result.note = words
   # a trace that cannot be matched to the whole of the reference: shorter than it, or its
   # signal stopped early (the force's fundamental, measured by the tracker, ends at about
