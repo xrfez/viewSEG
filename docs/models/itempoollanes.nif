@@ -1,0 +1,138 @@
+(stmts#Hypothesis: with two batches (two job lanes), workers started lazily, `setItemThreads`
+ shrinking the pool and `Jobs.stop` racing, a worker is started after the pool is stopping and is
+ never joined, a batch waits for an item held by a worker that exited, or the shrink strands an
+ item. Source: src/viewSEG/core/itempool.nim: `startWorkers` (called by `parallelItems` under the
+ pool lock; starts a worker only while not stopping and the live workers are below size - 1),
+ `workerLoop` (lock; leave when stopping or when this worker's number is at or above size - 1;
+ else take an item of any registered batch; run it; lock; place), `shutdownItemPool` (set
+ stopping and broadcast, wait for every worker to end, join them), and `parallelItems`'s drain
+ (the caller waits while one of its items is in flight). The wake-ups themselves are modelled
+ in itempool.nif; here a waiting worker looks again at every step.
+ Variables: wp per worker slot 0 never started, 1 idle, 2 runs an item of batch hold, 3 ended,
+ 4 joined (a slot may be started again); hold: the batch of the item a worker took (0 none);
+ left per batch: items not yet handed out; rp per batch 0 job running before the batch, 2 the
+ batch registered, 3 returned; size: threads of a batch, the caller included, so slot w is wanted while w < size (setItemThreads); jstop: `Jobs.stop` asked;
+ stopping: the pool's flag; sp shutdown 0 none, 1 asked, 2 runners waited for, 3 pool stopping,
+ 5 workers joined; err 1 a worker started while the pool is stopping.
+ Late: the deadline of the shutdown's wait for the runners passed (a job that does not stop in
+ time is left running and may start a batch after the pool is stopping).
+ Switches: Mut 0 none; 1 the start does not look at stopping; 2 a worker looks at the shrink
+ only after it took an item (it leaves holding it); 3 the shutdown does not wait for the runners
+ at all (as if the deadline had passed at once).
+ Witness 1: a worker ran items of both batches; 2: a shrink made a worker leave and both batches
+ still returned; 3: a batch asked for a worker after the pool stopped, got none and returned.
+ Run: tlacheck.py docs/models/itempoollanes.nif --expect:pass (16708 states), and with the --live
+ --fair flags below for liveness.
+ Expected: base passes safety and --live:Returned,Joined (--fair:Run1,Run2,Worker1,Worker2,Shut);
+ the witnesses fail; Mut 1 fails safety (err 1: a worker started after stopping may be left
+ unjoined), Mut 2 fails safety (a worker gone holding an item); Mut 3 passes: the stopping check
+ in the start is what protects the join; the wait for the runners is a courtesy, not a guard.#
+  (variables :late.0. :wp.0. :hold.0. :left.0. :rp.0. :size.0. :sized.0. :jstop.0. :stopping.0. :sp.0.
+    :err.0. :ranBoth.0. :shrunk.0. :denied.0.)
+  (assign Mut.0. 0)
+  (assign Witness.0. 0)
+  (assign Workers.0. (set 1 2))
+  (assign Batches.0. (set 1 2))
+  (assign Items.0. 2)
+
+  (def :Init.0.
+    (and (prime wp.0. (funof :v.0 Workers.0. 0)) (prime hold.0. (funof :v.0 Workers.0. 0))
+      (prime left.0. (funof :b.0 Batches.0. Items.0.)) (prime rp.0. (funof :b.0 Batches.0. 0))
+      (prime late.0. (false)) (prime size.0. 3) (prime sized.0. (false)) (prime jstop.0. (false))
+      (prime stopping.0. (false)) (prime sp.0. 0) (prime err.0. 0)
+      (prime ranBoth.0. (funof :v.0 Workers.0. 0)) (prime shrunk.0. (false))
+      (prime denied.0. (false))))
+
+  (def :Running.0. (eq err.0. 0))
+  (def :Wp.0. (apply wp.0. Me.0.))
+  (def :Hold.0. (apply hold.0. Me.0.))
+  (def :Registered.0. (setcomp :b.0 Batches.0. (and (eq (apply rp.0. b.0) 2) (gt (apply left.0. b.0) 0))))
+  (def :Held.0.#items in flight of batch Mine#
+    (card (setcomp :v.0 Workers.0. (and (eq (apply wp.0. v.0) 2) (eq (apply hold.0. v.0) Mine.0.)))))
+
+  (def :WCheck.0.#workerLoop, lock: leave when stopping or above size - 1; else take an item#
+    (and Running.0. (eq Wp.0. 1)
+      (if (or stopping.0. (and (ge Me.0. size.0.) (not (eq Mut.0. 2))))
+        (and (prime wp.0. (except wp.0. (mapsto Me.0. 3)))
+          (prime shrunk.0. (or shrunk.0. (not stopping.0.))))
+        (exists :b.0 Registered.0.
+          (and (prime left.0. (except left.0. (mapsto b.0 (minus (apply left.0. b.0) 1))))
+            (prime hold.0. (except hold.0. (mapsto Me.0. b.0)))
+            (prime ranBoth.0. (except ranBoth.0. (mapsto Me.0.
+              (if (or (eq (apply ranBoth.0. Me.0.) 0) (eq (apply ranBoth.0. Me.0.) b.0))
+                b.0 3))))
+            (prime wp.0. (except wp.0. (mapsto Me.0.
+              (if (and (eq Mut.0. 2) (ge Me.0. size.0.)) 3 2)))))))))
+
+  (def :WDone.0.#the item returned: lock, place, wake the batch#
+    (and Running.0. (eq Wp.0. 2)
+      (prime wp.0. (except wp.0. (mapsto Me.0. 1)))
+      (prime hold.0. (except hold.0. (mapsto Me.0. 0)))))
+
+  (def :WorkerActs.0. (or WCheck.0. WDone.0.))
+  (def :Worker1.0. (let (bind :Me.0. 1) WorkerActs.0.))
+  (def :Worker2.0. (let (bind :Me.0. 2) WorkerActs.0.))
+
+  (def :StartSome.0.#startWorkers, lock held: every slot below size that is not live is started#
+    (prime wp.0. (funof :v.0 Workers.0.
+      (if (and (lt v.0 size.0.)
+        (or (eq (apply wp.0. v.0) 0) (eq (apply wp.0. v.0) 4)))
+        1 (apply wp.0. v.0)))))
+
+  (def :RStart.0.#parallelItems: register the batch, start the missing workers unless stopping#
+    (and Running.0. (eq (apply rp.0. Mine.0.) 0)
+      (prime rp.0. (except rp.0. (mapsto Mine.0. 2)))
+      (if (and stopping.0. (not (eq Mut.0. 1)))
+        (and (unchanged wp.0.) (prime denied.0. (true)))
+        (and StartSome.0.
+          (prime err.0. (if stopping.0. 1 0))))))
+
+  (def :RRun.0.#the caller runs an item itself#
+    (and Running.0. (eq (apply rp.0. Mine.0.) 2) (gt (apply left.0. Mine.0.) 0)
+      (prime left.0. (except left.0. (mapsto Mine.0. (minus (apply left.0. Mine.0.) 1))))))
+
+  (def :RDrain.0.#everything handed out and nothing of ours in flight: return#
+    (and Running.0. (eq (apply rp.0. Mine.0.) 2) (eq (apply left.0. Mine.0.) 0)
+      (eq Held.0. 0) (prime rp.0. (except rp.0. (mapsto Mine.0. 3)))))
+
+  (def :Run1.0. (let (bind :Mine.0. 1) (or RStart.0. RRun.0. RDrain.0.)))
+  (def :Run2.0. (let (bind :Mine.0. 2) (or RStart.0. RRun.0. RDrain.0.)))
+
+  (def :SetSize.0.#setItemThreads, UI thread, once: shrink the pool#
+    (and Running.0. (not sized.0.) (prime sized.0. (true))
+      (or (prime size.0. 2) (prime size.0. 1))))
+
+  (def :RunnersEnded.0. (forall :b.0 Batches.0. (eq (apply rp.0. b.0) 3)))
+  (def :Shut.0.#shutdown: ask, wait for the runners, stopping, wait for the workers, join#
+    (and Running.0.
+      (or
+        (and (eq sp.0. 0) (prime jstop.0. (true)) (prime sp.0. 1))
+        (and (eq sp.0. 1) (or RunnersEnded.0. (or late.0. (eq Mut.0. 3))) (prime sp.0. 2))
+        (and (eq sp.0. 2) (prime stopping.0. (true)) (prime sp.0. 3))
+        (and (eq sp.0. 3)
+          (forall :v.0 Workers.0. (or (eq (apply wp.0. v.0) 0) (or (eq (apply wp.0. v.0) 3) (eq (apply wp.0. v.0) 4))))
+          (prime wp.0. (funof :v.0 Workers.0. (if (eq (apply wp.0. v.0) 3) 4 (apply wp.0. v.0))))
+          (prime sp.0. 5)))))
+
+  (def :Deadline.0.#the shutdown's wait for the runners ends at its deadline (no fairness)#
+    (and Running.0. (eq sp.0. 1) (not late.0.) (prime late.0. (true))))
+
+  (def :Next.0. (or Worker1.0. Worker2.0. Run1.0. Run2.0. SetSize.0. Shut.0. Deadline.0.))
+
+  (def :Safe.0.#no worker started after stopping; no worker gone holding an item; after the join
+ every slot is joined or never started#
+    (and (eq err.0. 0)
+      (forall :v.0 Workers.0. (implies (eq (apply wp.0. v.0) 3) (eq (apply hold.0. v.0) 0)))
+      (implies (eq sp.0. 5) (forall :v.0 Workers.0. (or (eq (apply wp.0. v.0) 0) (eq (apply wp.0. v.0) 4))))))
+
+  (def :Returned.0. (or (not (eq err.0. 0)) RunnersEnded.0.))
+  (def :Joined.0. (or (not (eq err.0. 0)) (eq sp.0. 5)))
+  (def :Reached1.0. (and RunnersEnded.0. (exists :v.0 Workers.0. (eq (apply ranBoth.0. v.0) 3))))
+  (def :Reached2.0. (and RunnersEnded.0. shrunk.0.))
+  (def :Reached3.0. (and RunnersEnded.0. denied.0.))
+
+  (spec (always-stutter Init.0. Next.0. (tuple late.0. wp.0. hold.0. left.0. rp.0. size.0. sized.0.
+    jstop.0. stopping.0. sp.0. err.0. ranBoth.0. shrunk.0. denied.0.)))
+  (check (if (eq Witness.0. 1) (not Reached1.0.)
+    (if (eq Witness.0. 2) (not Reached2.0.)
+      (if (eq Witness.0. 3) (not Reached3.0.) Safe.0.)))))

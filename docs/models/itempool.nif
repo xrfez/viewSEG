@@ -1,0 +1,228 @@
+(stmts#Hypothesis: in the item pool (core/itempool), some interleaving of two pool workers and the
+ job's own thread (the caller, which runs items itself and takes the results strictly in order),
+ one item raising, a cancel, and the caller's `take` raising makes a batch hang (a lost wakeup on
+ the batch's `ready` or the pool's `work`), run an item twice, take one out of order, hold more
+ than Win results, return while an item still runs, or leave a worker unjoined after shutdown.
+ Source: src/viewSEG/core/itempool.nim. One pool lock guards every batch. Worker (workerLoop):
+ lock; leave when stopping; hand out the next item of the first batch where Startable (reserving
+ it: inc next and inc inFlight in the same region) else wait on `work`; unlock; run the item
+ (the wrapper catches CatchableError into an ItemFailure, a Defect ends the process); lock; slot
+ full, dec inFlight, broadcast `ready`; a worker that saw the cancel sets the batch's stop.
+ Caller (parallelItems): lock; stop -> drain; slot `taken` full -> take it out, inc taken,
+ broadcast `work`; unlock; look at the cancel; take(i) (may raise); Startable -> hand an item to
+ itself, run it, place it (no wake); else wait on `ready`. The drain: lock, stop, broadcast
+ `work`, wait on `ready` while inFlight > 0, unregister.
+ Variables: wpc per worker 0 check, 1 waits on work, 2 runs, 3 places, 4 exited, 6 waits for
+ window room at place time (Mut 8), 8 read the next item without taking it (Mut 4); cur: the
+ worker's item; obs: it saw the cancel; wk: woken; next, taken: handout and take-out counters;
+ st per item 0 new, 1 running, 2 placed, 3 taken; stop 0 none, 1 cancel, 2 take raised, 3 all
+ taken (the drain); cx: a cancel asked for; fails, traises: failures left; cpc caller 0 check,
+ 1 waits on ready, 2 runs its item, 3 take (unlocked), 4 drain, 5 drain-wait, 6 returned, 7
+ places its own item, 8 decided to wait with the lock released (Mut 3), 9 waits for room at
+ place time (Mut 8); ccur, cwk: the caller's item, woken; pstop: Jobs shutdown; err 1 an item
+ handed out twice; ovl, stopWoke, drainWaited: witness history.
+ Switches: Fix (true: the caller runs items itself; false: it only takes, so workers must run
+ them); Mut 0 none; 1 a worker's place does not wake the caller; 2 a take-out does not broadcast
+ `work`; 3 the caller tests and waits in two lock regions; 4 the worker's handout is a read and
+ a later increment; 5 the drain does not wait for inFlight 0; 6 the worker's wait ignores the
+ shutdown; 7 a worker's exception escapes the wrapper (the worker dies); 8 the window is checked
+ when placing, not when handing out.
+ Witness 1: item 1 placed while item 0 ran and the run completed whole; 2: a stop woke a waiter
+ and the batch returned after a cancel; 3: take raised while a worker ran and the drain waited.
+ Run: tlacheck.py docs/models/itempool.nif --expect:pass (70670 states), then with
+ --live:Returned,Joined --fair:Worker1,Worker2,Caller,Shutdown for liveness (pass).
+ Expected: base passes safety and liveness; the three witnesses fail; Fix=(false) passes;
+ Mut 1 3 6 7 fail liveness (exit 3), Mut 4 5 8 fail safety (exit 2; Mut 8 as err 3, more than Win
+ results held, before it can hang); Mut 2 passes with Fix true and fails liveness with
+ Fix=(false) (the caller running items is what makes the missing wake-up safe).#
+  (variables :wpc.0. :cur.0. :obs.0. :wk.0. :next.0. :taken.0. :st.0. :stop.0. :cx.0. :fails.0.
+    :traises.0. :cpc.0. :ccur.0. :cwk.0. :pstop.0. :err.0. :ovl.0. :stopWoke.0. :drainWaited.0.)
+  (assign Fix.0. (true))
+  (assign Mut.0. 0)
+  (assign Witness.0. 0)
+  (assign N.0. 4)
+  (assign Win.0. 2)
+  (assign MaxIn.0. 3)
+  (assign Workers.0. (set 1 2))
+  (assign Items.0. (range 0 3))
+
+  (def :Init.0.
+    (and (prime wpc.0. (funof :v.0 Workers.0. 0)) (prime cur.0. (funof :v.0 Workers.0. 0))
+      (prime obs.0. (funof :v.0 Workers.0. (false))) (prime wk.0. (funof :v.0 Workers.0. (false)))
+      (prime next.0. 0) (prime taken.0. 0) (prime st.0. (funof :i.0 Items.0. 0))
+      (prime stop.0. 0) (prime cx.0. (false)) (prime fails.0. 1) (prime traises.0. 1)
+      (prime cpc.0. 0) (prime ccur.0. 0) (prime cwk.0. (false)) (prime pstop.0. (false))
+      (prime err.0. 0) (prime ovl.0. (false)) (prime stopWoke.0. (false))
+      (prime drainWaited.0. (false))))
+
+  (def :Wpc.0. (apply wpc.0. Me.0.))
+  (def :Cur.0. (apply cur.0. Me.0.))
+  (def :Running.0. (eq err.0. 0))
+  (def :InFlight.0. (card (setcomp :i.0 Items.0. (eq (apply st.0. i.0) 1))))
+  (def :Held.0. (card (setcomp :i.0 Items.0. (or (eq (apply st.0. i.0) 1) (eq (apply st.0. i.0) 2)))))
+  (def :Startable.0.#Startable(b), pool lock held, the batch registered (cpc < 6)#
+    (and (lt cpc.0. 6) (eq stop.0. 0) (lt next.0. N.0.)
+      (or (eq Mut.0. 8) (lt next.0. (plus taken.0. Win.0.)))
+      (lt InFlight.0. MaxIn.0.)))
+  (def :WaitersOnWork.0.#a broadcast on `work`: every worker waiting on it is woken#
+    (funof :v.0 Workers.0. (or (apply wk.0. v.0)
+      (or (eq (apply wpc.0. v.0) 1) (eq (apply wpc.0. v.0) 6)))))
+  (def :CallerWaits.0. (or (eq cpc.0. 1) (or (eq cpc.0. 5) (eq cpc.0. 9))))
+  (def :AnyWaiting.0.
+    (or CallerWaits.0. (exists :v.0 Workers.0. (or (eq (apply wpc.0. v.0) 1) (eq (apply wpc.0. v.0) 6)))))
+
+  (def :WCheck.0.#workerLoop, lock held: exit when stopping; hand out (reserve) or wait on work#
+    (and Running.0. (eq Wpc.0. 0)
+      (if (and pstop.0. (not (eq Mut.0. 6)))
+        (prime wpc.0. (except wpc.0. (mapsto Me.0. 4)))
+        (if Startable.0.
+          (if (eq Mut.0. 4)
+            (and (prime cur.0. (except cur.0. (mapsto Me.0. next.0.)))
+              (prime wpc.0. (except wpc.0. (mapsto Me.0. 8))))
+            (and (prime cur.0. (except cur.0. (mapsto Me.0. next.0.)))
+              (prime st.0. (except st.0. (mapsto next.0. 1)))
+              (prime err.0. (if (eq (apply st.0. next.0.) 0) 0 1))
+              (prime next.0. (plus next.0. 1))
+              (prime wpc.0. (except wpc.0. (mapsto Me.0. 2)))))
+          (and (prime wpc.0. (except wpc.0. (mapsto Me.0. 1)))
+            (prime wk.0. (except wk.0. (mapsto Me.0. (false)))))))))
+
+  (def :WTakeB.0.#Mut 4 only: the increment in a later lock region, from the number read before#
+    (and Running.0. (eq Wpc.0. 8)
+      (prime err.0. (if (eq (apply st.0. Cur.0.) 0) 0 1))
+      (prime st.0. (except st.0. (mapsto Cur.0. 1)))
+      (prime next.0. (plus Cur.0. 1))
+      (prime wpc.0. (except wpc.0. (mapsto Me.0. 2)))))
+
+  (def :WWake.0.#woken from work: test again under the lock#
+    (and Running.0. (eq Wpc.0. 1) (apply wk.0. Me.0.)
+      (prime wpc.0. (except wpc.0. (mapsto Me.0. 0)))
+      (prime wk.0. (except wk.0. (mapsto Me.0. (false))))))
+
+  (def :WRun.0.#the item, unlocked: ok or an exception; the cancel hook is read once#
+    (and Running.0. (eq Wpc.0. 2)
+      (prime obs.0. (except obs.0. (mapsto Me.0. cx.0.)))
+      (or
+        (and (prime wpc.0. (except wpc.0. (mapsto Me.0. 3))) (unchanged fails.0.))
+        (and (gt fails.0. 0) (prime fails.0. (minus fails.0. 1))
+          (prime wpc.0. (except wpc.0. (mapsto Me.0. (if (eq Mut.0. 7) 4 3))))))))
+
+  (def :WPlace.0.#lock: slot full, dec inFlight, a seen cancel sets stop, broadcast ready (and work)#
+    (and Running.0. (eq Wpc.0. 3)
+      (if (and (eq Mut.0. 8) (ge Cur.0. (plus taken.0. Win.0.)))
+        (and (prime wpc.0. (except wpc.0. (mapsto Me.0. 6)))
+          (prime wk.0. (except wk.0. (mapsto Me.0. (false)))))
+        (and (prime st.0. (except st.0. (mapsto Cur.0. 2)))
+          (prime ovl.0. (or ovl.0.
+            (exists :j.0 Items.0. (and (lt j.0 Cur.0.) (eq (apply st.0. j.0) 1)))))
+          (prime wpc.0. (except wpc.0. (mapsto Me.0. 0)))
+          (if (and (apply obs.0. Me.0.) (eq stop.0. 0))
+            (and (prime stop.0. 1) (prime wk.0. WaitersOnWork.0.)
+              (prime stopWoke.0. (or stopWoke.0. AnyWaiting.0.)))
+            (unchanged stop.0. wk.0. stopWoke.0.))
+          (prime cwk.0. (if (eq Mut.0. 1) cwk.0. (or cwk.0. CallerWaits.0.)))))))
+
+  (def :WWake6.0.#Mut 8 only: woken after a take-out, place again#
+    (and Running.0. (eq Wpc.0. 6) (apply wk.0. Me.0.)
+      (prime wpc.0. (except wpc.0. (mapsto Me.0. 3)))
+      (prime wk.0. (except wk.0. (mapsto Me.0. (false))))))
+
+  (def :WorkerActs.0. (or WCheck.0. WTakeB.0. WWake.0. WRun.0. WPlace.0. WWake6.0.))
+  (def :Worker1.0. (let (bind :Me.0. 1) WorkerActs.0.))
+  (def :Worker2.0. (let (bind :Me.0. 2) WorkerActs.0.))
+
+  (def :CCheck.0.#parallelItems loop, lock held: stop -> drain; slot full -> take out; startable -> run it; wait#
+    (and Running.0. (eq cpc.0. 0)
+      (if (or (not (eq stop.0. 0)) (ge taken.0. N.0.))
+        (prime cpc.0. 4)
+        (if (eq (apply st.0. taken.0.) 2)
+          (and (prime st.0. (except st.0. (mapsto taken.0. 3))) (prime ccur.0. taken.0.)
+            (prime taken.0. (plus taken.0. 1))
+            (prime wk.0. (if (eq Mut.0. 2) wk.0. WaitersOnWork.0.))
+            (prime cpc.0. 3))
+          (if (and Fix.0. Startable.0.)
+            (and (prime ccur.0. next.0.) (prime st.0. (except st.0. (mapsto next.0. 1)))
+              (prime err.0. (if (eq (apply st.0. next.0.) 0) 0 1))
+              (prime next.0. (plus next.0. 1)) (prime cpc.0. 2))
+            (and (prime cpc.0. (if (eq Mut.0. 3) 8 1)) (prime cwk.0. (false))))))))
+
+  (def :CWake.0.#woken from ready: test again#
+    (and Running.0. (eq cpc.0. 1) cwk.0. (prime cpc.0. 0) (prime cwk.0. (false))))
+
+  (def :CBlock.0.#Mut 3 only: the wait, in a second lock region after the test#
+    (and Running.0. (eq cpc.0. 8) (prime cpc.0. 1)))
+
+  (def :CRun.0.#the caller's own item, unlocked: ok or an exception (caught by the wrapper)#
+    (and Running.0. (eq cpc.0. 2)
+      (or (and (prime cpc.0. 7) (unchanged fails.0.))
+        (and (gt fails.0. 0) (prime fails.0. (minus fails.0. 1)) (prime cpc.0. 7)))))
+
+  (def :CPlace.0.#lock: slot full, dec inFlight; the caller wakes no one, it looks again itself#
+    (and Running.0. (eq cpc.0. 7)
+      (if (and (eq Mut.0. 8) (ge ccur.0. (plus taken.0. Win.0.)))
+        (and (prime cpc.0. 9) (prime cwk.0. (false)))
+        (and (prime st.0. (except st.0. (mapsto ccur.0. 2)))
+          (prime ovl.0. (or ovl.0.
+            (exists :j.0 Items.0. (and (lt j.0 ccur.0.) (eq (apply st.0. j.0) 1)))))
+          (prime cpc.0. 0)))))
+
+  (def :CWake9.0.#Mut 8 only: woken, place again#
+    (and Running.0. (eq cpc.0. 9) cwk.0. (prime cpc.0. 7) (prime cwk.0. (false))))
+
+  (def :CTake.0.#unlocked: the cancel is looked at, then take(i), which may raise#
+    (and Running.0. (eq cpc.0. 3)
+      (or
+        (and cx.0. (prime stop.0. (if (eq stop.0. 0) 1 stop.0.))
+          (prime wk.0. WaitersOnWork.0.) (prime cpc.0. 4))
+        (and (not cx.0.) (gt traises.0. 0) (prime traises.0. (minus traises.0. 1))
+          (prime stop.0. (if (eq stop.0. 0) 2 stop.0.)) (prime wk.0. WaitersOnWork.0.)
+          (prime cpc.0. 4))
+        (and (not cx.0.) (prime err.0. (if (eq stop.0. 2) 5 0)) (prime cpc.0. 0)))))
+
+  (def :CDrain.0.#finally, lock: stop, broadcast work, wait on ready while inFlight > 0, unregister#
+    (and Running.0. (eq cpc.0. 4)
+      (prime stop.0. (if (eq stop.0. 0) 3 stop.0.))
+      (prime wk.0. WaitersOnWork.0.)
+      (if (or (eq Mut.0. 5) (eq InFlight.0. 0))
+        (prime cpc.0. 6)
+        (and (prime cpc.0. 5) (prime cwk.0. (false))
+          (prime drainWaited.0. (or drainWaited.0. (eq stop.0. 2)))))))
+
+  (def :CDrainWake.0.#woken from ready in the drain: test inFlight again#
+    (and Running.0. (eq cpc.0. 5) cwk.0. (prime cpc.0. 4) (prime cwk.0. (false))))
+
+  (def :Caller.0. (or CCheck.0. CWake.0. CBlock.0. CRun.0. CPlace.0. CWake9.0. CTake.0.
+    CDrain.0. CDrainWake.0.))
+
+  (def :Cancel.0.#the user cancels, at any time before the batch returns (no fairness)#
+    (and Running.0. (not cx.0.) (not (eq cpc.0. 6)) (prime cx.0. (true))))
+
+  (def :Shutdown.0.#Jobs.stop after the batch returned: stopping, broadcast work#
+    (and Running.0. (eq cpc.0. 6) (not pstop.0.) (prime pstop.0. (true))
+      (prime wk.0. WaitersOnWork.0.)))
+
+  (def :Next.0. (or Worker1.0. Worker2.0. Caller.0. Cancel.0. Shutdown.0.))
+
+  (def :Safe.0.#no double handout; at most Win results held; at most MaxIn running; the batch
+ returns only with no item running; taken items form a prefix, all taken; a normal end took all#
+    (and (eq err.0. 0)
+      (le Held.0. Win.0.)
+      (le InFlight.0. MaxIn.0.)
+      (forall :i.0 Items.0. (implies (lt i.0 taken.0.) (eq (apply st.0. i.0) 3)))
+      (forall :i.0 Items.0. (implies (ge i.0 next.0.) (eq (apply st.0. i.0) 0)))
+      (implies (eq cpc.0. 6) (eq InFlight.0. 0))
+      (implies (and (eq cpc.0. 6) (eq stop.0. 3)) (eq taken.0. N.0.))))
+
+  (def :Returned.0. (or (eq cpc.0. 6) (not (eq err.0. 0))))
+  (def :Joined.0. (or (not (eq err.0. 0))
+    (and pstop.0. (forall :v.0 Workers.0. (eq (apply wpc.0. v.0) 4)))))
+  (def :Reached1.0. (and (eq cpc.0. 6) (eq stop.0. 3) ovl.0.))
+  (def :Reached2.0. (and (eq cpc.0. 6) (eq stop.0. 1) stopWoke.0.))
+  (def :Reached3.0. (and (eq cpc.0. 6) (eq stop.0. 2) drainWaited.0.))
+
+  (spec (always-stutter Init.0. Next.0. (tuple wpc.0. cur.0. obs.0. wk.0. next.0. taken.0. st.0.
+    stop.0. cx.0. fails.0. traises.0. cpc.0. ccur.0. cwk.0. pstop.0. err.0. ovl.0. stopWoke.0.
+    drainWaited.0.)))
+  (check (if (eq Witness.0. 1) (not Reached1.0.)
+    (if (eq Witness.0. 2) (not Reached2.0.)
+      (if (eq Witness.0. 3) (not Reached3.0.) Safe.0.)))))
