@@ -48,7 +48,7 @@ import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, screens, state]
 import viewSEG/ui/imgui/app
 from viewSEG/ui/imgui/windows import AppWindow, askClose, awFiles, awRecords, awMap, awHeaders, awJobs,
-  awMessages, awSpectrum, awOutput
+  awMessages, awSpectrum, awOutput, awShotLog
 import viewSEG/view/theme
 import privatefiles
 import utils/[fixtures, waiting]
@@ -214,9 +214,8 @@ proc main*() =
         doAssert not p.apart, id & " is outside the main window " & what
         doAssert p.rect.inside(m), id & " is not inside the main window " & what & ": " &
           $p.rect & " in " & $m
-      doAssert f.hiddenWindows == {awAux, awMissing, awQuality, awVibFolder, awOutput}, "hidden " &
-          what & ": " &
-        $f.hiddenWindows
+      doAssert f.hiddenWindows == {awAux, awMissing, awQuality, awVibFolder, awOutput,
+          awShotLog}, "hidden " & what & ": " & $f.hiddenWindows
 
     step("the file is shown", noop, proc (f: FrameInfo): bool =
       let p = f.core.panels[f.core.findPanel(MainPanel)]
@@ -254,7 +253,7 @@ proc main*() =
         for id in ["records", "Messages"]:
           doAssert not f.windowPlace(id).shown, id & " is drawn"
         doAssert f.hiddenWindows == {awRecords, awMessages, awAux, awMissing, awQuality,
-            awVibFolder, awOutput},
+            awVibFolder, awOutput, awShotLog},
           $f.hiddenWindows)
     menu("Reset the windows", "menu.Reset the windows", proc (f: FrameInfo): bool =
       result = wait > 10 and f.windowPlace("records").shown
@@ -277,7 +276,7 @@ proc main*() =
     menu("the Seismic window: never hidden", "menu.window.plot", proc (f: FrameInfo): bool =
       result = wait > 4
       if result: doAssert f.windowPlace("plot").inSight and
-        f.hiddenWindows == {awAux, awMissing, awQuality, awVibFolder, awOutput})
+        f.hiddenWindows == {awAux, awMissing, awQuality, awVibFolder, awOutput, awShotLog})
     # ------------------------------------------- the title bars' close buttons --
     # A close button's click is `askClose` (the helper `beginClosable` calls when Dear
     # ImGui reports the window closed): clicking the tab's button itself is not driven here.
@@ -307,6 +306,10 @@ proc main*() =
     menu("Output: opened", "menu.window.output", proc (f: FrameInfo): bool =
       wait > 4 and f.windowPlace("output").shown)
     closing("output", awOutput)
+    menu("Shot log: opened from the menu", "menu.window.shotlog", proc (f: FrameInfo): bool =
+      result = wait > 4 and f.windowPlace("shotlog").shown
+      if result: doAssert f.windowPlace("shotlog").docked, "the Shot log opened undocked")
+    closing("shotlog", awShotLog)
     step("the windows are as before", noop, proc (f: FrameInfo): bool =
       result = wait > 4
       if result: f.allDocked("after the close buttons"))
@@ -368,13 +371,14 @@ proc main*() =
     step("Jobs starts hidden", noop, proc (f: FrameInfo): bool =
       result = wait > 5
       if result:
-        doAssert f.hiddenWindows == {awJobs, awAux, awMissing, awQuality, awVibFolder, awOutput},
+        doAssert f.hiddenWindows == {awJobs, awAux, awMissing, awQuality, awVibFolder, awOutput,
+          awShotLog},
           "hidden at start: " &
           $f.hiddenWindows
         doAssert not f.windowPlace("jobs").shown)
     menu("Jobs shown", "menu.window.jobs", proc (f: FrameInfo): bool =
       wait > 4 and f.windowPlace("jobs").inSight and
-        f.hiddenWindows == {awAux, awMissing, awQuality, awVibFolder, awOutput})
+        f.hiddenWindows == {awAux, awMissing, awQuality, awVibFolder, awOutput, awShotLog})
     next = steps
     drive(next, opts)
     echo "tguiwindows: ", next.len, " steps in the second run"

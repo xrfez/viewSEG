@@ -971,7 +971,7 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
     of dkExportShotSps: ui.shotLog.setSpsDest(ev.paths[0])
     of dkShotLog:
       ui.core.apply Command(kind: ckImportShotLog, logPath: ev.paths[0])
-      ui.shotLog.open()
+      ui.windows.bringForward(awShotLog)
   of seCancelled:
     discard # the user closed the dialog: nothing to say
   of seDialogFailed:
@@ -1042,7 +1042,6 @@ proc resetWindows(ui: var Ui) =
   ui.windows.showAll()
   ui.layoutDone = false
   ui.join.placeAgain()
-  ui.shotLog.placeAgain()
   ui.memory.placeAgain()
   ui.refs.placeAgain()
   discard ui.placeMain(wholly = false)
@@ -1473,7 +1472,6 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     prepareNext: ui.core.settings.files.prepareNext,
     shown: {AppWindow.low .. AppWindow.high} - ui.windows.hidden,
     seismicName: ui.core.windowTitle(MainPanel), joinShown: ui.join.shown,
-    shotLogShown: ui.shotLog.shown,
     surveyImported: ui.core.surveyInEffect,
     trayIcon: ui.core.settings.tray.icon, trayMinimize: ui.core.settings.tray.minimize,
     trayProblem: ui.trayProblem, trayAvailable: trayShown(),
@@ -1515,8 +1513,6 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.windows.picked(w)
   if menu.toggleJoin:
     if ui.join.shown: ui.join.shown = false else: ui.join.open()
-  if menu.toggleShotLog:
-    if ui.shotLog.shown: ui.shotLog.shown = false else: ui.shotLog.open()
   if menu.loadLayout.len > 0:
     ui.core.apply Command(kind: ckLoadLayout, docPath: menu.loadLayout)
   result = menu.actions
@@ -1691,11 +1687,15 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   var join = ui.join.drawJoin(joinTitle, ui.core, ui.theme, ui.marks)
   for c in join.commands.mitems:
     ui.core.apply move c
-  var shotLog = ui.shotLog.drawShotLog(shotLogTitle, ui.core, ui.theme, ui.marks)
-  for c in shotLog.mitems:
-    ui.core.apply move c
-  let spsAsk = ui.shotLog.spsAsked()
-  if spsAsk.ask: ui.ask(dkExportShotSps, spsAsk.at)
+  if ui.windows.shows(awShotLog):
+    ui.windows.beforeDrawing(awShotLog)
+    var shotLog = ui.shotLog.drawShotLog(shotLogTitle, ui.core, ui.theme, ui.marks)
+    for c in shotLog.mitems:
+      ui.core.apply move c
+    let spsAsk = ui.shotLog.spsAsked()
+    if spsAsk.ask: ui.ask(dkExportShotSps, spsAsk.at)
+  else:
+    ui.shotLog.hidden()
   var memory = ui.memory.drawMemory(memoryTitle, ui.core, ui.theme, ui.marks)
   for c in memory.commands.mitems:
     ui.core.apply move c

@@ -1,6 +1,6 @@
 ## The Shot log window: a table of shots, its column map, and its problems.
-## Import is Project > Import shot log...; this window opens once a file is
-## chosen, and View shows or hides it. One cell can be edited at a time, and
+## Import is Project > Import shot log...; this window opens, docked as a tab,
+## once a file is chosen, and View shows or hides it. One cell can be edited at a time, and
 ## only while Allow editing is ticked. Follow the plot, off until ticked,
 ## shows the row the plot is on.
 
@@ -10,6 +10,7 @@ import parseSEG/survey/sps
 import ../../core/[destwatch, geometry, shotlog, shotlogsps, state]
 import ../../view/[shotlogrows, shotlogwords, theme]
 import chrome, focus, icons, marks, style
+from windows import awShotLog, beginClosable
 
 const
   ScanBatch = 1600 ## filter rows looked at in one frame
@@ -21,9 +22,6 @@ const
 type
   ShotLogUi* = object
     ## The window's own state between frames.
-    shown*: bool
-    bringUp: bool
-    placeAgain: bool
     focus: FocusClicks
     haveSeen: bool                    ## a loaded log has been followed
     seenMax: int                      ## the highest id followed
@@ -89,14 +87,9 @@ func shownId*(ui: ShotLogUi): int {.inline.} =
   ## The id of the log the window shows; -1 when there is none.
   ui.currentId
 
-proc open*(ui: var ShotLogUi) =
-  ## Shows the window, in front.
-  ui.shown = true
-  ui.bringUp = true
-
-proc placeAgain*(ui: var ShotLogUi) =
-  ## Puts the window back at its first place and size when next drawn.
-  ui.placeAgain = true
+proc hidden*(ui: var ShotLogUi) =
+  ## The window is not drawn: it has no focus.
+  ui.focus.blur()
 
 func focused*(ui: ShotLogUi): bool {.inline.} =
   ## Whether the window had the focus at the end of the last frame.
@@ -705,7 +698,9 @@ proc drawGrid(ui: var ShotLogUi; st: AppState; i, width, n: int; t: Theme;
   let flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_ScrollY.cint or
     ImGui_TableFlags_ScrollX.cint or ImGui_TableFlags_Resizable.cint or
     ImGui_TableFlags_BordersInnerV.cint or ImGui_TableFlags_SizingFixedFit.cint
-  if not igBeginChild_Str("##grid", ImVec2_c(x: 0, y: 0), 0, 0): return
+  if not igBeginChild_Str("##grid", ImVec2_c(x: 0, y: 0), 0, 0):
+    igEndChild() # always, as Dear ImGui asks (a tab that is hidden or tiny)
+    return
   marks.markWindow("shotlog.grid")
   if not igBeginTable("shotlog.grid", cint(2 + width), flags, ImVec2_c(x: 0, y: 0), 0):
     igEndChild()
@@ -848,25 +843,11 @@ proc drawProblems(ui: var ShotLogUi; st: AppState; i: int; t: Theme; marks: var 
 proc drawShotLog*(ui: var ShotLogUi; title: string; st: var AppState; t: Theme;
     marks: var Marks): seq[Command] =
   ## The window, titled `title`, while it is open. Edits and a re-map are commands.
-  if not ui.shown:
-    ui.focus.blur()
-    return
-  if ui.bringUp:
-    igSetWindowFocus_Str(title.cstring)
-    ui.bringUp = false
   ui.follow(st)
   let i = st.findShotLog(ui.currentId)
   let rev = if i >= 0: st.shotRevision(i) else: -1
   ui.bindLog(st, i, rev)
-  let vp = igGetMainViewport()
-  let cond = if ui.placeAgain: ImGui_Cond_Always.cint else: ImGui_Cond_FirstUseEver.cint
-  ui.placeAgain = false
-  igSetNextWindowPos(ImVec2_c(x: vp.WorkPos.x + 16, y: vp.WorkPos.y + 16), cond,
-    ImVec2_c(x: 0, y: 0))
-  igSetNextWindowSize(ImVec2_c(x: max(igGetFontSize() * 48, vp.WorkSize.x * 0.78),
-    y: max(igGetFontSize() * 28, vp.WorkSize.y * 0.84)), cond)
-  var open = true
-  if igBegin(title.cstring, addr open, ImGui_WindowFlags_NoDocking.cint):
+  if beginClosable(awShotLog, title.cstring):
     ui.focus.watch()
     marks.markWindow("shotlog")
     let where = whereOf(st)
@@ -1041,4 +1022,3 @@ proc drawShotLog*(ui: var ShotLogUi; title: string; st: var AppState; t: Theme;
   else:
     ui.focus.blur()
   igEnd()
-  if not open: ui.shown = false

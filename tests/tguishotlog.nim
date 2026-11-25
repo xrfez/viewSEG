@@ -150,6 +150,7 @@ proc main*() =
     let times = recordTimes(segd)
     writeFollowLog(followLog, times, followRows, followRow)
     let gridShot = root / ".scratch" / "shotlog-grid.png"
+    let dockedShot = root / ".scratch" / "shotlog-docked.png"
     let columnsShot = root / ".scratch" / "shotlog-columns.png"
     let editShot = root / ".scratch" / "shotlog-edit.png"
     let allowShot = root / ".scratch" / "shotlog-allow.png"
@@ -192,17 +193,25 @@ proc main*() =
         f.click(f.markOf("menu.Import shot log...").centre),
         proc (f: FrameInfo): bool =
           let line = f.summaryLine
-          let point = roleCol(f, "shot point")
-          if "shotlog.csv" in line and "200 rows" in line:
-            doAssert f.markNames("shotlog.time 0 2024-03-01 00:00:00.000000").len > 0,
-              "row 0 time was " & $f.markNames("shotlog.time 0 ")
           result = "shotlog.csv" in line and "200 rows" in line and "22 columns" in line and
-            line.endsWith("session only") and point >= 0 and
+            line.endsWith("session only") and f.windowPlace("shotlog").inSight
+          if result:
+            doAssert asked == @[dkShotLog], "asked for " & $asked
+            doAssert f.windowPlace("shotlog").docked, "the Shot log is not docked"
+            doAssert f.savePng(dockedShot), "the docked screenshot was not written"
+        , 2000)
+      step("room for the columns", proc (f: FrameInfo) =
+        # a tab beside Headers shows two columns: the window is floated to read the others
+        f.arrangeWindows(f.layoutText & "[Window][###shotlog]\nPos=20,80\nSize=1500,850\n" &
+          "Collapsed=0\n\n[viewSEG][Windows]\nHidden=aux,missing,quality,vibfolder,output\n\n"),
+        proc (f: FrameInfo): bool =
+          let point = roleCol(f, "shot point")
+          result = f.windowPlace("shotlog").inSight and not f.windowPlace("shotlog").docked and
+            point >= 0 and
             ("shotlog.cell 0 " & $point & " 1000") in f.markNames("shotlog.cell 0 ") and
             f.markNames("shotlog.time 0 2024-03-01 00:00:00.000000").len > 0
           if result:
             pointCol = point
-            doAssert asked == @[dkShotLog], "asked for " & $asked
             doAssert f.savePng(gridShot), "the grid screenshot was not written"
         , 2000)
 

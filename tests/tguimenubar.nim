@@ -47,7 +47,7 @@ const
       "Export trace edits...", "Clear all edits for this file", "File memory..."]),
     ("View", @["window.plot", "window.files", "window.records", "window.map", "window.headers",
       "window.jobs", "window.Messages", "window.spectrum", "window.aux", "window.missing",
-      "window.quality", "window.vibfolder", "window.output", "window.join", "window.shotlog",
+      "window.quality", "window.vibfolder", "window.output", "window.shotlog", "window.join",
       "Only traces in the template", "Theme",
       "Light / dark"]),
     ("Analysis", @["window.newplot", "Compare two traces", "First-break overlay",

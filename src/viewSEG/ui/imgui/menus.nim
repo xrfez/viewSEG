@@ -93,7 +93,6 @@ type
     shown*: set[AppWindow]       ## the windows ticked under View
     seismicName*: string         ## what the Seismic window is called now (`windowTitle`)
     joinShown*: bool             ## the "Import survey" window is open
-    shotLogShown*: bool          ## the "Shot log" window is open
     surveyImported*: bool        ## a survey is in effect (Project > Clear survey)
     undo*, redo*: string
       ## Edit > Undo and Redo: the step each makes, in words ("trace 21
@@ -151,7 +150,6 @@ type
     pickedWindows*: set[AppWindow]
       ## their entries under Window were clicked (`picked`)
     toggleJoin*: bool         ## the "Import survey" window's entry under View was clicked
-    toggleShotLog*: bool      ## the "Shot log" window's entry under View was clicked
     toggleTrayIcon*: bool     ## Window > Icon in the tray was clicked
     toggleTrayMinimize*: bool ## Window > Minimize to the tray was clicked
     newPlot*: bool            ## Analysis > New plot > a view was clicked: `newPlotView`
@@ -211,7 +209,8 @@ const
   windowIcons: array[AppWindow, string] = [awSeismic: IconPlot, awFiles: IconList,
     awRecords: IconRecords, awMap: IconMap, awHeaders: IconTable, awJobs: IconTasks,
     awMessages: IconLog, awSpectrum: IconPulse, awAux: IconPlot, awMissing: IconTable,
-    awQuality: IconTable, awVibFolder: IconTable, awOutput: IconLog]
+    awQuality: IconTable, awVibFolder: IconTable, awOutput: IconLog,
+    awShotLog: IconTable]
 
 const
   FollowWords* = "Follow the latest file"
@@ -490,7 +489,7 @@ proc drawNewPlot(input: MenuInput; res: var MenuResult) =
     igEndMenu()
 
 proc drawWindowTicks(input: MenuInput; res: var MenuResult) =
-  ## View's window ticks: each window, then Imported Survey and Shot log.
+  ## View's window ticks: each window, then Imported Survey.
   igSeparatorText("Windows")
   for w in AppWindow:
     let name = if w == awSeismic and input.seismicName.len > 0: input.seismicName
@@ -498,17 +497,14 @@ proc drawWindowTicks(input: MenuInput; res: var MenuResult) =
     if igMenuItem_Bool((windowIcons[w] & "  " & name).cstring, nil, w in input.shown, true):
       res.pickedWindows.incl w
     if marked != nil: marked[].mark("menu.window." & $w)
-    tip(if w in AlwaysShown: "Always shown: a click brings it forward"
-        else: "Ticked while shown. A click shows it in front when it is hidden or behind " &
-          "another tab, and hides it when it is in sight")
+    tip((if w in AlwaysShown: "Always shown: a click brings it forward"
+      else: "Ticked while shown. A click shows it in front when it is hidden or behind " &
+        "another tab, and hides it when it is in sight") &
+        (if w == awShotLog: ". " & WindowTip else: ""))
   if igMenuItem_Bool((IconSurvey & "  Imported Survey").cstring, nil, input.joinShown, true):
     res.toggleJoin = true
   if marked != nil: marked[].mark("menu.window.join")
   tip("Ticked while open: a click opens it in front, or closes it")
-  if igMenuItem_Bool((IconTable & "  Shot log").cstring, nil, input.shotLogShown, true):
-    res.toggleShotLog = true
-  if marked != nil: marked[].mark("menu.window.shotlog")
-  tip("Ticked while open: a click opens it in front, or closes it. " & WindowTip)
 
 proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
   ## Window: putting the windows right, the layouts, then the tray.
