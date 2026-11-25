@@ -44,12 +44,6 @@ type
     startMs: float64
     recorded: bool
 
-func shareOf(done, total: int64): int64 =
-  if total <= 0 or done <= 0: return 0
-  if done >= total: return FolderScale - 1
-  let scaled = int64(float64(done) / float64(total) * float64(FolderScale))
-  if scaled >= FolderScale: FolderScale - 1 else: scaled
-
 func filePhase(i, n: int; path: string): string =
   "file " & $(i + 1) & " of " & $n & ": " & path.extractFilename
 
@@ -243,7 +237,7 @@ func sweepsOf(files: seq[FolderListed]; pairs: Table[string, string]): seq[
         vib = files[at[partner]].info.vibrator
       result.add (vib, f.info.weights)
 
-proc readAll(ctx: JobContext; path: string; size: int64; fileNo, count: int): seq[byte] =
+proc readAll(ctx: ItemContext; path: string; size: int64): seq[byte] =
   let name = path.extractFilename
   if size < 0:
     raise newException(IOError, name & " cannot be read.")
@@ -265,8 +259,7 @@ proc readAll(ctx: JobContext; path: string; size: int64; fileNo, count: int): se
     if read <= 0:
       raise newException(IOError, name & " cannot be read.")
     got += read
-    discard ctx.progress(int64(fileNo) * FolderScale + shareOf(int64(got), size),
-      int64(count) * FolderScale)
+    discard ctx.progress(int64(got), size)
 
 proc addLine(into: var seq[string]; line: string) =
   if line.len > 0 and line notin into: into.add line
@@ -347,8 +340,8 @@ func forceWhyNot(facts: SignatureFacts; ask: VibQcAsk; measures: seq[FolderMeasu
         result.add "the header gives no hold-down weight"
     of sgNone: result.add "no 100 % force is available"
 
-proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: SweepInfo;
-    ask: VibQcAsk; choice: SignatureChoice; held: HeldRef; fileNo, count: int): FolderRow =
+proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo: SweepInfo;
+    ask: VibQcAsk; choice: SignatureChoice; held: HeldRef): FolderRow =
   let path = item.path
   let name = path.extractFilename
   var size: int64
@@ -357,7 +350,7 @@ proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: 
   except OSError as e:
     raise newException(IOError, name & " cannot be read (" & e.msg & ").")
   let modified = fs.getLastModificationTime(path)
-  let bytes = if item.converted: newSeq[byte]() else: readAll(ctx, path, size, fileNo, count)
+  let bytes = if item.converted: newSeq[byte]() else: readAll(ctx, path, size)
   if ctx.cancelled: raise newException(JobCancelledError, "Cancelled.")
   var pair = SignaturePair()
   if item.info.kind == sgVib and pairPath.len > 0:
@@ -475,8 +468,41 @@ proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: 
     measures: measures, polarity: answer.polarity.line,
     warnings: warnings, controllers: controllersOf(answer.controller))
 
+type
+  FolderItems = object
+    ## What every item of the batch reads, never writes: the files, each one's partner
+    ## (path and facts), and the one ask. No `ref` is inside it.
+    files: seq[FolderListed]
+    partners: seq[string]
+    partnerInfos: seq[SweepInfo]
+    ask: VibQcAsk
+    choice: SignatureChoice
+    held: HeldRef
+    gone: string
+
+static:
+  doAssert plainData(FolderItems) and plainData(FolderRow)
+
+proc judgeItem(it: ItemContext; a: ptr FolderItems; i: int): FolderRow {.nimcall, gcsafe.} =
+  ## The row of file `i` before the job's own words are added: raises when the file cannot
+  ## be judged.
+  {.cast(gcsafe).}:
+    let item = a.files[i]
+    let partner = a.partners[i]
+    if a.gone.len > 0:
+      FolderRow(path: item.path, kind: item.info.kind, pair: partner,
+        outcome: foProblem, problem: a.gone)
+    elif item.info.problem.len > 0:
+      FolderRow(path: item.path, kind: item.info.kind, pair: partner,
+        outcome: foProblem, problem: item.info.problem)
+    elif item.info.kind notin {sgDat, sgVib} and not item.converted:
+      FolderRow(path: item.path, kind: item.info.kind, pair: partner,
+        outcome: foProblem, problem: item.path.extractFilename & " is not a signature file.")
+    else:
+      judgeFile(it, item, partner, a.partnerInfos[i], a.ask, a.choice, a.held)
+
 proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
-    files: seq[FolderListed]; sink: FolderQcSink; choice: SignatureChoice;
+    files: seq[FolderListed]; target: FolderQcSink; choice: SignatureChoice;
     reference: FolderReference) =
   var table = FolderTable(problems: ask.problems, rows: @[])
   var keys: seq[PairKey] = @[]
@@ -485,11 +511,11 @@ proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
   table.weightWords = fleetWords(sweepsOf(files, paired.pairs))
   let count = files.len
   if count == 0:
-    finish(sink, table)
+    finish(target, table)
     return
   if ctx.cancelled:
     skipFrom(table.rows, files, paired.pairs, 0)
-    stopJob(sink, table)
+    stopJob(target, table)
   var held: HeldRef
   var gone = ""
   held.recorded = reference.recorded
@@ -505,61 +531,52 @@ proc runFolder(ctx: JobContext; ask: VibQcAsk; weights: VibJobWeights;
                 else: "the reference file is missing"
       gone = "the reference \"" & name &
         "\" is no longer in the archive (" & why & ")"
-  var done = 0
+  var args = FolderItems(files: files, ask: ask, choice: choice, held: held, gone: gone,
+    partners: newSeq[string](count), partnerInfos: newSeq[SweepInfo](count))
   for i, item in files:
+    args.partners[i] = paired.pairs.getOrDefault(item.path)
+    args.partnerInfos[i] = infoOf(files, args.partners[i])
+  proc take(i: int; outcome: sink ItemOutcome[FolderRow]) {.closure, gcsafe.} =
+    let item = files[i]
     ctx.setPhase(filePhase(i, count, item.path))
     if ctx.cancelled:
       skipFrom(table.rows, files, paired.pairs, i)
-      stopJob(sink, table)
-    discard ctx.progress(int64(done) * FolderScale, int64(count) * FolderScale)
-    let partner = paired.pairs.getOrDefault(item.path)
+      stopJob(target, table)
+    let partner = args.partners[i]
+    let partnerInfo = args.partnerInfos[i]
     let note = paired.notes.getOrDefault(item.path)
-    try:
-      var row: FolderRow
-      if gone.len > 0:
-        row = FolderRow(path: item.path, kind: item.info.kind, pair: partner,
-          outcome: foProblem, problem: gone)
-      elif item.info.problem.len > 0:
-        row = FolderRow(path: item.path, kind: item.info.kind, pair: partner,
-          outcome: foProblem, problem: item.info.problem)
-      elif item.info.kind notin {sgDat, sgVib} and not item.converted:
-        row = FolderRow(path: item.path, kind: item.info.kind, pair: partner,
-          outcome: foProblem, problem: item.path.extractFilename &
-          " is not a signature file.")
-      else:
-        row = judgeFile(ctx, item, partner, infoOf(files, partner), ask, choice, held, i, count)
+    if outcome.ok:
+      var row = outcome.value
       row.weightWords = weightFindings(item.info.weights, weights.holdDownKg,
         weights.baseplateMassKg, weights.reactionMassKg)
       if note.len > 0: row.warnings.add note
-      table.rows.add stamped(row, item.info, infoOf(files, partner), partner)
-    except JobCancelledError:
+      table.rows.add stamped(row, item.info, partnerInfo, partner)
+    elif outcome.failure.cancelled or ctx.cancelled:
       table.rows.add stamped(FolderRow(path: item.path, kind: item.info.kind,
         pair: partner, outcome: foSkipped, problem: "Cancelled."), item.info,
-        infoOf(files, partner), partner)
+        partnerInfo, partner)
       skipFrom(table.rows, files, paired.pairs, i + 1)
-      stopJob(sink, table)
-    except CatchableError as e:
-      if ctx.cancelled:
-        table.rows.add stamped(FolderRow(path: item.path, kind: item.info.kind,
-          pair: partner, outcome: foSkipped, problem: "Cancelled."), item.info,
-          infoOf(files, partner), partner)
-        skipFrom(table.rows, files, paired.pairs, i + 1)
-        stopJob(sink, table)
-      let why = if e.msg.len > 0: e.msg else: $e.name
+      stopJob(target, table)
+    else:
+      let e = outcome.failure
+      let why = if e.msg.len > 0: e.msg else: e.name
       table.rows.add stamped(FolderRow(path: item.path, kind: item.info.kind,
         pair: partner, outcome: foProblem, problem: why,
         weightWords: weightFindings(item.info.weights, weights.holdDownKg,
-        weights.baseplateMassKg, weights.reactionMassKg)), item.info,
-        infoOf(files, partner), partner)
-    inc done
-    discard ctx.progress(int64(done) * FolderScale, int64(count) * FolderScale)
+        weights.baseplateMassKg, weights.reactionMassKg)), item.info, partnerInfo, partner)
+  let ran = ctx.parallelItems(count, addr args, judgeItem, take,
+    ItemOptions(scale: FolderScale))
+  if ran.taken < count:
+    # a cancel the batch saw between files: the rest is skipped, as in a file
+    skipFrom(table.rows, files, paired.pairs, ran.taken)
+    stopJob(target, table)
   if oneWeightsForAll(ask.hundredByVibrator, ask.judge) and
       typedForce(ask.options.reactionMassKg) and typedForce(ask.options.baseplateMassKg):
     # (said once, when a SEG-Y file was judged on those weights)
     for row in table.rows:
       if row.kind == sgNone and row.outcome == foJudged and OneWeightsSet notin table.problems:
         table.problems.add OneWeightsSet
-  finish(sink, table)
+  finish(target, table)
 
 proc folderQcWork*(ask: VibQcAsk; weights: VibJobWeights; files: seq[FolderListed];
     sink: FolderQcSink; choice = SignatureChoice();
