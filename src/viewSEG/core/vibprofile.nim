@@ -124,9 +124,9 @@ const ForceNotJudged* = "No 100 % force: the force limits are not judged."
   ## hold-down weight), and the file that cannot says why.
 
 const OneSetOfWeights* = "One set of weights for the project: the folder QC uses them too. " &
-  "The Ground force choice (In the record or Made from mass and baseplate) is one for the " &
-  "project as well: the folder QC judges every file with the one set last in any Vibrator " &
-  "window, .dat and .vib files included. The 100 % force is one for the project too: it is " &
+  "The Ground force choice (In the record or Made from mass and baseplate) is kept for each " &
+  "file layout: the folder QC judges each file on its layout's choice, the recorded ground " &
+  "force when none was made, .dat and .vib files included. The 100 % force is one for the project too: it is " &
   "used for every vibrator."
   ## The note beside a converter's weight boxes in a project.
 

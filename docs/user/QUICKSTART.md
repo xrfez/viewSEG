@@ -547,8 +547,8 @@ them to the trace that is that channel (code 19 is the reaction mass's: the Vibr
 on such a file with the reaction mass on the code-19 trace, so no swap is needed). A file that cannot follow
 the choice (no weights in the profile) is judged on the record and says so in its warnings. A file
 whose layout has a choice of its own (made in a Vibrator window on a file of that layout) is judged
-on that one, as its window is; the line names the switch set last, which files of the other
-layouts take.
+on that one, as its window is; a file of a layout with no choice of its own is judged on the
+recorded ground force, as its window is.
 
 The **Files** tab picks what to run. **Folder...** opens the system's folder dialog;
 **Include subfolders** (off at first) also takes the folders under it. **Files...** opens the

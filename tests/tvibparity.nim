@@ -355,6 +355,37 @@ proc main*() =
       doAssert "from M and B" notin rowOf(next, a11).sentence, rowOf(next, a11).sentence
       st.shutdown()
 
+  block noChoiceIsRecorded:
+    # a layout with no choice of its own judges the recorded ground force, as a window on it
+    # does, whatever the profile's switch was set to last (the converter's, "made"): the .dat's
+    # row equals its window and says nothing of a ground force made from M and B
+    # Seen to fail with the profile's switch taken for such a layout: the .dat row was judged on
+    # the made signal.
+    withFixtures fx:
+      let dir = fx.dir / "config"
+      createDir(dir)
+      let a11 = sweep(fx.dir / "sweeps", "a11.dat", 11, 7001, 1.0)
+      let c = converterOf()
+      let sgy = fx.dir / "sweeps" / "converted.sgy"
+      writeVibSegy(sgy, [c.reference, c.mass, c.plate, c.record], 1.0, [21'i16, 19, 18, 20])
+      let files = @[listed(a11), listed(sgy)]
+      var st = initAppState()
+      st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      let w = st.window(sgy)
+      var p = st.plots[w].params
+      (p.reactionMassKg, p.baseplateMassKg, p.forceHundredWeighted) = (Wm, Wb, 1000.0)
+      p.roles.judge = joWeighted
+      st.change(w, p)
+      st.close(w)
+      doAssert st.project.doc.vibProfile.judge == joWeighted
+      let t = st.run(files)
+      st.parity(files, t)
+      doAssert "on GF from M and B" in rowOf(t, sgy).sentence, rowOf(t, sgy).sentence
+      doAssert "from M and B" notin rowOf(t, a11).sentence, rowOf(t, a11).sentence
+      st.shutdown()
+
   block staleRun:
     # every setting a run is judged with marks the run shown stale when it changes, set or unset:
     # the polarity chosen for the layout, a file's open options, a top typed for a layout, even

@@ -173,7 +173,7 @@ func chosenRoles*(roles: VibRoles; layouts: openArray[string]; codes: openArray[
   ## (its places are its codes'; M and B stay as recorded), else the places (Swap mass and
   ## baseplate among them) with the polarities and the switch chosen with them. Unchanged when
   ## none is remembered for the layout, or a place is not in the record: `roles.judge` is then
-  ## the one judged.
+  ## the one judged (`folderRoles` gives the recorded one).
   result = roles
   var places: array[4, int]
   var polarity = Recorded
@@ -431,7 +431,7 @@ proc judgeFile(ctx: ItemContext; item: FolderListed; pairPath: string; pairInfo:
     return FolderRow(path: path, kind: facts.kind, pair: pairPath, outcome: foProblem,
       problem: why)
   var roles = folderRoles(codes, facts.kind, ask.accelSet)
-  roles.judge = ask.judge # (the profile's, for a layout with no choice of its own)
+  # (a layout with no choice of its own judges the recorded ground force, as a window does)
   var topHz = ask.topHz
   if first in 0 ..< codes.len and first + count <= codes.len:
     template record: untyped = codes.toOpenArray(first, first + count - 1)

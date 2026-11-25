@@ -192,9 +192,9 @@ changes one keeps the other as the project holds it (another window may have cha
 then shows the pair kept; a window already open is not refreshed until it changes one. The
 folder QC judges each file on the Ground force choice remembered for its layout, as a window on
 it does (a converter's file chosen made and a `.dat` left in the record are each judged so); a
-file of a layout with no choice of its own takes the one set last in any Vibrator window, `.dat`
-and `.vib` files included. The made signal's weights and its own 100 % force go with every file
-whichever choice was set last. When a converter's window makes
+file of a layout with no choice of its own is judged on the recorded ground force, as a window on
+it is (`.dat` and `.vib` files included). The made signal's weights and its own 100 % force go
+with every file whichever choice was made. When a converter's window makes
 the project's first profile, the profile takes that window's limits, statistics window and
 harmonics as it shows them (not its 100 % force of the recorded ground force or its drive level,
 which are in that file's terms); after that it writes only the made signal's settings. When the profile keeps 100 % forces for more

@@ -80,6 +80,10 @@ proc profile(judge: JudgeOn; reaction = NaN; plate = NaN; weighted = NaN): VibQc
   profileOf(QcLimits(), 500.0, 5, asB, ForceScale(), 5.0e7, NaN, "", NaN, "", asB, "", judge,
     reaction, plate, weighted)
 
+proc onLayouts(ask: VibQcAsk; layouts: seq[string]): VibQcAsk =
+  result = ask
+  result.layouts = layouts
+
 proc main*() =
   block profileKeepsTheSwitch:
     let p = profile(joWeighted, Wm, Wb, 1000.0)
@@ -162,6 +166,20 @@ proc main*() =
         "signature_4trace_a.sgy"
       let files = @[listed(sgy), listed(dat), listed(sample)]
       doAssert files[0].converted and not files[1].converted and files[2].converted
+      # each layout's own choice is what a file is judged on (recorded when none was made):
+      # "made" chosen on a window of each file
+      var st = initAppState()
+      st.keepSettingsIn(fx.dir / "config", loadSettings(fx.dir / "config" / "settings.nif"))
+      for f in files:
+        let w = st.window(f.path)
+        var p = st.plots[w].params
+        let chosen = p.roles.judge == joWeighted # (a layout chosen already opens as chosen)
+        p.roles.judge = joWeighted
+        if f.path == files[0].path:
+          (p.reactionMassKg, p.baseplateMassKg, p.forceHundredWeighted) = (Wm, Wb, 1000.0)
+        if not chosen: st.change(w, p)
+      let layouts = st.vibRoleChoices
+      st.shutdown()
       let record = runJob(files, applied(profile(joRecorded, Wm, Wb, 1000.0), []))
       for f in files:
         let row = record.rowOf(f.path)
@@ -171,7 +189,8 @@ proc main*() =
         kindLabel(record.rowOf(sgy).kind) == SegyKindLabel
       # made: the converter's file on its weights (the reaction mass on the trace coded 19), the
       # .dat on the plain sum of its channels, both said in the sentence
-      let made = runJob(files, applied(profile(joWeighted, Wm, Wb, 1000.0), []))
+      let madeAsk = applied(profile(joWeighted, Wm, Wb, 1000.0), []).onLayouts(layouts)
+      let made = runJob(files, madeAsk)
       for f in files:
         let row = made.rowOf(f.path)
         doAssert row.outcome == foJudged, f.path & ": " & row.problem
@@ -189,17 +208,18 @@ proc main*() =
         doAssert abs(got - want) <= 0.01 * max(abs(want), 1.0), $l & ": " & $got & " not " & $want
       # the weights the wrong way round make another ground force: the converter swap is real
       var turned = profile(joWeighted, Wb, Wm, 1000.0)
-      let wrong = runJob(@[files[0]], applied(turned, []))
+      let wrong = runJob(@[files[0]], applied(turned, []).onLayouts(layouts))
       let right = made.rowOf(sgy)
       doAssert wrong.rowOf(sgy).sentence != right.sentence,
         "the weights made no difference: " & right.sentence
       # the made ground force with its own 100 % force not set says so on the row
-      let noMade = runJob(@[files[0]], applied(profile(joWeighted, Wm, Wb, NaN), []))
+      let noWeight = applied(profile(joWeighted, Wm, Wb, NaN), []).onLayouts(layouts)
+      let noMade = runJob(@[files[0]], noWeight)
       doAssert "no 100 % force is set for the ground force made from mass and baseplate" in
         noMade.rowOf(sgy).forceWhy, noMade.rowOf(sgy).forceWhy
       # a profile with no weights: the converter's file stays on the record, with a warning on
       # its row; the .dat takes the file's own
-      let bare = runJob(files, applied(profile(joWeighted), []))
+      let bare = runJob(files, applied(profile(joWeighted), []).onLayouts(layouts))
       let bareRow = bare.rowOf(sgy)
       doAssert "from M and B" notin bareRow.sentence, bareRow.sentence
       var told = false
