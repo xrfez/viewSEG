@@ -1239,9 +1239,10 @@ South Central, US survey feet, factor 0.3048006096. The file itself is never cha
 
 **Project > Import shot log...** reads a table of shots (CSV, or a text file with commas, tabs,
 semicolons or spaces). The Shot log window opens once a file is chosen, docked as a tab
-beside the Headers window (drag it elsewhere, or close it with its close button; View
-brings it back). It works with no project open: the window then says the log is for this run only. With a
-project open, the window names the project.
+beside Jobs and Messages under the plot (drag it elsewhere, or close it with its close
+button; View brings it back). It works with no project open: the window then says the log
+is for this run only. With a project
+open, the window names the project.
 
 The top line gives the file name, how many rows and columns, and how many problems the
 reader found. **Columns...** shows how the table was read: the delimiter, lines to skip,

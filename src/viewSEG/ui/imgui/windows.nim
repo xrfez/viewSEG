@@ -66,7 +66,7 @@ type
       # dock Output beside the Seismic window the next time it is shown with no
       # dock node (a first open, and after Reset the windows)
     placeShotLog: bool = true
-      # dock the Shot log beside the Headers window the next time it is shown with no
+      # dock the Shot log beside Jobs and Messages the next time it is shown with no
       # dock node (a first open, and after Reset the windows)
     shortcutsOpen*: bool ## Help > Keyboard shortcuts is open
     dockspace*: ImGuiID ## the main window's dockspace
@@ -92,7 +92,7 @@ const
     awRecords: @[awFiles], awMap: @[awHeaders], awHeaders: @[awMap], awJobs: @[awMessages],
     awMessages: @[awJobs], awSpectrum: @[awMap, awHeaders], awAux: @[awSeismic],
     awMissing: @[awSeismic], awQuality: @[awSeismic], awVibFolder: @[awSeismic],
-    awOutput: @[awSeismic], awShotLog: @[awHeaders, awSeismic]]
+    awOutput: @[awSeismic], awShotLog: @[awMessages, awJobs, awHeaders, awSeismic]]
     ## where a window a layout does not know is docked (as a tab): beside
     ## the first of these that is docked, as in the default layout; else
     ## beside the plot
@@ -320,10 +320,12 @@ proc beforeDrawing*(ws: var WindowsUi; w: AppWindow) =
   elif w == awOutput and dockIdOf(w) != 0:
     ws.placeOutput = false
   if w == awShotLog and ws.placeShotLog and dockIdOf(w) == 0:
-    # a tab of the Headers window (the table beside the map), so that opening it
-    # does not cover the plot; the plot's node when Headers is not docked
+    # a tab of the wide pane under the plot (beside Jobs and Messages), else of the
+    # Headers window, else of the plot's node
     ws.unknown.excl w
-    var id = if ws.shows(awHeaders): dockIdOf(awHeaders) else: 0
+    var id: ImGuiID = 0
+    for n in [awMessages, awJobs, awHeaders]:
+      if id == 0 and ws.shows(n): id = dockIdOf(n)
     if id == 0: id = dockIdOf(awSeismic)
     if id == 0:
       let centre = igDockBuilderGetCentralNode(ws.dockspace)

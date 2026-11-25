@@ -91,7 +91,7 @@ proc main*() =
     step("the bar", proc (f: FrameInfo) =
       f.resizeWindow(1920, 1080)
       f.keepInMainWindow()
-      # the window opens as a tab beside Headers, too narrow for the panel: floated here
+      # the pane under the plot is too low for the panel: the window is floated here
       f.arrangeWindows(f.layoutText & "[Window][###shotlog]\nPos=20,80\nSize=1500,850\n" &
         "Collapsed=0\n\n[viewSEG][Windows]\nHidden=aux,missing,quality,vibfolder,output\n\n"),
       proc (f: FrameInfo): bool =
