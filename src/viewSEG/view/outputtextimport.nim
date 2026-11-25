@@ -97,7 +97,7 @@ func rawCards(b: string): TextImport =
   for n in 0 ..< MaxTextLines:
     var card = all.substr(n * MaxTextLine, n * MaxTextLine + MaxTextLine - 1)
     for c in card.mitems:
-      if isControl(c): c = ' '
+      if c < ' ' or c in {'\x7F' .. '\x9F'}: c = ' '
     lines.add latinToUtf8(card).strip(leading = false, chars = {' '})
   while lines.len > 0 and lines[^1].len == 0: lines.setLen(lines.len - 1)
   result = TextImport(ok: true, text: lines.join("\n"), raw: true, encoding: h.encoding,

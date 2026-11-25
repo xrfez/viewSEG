@@ -132,6 +132,28 @@ proc main*() =
     let r = importHeader(eb, eb.len)
     doAssert r.ok and r.raw and r.encoding == teEbcdic, "the EBCDIC \"C \" start was ignored"
 
+  block cardsEndingInControls:
+    # cards that end in CR LF, or in the EBCDIC line end 0x25, read as 38 clean cards
+    var crlf = ""
+    for n in 1 .. 40: crlf.add alignLeft("C" & align($n, 2) & " LINE " & $n, 78) & "\r\n"
+    let a = importHeader(crlf & "\x00\x01\x00\x00" & repeat('\0', 996), 4200)
+    doAssert a.ok and a.raw, a.why
+    doAssert a.text.split('\n').len == 38, $a.text.split('\n').len
+    doAssert '\r' notin a.text and '\t' notin a.text, "a control stayed in a card"
+    doAssert textProblem(OutputText(name: "x", lines: a.text.split('\n'),
+      encoding: a.encoding)) == ""
+    var e = ""
+    for n in 1 .. 40:
+      for b in encodeText(alignLeft("C" & align($n, 2) & " EB " & $n, 79), teEbcdic):
+        e.add char(b)
+      e.add '\x25'
+    let g = importHeader(e & repeat('\0', 400), 3600)
+    doAssert g.ok and g.raw and g.encoding == teEbcdic, g.why
+    doAssert g.text.split('\n').len == 38, $g.text.split('\n').len
+    doAssert g.text.startsWith("C 1 EB 1\nC 2 EB 2\n"), g.text
+    for c in g.text:
+      doAssert c == '\n' or c >= ' ', "a control stayed in a card"
+
   echo "toutputtextimport: ok"
 
 when isMainModule:
