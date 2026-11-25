@@ -1,7 +1,7 @@
 ## The map's marks of what its filters found, in the running frontend,
 ## headless: `mapSps`'s S, R and X files, its SEG-D shot of source 1003 of
 ## line 1 with `MapDefect`s planted, and one receiver 60 km east
-## (`mapFarSps`), so that the map's fit, its farthest zoom out, holds the
+## (`mapSpsFar`), so that the map's fit, its farthest zoom out, holds the
 ## spread in a few pixels, its stations crowded on one another. The
 ## filters dead, noisy, missing from the template and killed are on, and
 ## one receiver's trace is killed.
@@ -61,9 +61,8 @@ proc marked(img: seq[Rgba]; width: int; at: Vec2; c: Rgba): int =
 
 proc runMain() =
   withFixtures fx:
-    let sps = fx.mapSps()
+    let sps = fx.mapSpsFar()
     let shotPath = fx.mapShotSegd(0, 2, {MapDefect.low .. MapDefect.high})
-    let far = fx.mapFarSps()
     let shots = getEnv("VIEWSEG_SCREENSHOTS")
     var steps: seq[Step]
     var at = 0
@@ -89,7 +88,7 @@ proc runMain() =
         doAssert n >= 20, $m & ": " & $n & " pixels of its mark round " & $d & " " & where
 
     step("loaded", noop, proc (f: FrameInfo): bool =
-      result = f.core.survey.layers.len == 5 and f.core.sessions.len == 1 and
+      result = f.core.survey.layers.len == 4 and f.core.sessions.len == 1 and
         f.mapWindow.mapShown.isSet and wait > 8 and f.core.jobs.active.len == 0
       if result: ink = mapInk(f.theme, pcPaper))
     step("filters on, a trace killed", proc (f: FrameInfo) =
@@ -173,7 +172,7 @@ proc runMain() =
         elif overdue(wait, 600, since):
           failed = steps[at].name & " did not happen"
           f.stop()
-    let code = run(RunOptions(openPaths: @[sps.s, sps.r, fx.mapXps, far, shotPath],
+    let code = run(RunOptions(openPaths: @[sps.s, sps.r, fx.mapXps, shotPath],
       windowSize: (1400, 1100), theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
       indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
     doAssert code == 0, "run() exit code " & $code

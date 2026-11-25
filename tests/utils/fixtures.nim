@@ -731,17 +731,27 @@ proc mapSpsIn*(fx: Fixtures; name, gridUnits, factor: string): tuple[s, r: strin
     let log = writeSps(f, path)
     doAssert log.len == 0, $log
 
-proc mapFarSps*(fx: Fixtures; east = 60_000.0): string =
-  ## An R file (SPS 2.1) of one receiver, line 900 point 101, `east` metres
-  ## east of `mapSps`'s spread: loaded with it, the map's fit holds both, and
-  ## the spread's stations crowd into a few pixels.
-  result = fx.dir / "far.r"
-  if fileExists(result): return
-  var r = SpsFile(headers: @[SpsHeader(code: "00", description: "SPS format version num.",
-    data: "SPS 2.1;")])
+proc mapSpsFar*(fx: Fixtures; east = 60_000.0): tuple[s, r: string] =
+  ## `mapSps`'s S and R files, the R file with one more receiver, line 900
+  ## point 101, `east` metres east of the spread: loaded, the map's fit holds
+  ## both, and the spread's stations crowd into a few pixels. (One file of a
+  ## kind is loaded at a time, so the far station is in the R file itself.)
+  result = (fx.dir / "mapfar.s", fx.dir / "mapfar.r")
+  if fileExists(result.r): return
+  var s, r = SpsFile(headers: @[SpsHeader(code: "00",
+    description: "SPS format version num.", data: "SPS 2.1;")])
+  for i, line in MapRcvLines:
+    for k in 0 ..< MapRcvPoints:
+      let (x, y) = mapRcv(i, k)
+      r.points.add spsPoint(pkReceiver, line, 101 + float64(k), x, y)
   r.points.add spsPoint(pkReceiver, 900, 101, OriginX + east, OriginY)
-  let log = writeSps(r, result)
-  doAssert log.len == 0, $log
+  for i, line in MapSrcLines:
+    for k in 0 ..< MapSrcPoints:
+      let (x, y) = mapSrc(i, k)
+      s.points.add spsPoint(pkSource, line, 1001 + float64(k), x, y)
+  for (f, path) in [(s, result.s), (r, result.r)]:
+    let log = writeSps(f, path)
+    doAssert log.len == 0, $log
 
 proc mapSps*(fx: Fixtures): tuple[s, r: string] =
   ## An S and an R file (SPS 2.1, grid units metres) of a small 3D land
