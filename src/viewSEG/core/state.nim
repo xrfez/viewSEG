@@ -834,13 +834,13 @@ type
     kind*: WaitKind
     path*: string ## the file or the folder
     silent*: Duration ## how long it has not answered (on `fs.now`)
-    job*: JobId ## the job Cancel stops (an open, a listing); `NoJob` for none
+    job*: JobId = NoJob ## the job Cancel stops (an open, a listing); `NoJob` for none
     why*: string ## wkUnreadable: why, in plain words
     cause*: UnreadCause ## wkUnreadable: a drive that fails, a file cut short, or a stop
 
   Pending = object
     ## An open or close job the state waits for.
-    job: JobId
+    job: JobId = NoJob
     path: string
     session: Session  ## a closing file's session, kept until its close job ends
     panel: PanelId    ## an open: the panel it is shown in (`ckShowFile`); NoPanel: the main one
@@ -893,7 +893,7 @@ type
   CorrelateHold = ref object
     ## One correlation, kept until its job has ended. A ref, not shared memory:
     ## `result.opened` is a `Session`, and a `Session` in shared memory is not traced.
-    job: JobId
+    job: JobId = NoJob
     result: CorrelateResult
     origin: string ## the file on disk
     refId: string ## the reference it was made from
@@ -901,7 +901,7 @@ type
 
   Loading = object
     ## A survey file being loaded, or an open file's positions being read.
-    job: JobId
+    job: JobId = NoJob
     path: string
     session: SessionId ## positions: the open file; `NoSession` for a survey file
     order: int         ## the serial of the ask (`loadSerial`)
@@ -1102,7 +1102,7 @@ type
     load: VendorLoad        ## the newest load taken in
     asked: int              ## loads asked for; a load older than the last asked is dropped
     gen: int                ## the load taken in: what a decode of a file was made with
-    job: JobId
+    job: JobId = NoJob
     saidNone: bool          ## "no maps" was said, and no map has been found since
     choice: VendorChoice    ## the project's rule for the maps; automatic outside a project
     loud: bool              ## the load asked for last was the user's (Reload vendor maps): said always
@@ -1116,8 +1116,8 @@ type
     known: bool            ## `identity` is known (the quick one at least)
     modified: Time         ## the file's modification time as it was identified
     size: int64            ## its size as the session opened it
-    job: JobId             ## the identification under way; `NoJob` for none
-    hashJob: JobId         ## the full hash under way; `NoJob` for none
+    job: JobId = NoJob     ## the identification under way; `NoJob` for none
+    hashJob: JobId = NoJob ## the full hash under way; `NoJob` for none
     hashed: bool           ## `identity.full` known
     doc: string            ## the store's document its edits are kept in; "" for none yet
     waiting: seq[FileRecord]
@@ -1202,7 +1202,7 @@ type
     sjImport, sjLoad, sjSave, sjRemap, sjRebuild, sjDelete
 
   ShotLogWork = object
-    job: JobId
+    job: JobId = NoJob
     kind: ShotLogJobKind
     id: int ## the loaded log, or -1 before an import has one
     sink: ShotLogSink
@@ -1405,7 +1405,7 @@ type
       ## the file and the words of each warning a plot window gave of a trace that cannot be
       ## matched to its whole reference (`core/signalend`): said in Messages once each
     oldScans: seq[JobId] ## scans replaced by a newer listing: they end quietly
-    quietScan: JobId ## a listing of the folder listed last: a missing folder is said quietly
+    quietScan: JobId = NoJob ## a listing of the folder listed last: a missing folder is said quietly
     kindJob: JobId = NoJob
       ## the job reading the kinds of the listed files (`startKinds`); one at a time
     kindCache: KindCache
@@ -1519,14 +1519,14 @@ type
     compareRevision: int
     compareGen: uint64
     comparePicGen: uint64 ## the picture ask in force; an older answer is dropped
-    compareJobA, compareJobB, comparePicJob: JobId
+    compareJobA, compareJobB, comparePicJob: JobId = NoJob
     remembered: seq[Remembered]
       ## the files opened this run, by path, and where their edits are kept
     knownDocs: Table[string, FileRecord]
       ## the store's documents as this run last wrote or read them, by name
       ## (newer than the disk until the disk thread has written them)
     memoryList: MemoryList
-    memoryJob: JobId ## the listing under way; `NoJob` for none
+    memoryJob: JobId = NoJob ## the listing under way; `NoJob` for none
     vendor: VendorState
     memoryLooks: seq[JobId]
       ## the looks of the listing shown at its files (`lookWork`), the one

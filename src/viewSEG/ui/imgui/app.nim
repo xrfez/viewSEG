@@ -173,7 +173,7 @@ type
     layoutDone: bool
     running: bool
     agent: AgentControl ## agent control: off until turned on
-    statusJob: JobId ## the job the status bar showed last frame (it keeps showing it)
+    statusJob: JobId = NoJob ## the job the status bar showed last frame (it keeps showing it)
     agentSocket: string ## where it listens; "" until first needed
     version: string ## the program's version, for agents
     dialogs: DialogHook ## `RunOptions.dialogs`

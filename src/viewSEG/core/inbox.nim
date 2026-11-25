@@ -87,7 +87,7 @@ type
 
   Msg* = object
     ## One message for the UI thread.
-    job*: JobId                       ## the job that sent it; `NoJob` for none
+    job*: JobId = NoJob               ## the job that sent it; `NoJob` for none
     case kind*: MsgKind
     of mkOpened: session*: Session
     of mkLog: entry*: LogEntry

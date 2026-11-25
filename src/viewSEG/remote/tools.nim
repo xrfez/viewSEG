@@ -1259,7 +1259,7 @@ type
     ## refused, else once the job that reads the trace has ended
     ## (`headersAnswer`).
     answer*: string ## the tool's answer; "" while the trace is read
-    job*: JobId ## the job that reads it
+    job*: JobId = NoJob ## the job that reads it
     head: JsonNode ## what the answer says besides what the job reads
     what: string ## "trace 6 of shot.sgy", for an answer that it could not be read
 

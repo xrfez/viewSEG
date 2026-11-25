@@ -11,7 +11,7 @@ import jobstatus
 
 type
   JobRow* = object
-    id*: JobId
+    id*: JobId = NoJob
     title*: string     ## in plain words: "Open survey.sgy"
     lane*: JobLane
     state*: JobState

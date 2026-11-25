@@ -89,6 +89,9 @@ type
   JobId* = distinct int
     ## Names a job; never reused within one `Jobs`.
 
+const NoJob* = JobId(-1) ## names no job
+
+type
   JobLane* = enum
     jlInteractive = "interactive" ## short work the user is waiting on
     jlBackground = "background"   ## long work the user does not wait on
@@ -133,7 +136,7 @@ type
 
   JobInfo* = object
     ## What the Jobs window and the status bar show about a job.
-    id*: JobId
+    id*: JobId = NoJob
     spec*: JobSpec
     state*: JobState
     progress*: JobProgress
@@ -151,7 +154,7 @@ type
     ## while the work runs; it may be captured by callbacks the work makes,
     ## as long as they do not outlive the work.
     q: ptr JobsObj
-    id: JobId
+    id: JobId = NoJob
 
   JobWork* = proc (ctx: JobContext) {.closure, gcsafe.}
     ## The work of a job, run on its lane's thread.
@@ -172,7 +175,7 @@ type
     ## jobs' lock.
     thread: Thread[RunnerArg]
     lane: JobLane
-    job: JobId ## the job it runs; `NoJob` while it picks
+    job: JobId = NoJob ## the job it runs; `NoJob` while it picks
     abandoned: bool
       ## its job was abandoned (`tend`): listed cancelled already
     held: seq[string] ## its job was abandoned: the holds to end when its work is back
@@ -203,8 +206,6 @@ type
 
 func `==`*(a, b: JobId): bool {.borrow.}
 func `$`*(id: JobId): string = "job " & $int(id)
-
-const NoJob* = JobId(-1) ## names no job
 
 var jobHook: Atomic[pointer] # a `JobHook`; nil for none (the program)
 
@@ -291,7 +292,7 @@ proc startRunner(q: ptr JobsObj; lane: JobLane): bool =
   ## when no thread can be made (the lane keeps the runner it has).
   let r = cast[ptr RunnerObj](allocShared0(sizeof(RunnerObj)))
   r.lane = lane
-  r.job = JobId(-1)
+  r.job = NoJob
   try:
     createThread(r.thread, runner, RunnerArg(q: q, me: r))
   except ResourceExhaustedError:
@@ -351,7 +352,7 @@ proc runner(arg: RunnerArg) {.thread.} =
     callHook(id, "", back = true)
 
     acquire q.lock
-    me.job = JobId(-1)
+    me.job = NoJob
     if me.abandoned:
       # Abandoned (`tend`): already listed as cancelled, and its record may be
       # gone since (removed, or past the history); its files are free now. A

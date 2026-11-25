@@ -137,7 +137,7 @@ type
     looked*: int             ## files looked at so far by a scan that goes through subfolders
     capped*: bool            ## the tree has more than `MaxTreeFiles` files: the list stops there
     scanning*: bool          ## the scan has not finished
-    job*: JobId              ## the scan's job; `NoJob` for none
+    job*: JobId = NoJob      ## the scan's job; `NoJob` for none
     gen*: uint64             ## bumped by each new listing; what a scan posts carries it
     chosen*: string          ## the file the main plot shows or is opening; "" for none
     failed*: seq[string]     ## files of the list that could not be opened

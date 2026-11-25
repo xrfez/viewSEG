@@ -10,17 +10,17 @@ type
   JobStatus* = object
     ## The status bar's job field; `shown` false when nothing runs or waits.
     shown*: bool
-    job*: JobId        ## the job the bar shows; `NoJob` when only queued jobs wait
-    title*: string     ## in plain words: "Open survey.sgy"
-    phase*: string     ## the part it is in: "indexing"; "" when it names none
-    fraction*: float32 ## of the phase done, 0 .. 1; -1 when unknown
-    percent*: string   ## "42 %"; "" when unknown
-    timeLeft*: string  ## "about 12 s left"; "" until an estimate is sound
-    cancellable*: bool ## the bar offers Cancel
-    cancelling*: bool  ## a cancel was asked for and the job has not stopped yet
-    silent*: Duration  ## how long it has not answered (its drive); zero while it answers
-    otherRunning*: int ## running jobs besides the one shown
-    queued*: int       ## jobs waiting, in both lanes
+    job*: JobId = NoJob ## the job the bar shows; `NoJob` when only queued jobs wait
+    title*: string      ## in plain words: "Open survey.sgy"
+    phase*: string      ## the part it is in: "indexing"; "" when it names none
+    fraction*: float32  ## of the phase done, 0 .. 1; -1 when unknown
+    percent*: string    ## "42 %"; "" when unknown
+    timeLeft*: string   ## "about 12 s left"; "" until an estimate is sound
+    cancellable*: bool  ## the bar offers Cancel
+    cancelling*: bool   ## a cancel was asked for and the job has not stopped yet
+    silent*: Duration   ## how long it has not answered (its drive); zero while it answers
+    otherRunning*: int  ## running jobs besides the one shown
+    queued*: int        ## jobs waiting, in both lanes
 
 const
   MinEstimateTime = initDuration(seconds = 1) ## no estimate before this

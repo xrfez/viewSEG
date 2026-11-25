@@ -51,7 +51,7 @@ type Problems = object
   ## A file's problems, posted as they come: the first `MaxProblems`, then
   ## a count.
   to: Poster
-  job: JobId
+  job: JobId = NoJob
   name: string
   told, more: int
 

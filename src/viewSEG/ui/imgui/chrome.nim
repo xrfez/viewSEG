@@ -42,7 +42,7 @@ type
 
   StatusOutput* = object
     ## What the status bar asks for.
-    cancel*: JobId             ## the job to cancel, or `NoJob`
+    cancel*: JobId = NoJob     ## the job to cancel, or `NoJob`
     showJobs*: bool            ## the job field was clicked: bring the Jobs window forward
     chose*: bool               ## the user changed the readout's fields
     fields*: seq[ReadoutField] ## ... to these, in this order
