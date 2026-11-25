@@ -7,6 +7,9 @@
 ## will not read is recorded and the rest are written. A cancel after the
 ## first file leaves that file and no part file.
 ##
+## A vendor sort key that a file has no field of is said in that file's lines, as in one file's
+## run. Seen to fail: with the batch dropping the writer's lines, `unknownVendorKey` found no note.
+##
 ## Seen to fail: with the store's edits not applied, "a killed trace was written".
 ## Seen to fail: with `plain` a byte-identical copy of `edited` at the same
 ## time, `back.len == src.len` (that kill is this file's too).
@@ -29,14 +32,14 @@
 ## Runs on copies of samples/land/shots.sgy, samples/land/shots.sgd and
 ## samples/vib/vib_uncorrelated.sgd.
 
-import std/[options, os, strutils, times]
+import std/[options, os, sequtils, strutils, times]
 when defined(windows):
   from std/winlean import nil
 import parseSEG
 import parseSEG/model/traceindex
 import processSEG/core/basic
 import viewSEG/core/[edits, filememory, filesystem, identity, jobs, outputbatch,
-  outputjobs, outputnames, sigtypes, vendormaps]
+  outputjobs, outputnames, panels, sigtypes, vendormaps]
 import utils/[faultyfs, sensorfiles, sigfiles, vendorfile, waiting]
 
 const root = currentSourcePath().parentDir.parentDir
@@ -243,6 +246,18 @@ proc main*() =
     BatchItem(source: plain, relative: "shots.sgy"),
     BatchItem(source: edited, relative: "line1" / "shots.sgy"),
     BatchItem(source: segdCopy, relative: "other" / "extra.sgd")]
+
+  block unknownVendorKey:
+    let dest = dir / "unknownkey"
+    let sorted = OutputOptions(format: ofSegy, sortKeys: @[vendorKey("noSuchField")])
+    let ask = BatchAsk(root: srcRoot, items: items[0 .. 1], destRoot: dest, options: sorted,
+      mirrorFolders: true)
+    let got = runBatch(ask, store, @[])
+    doAssert got.st == jsDone, got.error & " / " & got.wrote.reason
+    for relative in ["shots.sgy", "line1" / "shots.sgy"]:
+      let item = itemOf(got.wrote, relative)
+      doAssert item.outcome == boWritten, relative
+      doAssert item.lines.anyIt("'noSuchField'" in it), relative & ": " & item.lines.join("; ")
 
   block mirrored:
     let dest = dir / "mirror"
