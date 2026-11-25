@@ -20,23 +20,23 @@
 ## no relations) fails the job with one sentence (`NoSurvey`). A cancel,
 ## also while the receivers are checked, leaves the sink untouched.
 ##
-## What a file is (receiver and source stations are by line and point): a file
-## whose traces hold one receiver station is receiver data, one slice or many,
-## whatever else it reads as, so it is never one shot lacking all but one
-## receiver. Otherwise the recording kind the program shows for it
-## (`planRecording` and `describeRecording`) decides: a shot gather
-## (`rkShotGather`) is checked against its X record, by source station,
-## receivers expected; a sliced receiver gather (`rkReceiverSliced`) against the
-## O record of each receiver, sources expected; a continuous receiver recording
-## (`rkReceiverContinuous`) is not checked (`notChecked`). When the kind cannot
-## be told (no sample interval or no live trace, or one segment for each
-## receiver, which no continuity can be judged from), the stations decide, for
-## the file and else for each gather: one source station (or none) and several
-## receivers is a shot; several of both is neither, and is listed in
-## `unmatched`. Every trace of one receiver station, in any file and any number
-## of gathers (one for each shot slice), is one check, so a receiver side's
-## `records` are receivers checked, and its `Missing` for a source is the
-## receivers that lack it.
+## What a file is (`sideOf`, the one rule; stations are by line and point): a
+## continuous receiver recording (`rkReceiverContinuous`, as the program shows
+## the file) is not checked (`notChecked`). Otherwise the file's stations
+## decide. Several receivers and one source (or none) is a shot, checked
+## against its X record, receivers expected; one receiver and several sources
+## (or none) is a receiver, checked against its O record, sources expected. One
+## receiver and one source is open: one shot slice and a shot that one receiver
+## recorded look alike, so it is kept as one trace's keys and, when every file
+## is read, takes the side most of the files that were not open took; with none
+## (one file alone, or a folder of slices only) it is a slice. Several of both:
+## the recording kind (`planRecording` and `describeRecording`: shot gather or
+## sliced receiver gather) decides, or, when it cannot be told, the same rule
+## for each gather, a gather of one receiver and one source being a slice and
+## one of several of both listed in `unmatched`. Every trace of one receiver
+## station, in any file and any number of gathers (one for each shot slice), is
+## one check, so a receiver side's `records` are receivers checked, and its
+## `Missing` for a source is the receivers that lack it.
 ##
 ## Several X records at a shot's source station: the record number does not
 ## pick one (`recordCompleteness` would). The shot is checked against each, a
@@ -216,7 +216,10 @@ type
   Side = enum
     sdShot     ## one shot: checked against its X record
     sdReceiver ## one receiver, or slices of it: checked against its O record
+    sdOpen     ## one receiver and one source: one slice, or a shot of one receiver
     sdNeither  ## several sources and several receivers (or none)
+
+  Verdict = tuple[known: bool; receiver: bool; continuous: bool]
 
   Stations = object
     ## The receiver and source stations (line and point) of some traces,
@@ -241,11 +244,16 @@ proc note(st: var Stations; k: TraceKeys) =
     if k.component in st.components: st.oneEach = false
     else: st.components.incl k.component
 
-func sideOf(st: Stations): Side =
-  ## One receiver station is a receiver, with one or more sources; otherwise one
-  ## source station (or none, which leaves it unmatched) is a shot.
-  if st.receivers == 1: sdReceiver
+func sideOf(st: Stations; verdict: Verdict): Side =
+  ## Which check the traces counted in `st` get, the rule for a file and for a
+  ## gather of a file it leaves to its gathers (`verdict` unknown). One receiver
+  ## and several sources (or none, which leaves it unmatched) is a receiver;
+  ## several receivers (or none) and one source (or none) is a shot; one of each
+  ## is open, as one slice and a shot of one live receiver look alike; several
+  ## of both is the recording kind's, or else neither.
+  if st.receivers == 1: (if st.sources == 1: sdOpen else: sdReceiver)
   elif st.sources <= 1: sdShot
+  elif verdict.known: (if verdict.receiver: sdReceiver else: sdShot)
   else: sdNeither
 
 func isOneSlice(st: Stations): bool =
@@ -276,6 +284,7 @@ type
     at: Table[StationKey, int]
     list: seq[ReceiverAt]
     sourceIds: Table[StationKey, int32]
+    files: seq[string] ## the files of the receivers, relative to the folder, by number
 
 func heardKey(source: int32; index: int16): int64 {.inline.} =
   (int64(cast[uint16](index)) shl 32) or int64(source)
@@ -284,6 +293,11 @@ func heardIndex(key: int64): int16 {.inline.} = cast[int16](uint16((key shr 32) 
 
 proc initReceiverMerge(): ReceiverMerge =
   ReceiverMerge(at: initTable[StationKey, int](), sourceIds: initTable[StationKey, int32]())
+
+proc addFile(m: var ReceiverMerge; path: string): int =
+  ## The number of a file of receiver data, or of an open one.
+  result = m.files.len
+  m.files.add path
 
 proc add(m: var ReceiverMerge; file: int; k: TraceKeys) =
   ## Adds a trace that has a receiver station. A trace with no source station
@@ -415,15 +429,15 @@ proc templateOf(g: SurveyGeometry; record: int64; byChannel: bool):
   for (channel, rel) in g.channelRelations(record):
     result.incl (channel: (if byChannel: int64(channel) else: 0'i64), station: rel.receiver)
 
-proc bestOfSeveral(g: SurveyGeometry; f: SeismicFile; traces: Slice[int];
-    first: RecordCompleteness; ctx: JobContext): tuple[c: RecordCompleteness; why: string] =
-  ## The shot `traces` checked against each X record at its source station
+proc bestOfSeveral(g: SurveyGeometry; rows: TraceRows; first: RecordCompleteness;
+    ctx: JobContext): tuple[c: RecordCompleteness; why: string] =
+  ## The shot `rows` checked against each X record at its source station
   ## (`first.candidates`, more than one), the record number left out: the one
   ## whose template shares the most stations with the data. Records with the
   ## same template (a reshoot of one patch) are checked once. A tie between
   ## different templates is `why` (`SeveralFit`).
-  var keys = newSeq[TraceKeys](traces.len)
-  for i in 0 ..< keys.len: keys[i] = f.index.keys[traces.a + i]
+  var keys = newSeq[TraceKeys](rows.len)
+  for i in 0 ..< keys.len: keys[i] = rows.keysAt(i)
   let counts = newSeq[int](keys.len)
   let byChannel = first.traceMatch == tmChannel
   var templates: seq[HashSet[tuple[channel: int64; station: StationKey]]] = @[]
@@ -445,7 +459,22 @@ proc bestOfSeveral(g: SurveyGeometry; f: SeismicFile; traces: Slice[int];
         tied = true
   result.why = if tied: SeveralFit else: ""
 
-type Verdict = tuple[known: bool; receiver: bool; continuous: bool]
+proc checkShot(tally: var StationTally; g: SurveyGeometry; rows: TraceRows; path: string;
+    ctx: JobContext; unmatched: var seq[tuple[path: string; record: int64; why: string]]):
+    bool =
+  ## Checks one shot against its X record and adds it to `tally`, or lists it in
+  ## `unmatched`; true when it was checked.
+  var checked = g.recordCompleteness(rows)
+  var why = ""
+  if checked.recordMatch == rmSourceStation and checked.candidates.len > 1:
+    # Several X records at this source: the data decides, never the record number.
+    (checked, why) = g.bestOfSeveral(rows, checked, ctx)
+  if why.len == 0: why = unmatchedWhy(checked)
+  if why.len > 0:
+    unmatched.add (path: path, record: fieldId(checked), why: why)
+  else:
+    tally.addGather(g.templateStations(checked.xpsRecord), checked)
+  why.len == 0
 
 proc verdictOf(s: Session; path: string; ctx: JobContext): Verdict =
   ## The recording kind of the open file, as the program shows it; not known
@@ -488,7 +517,9 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
     var shot = initTally(ssReceivers)
     var recv = initTally(ssSources, derived)
     var merge = initReceiverMerge()
-    var receiverPaths: seq[string] = @[] ## the files `merge` names by number
+    # open files, one trace's keys each
+    var opened: seq[tuple[file: int; keys: TraceKeys]] = @[]
+    var decided = [0, 0] # files that were not open: shots, receivers
     var sliceFiles = 0
     var seen = initHashSet[string]()
     try:
@@ -517,49 +548,45 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
                   var whole = initStations()
                   for k in s.file.index.keys: whole.note(k)
                   if whole.isOneSlice: inc sliceFiles
-                  # One receiver station in the file is receiver data, whatever its
-                  # kind reads as: never one shot that lacks all but one receiver.
-                  let fileSide =
-                    if whole.receivers == 1: sdReceiver
-                    elif verdict.known: (if verdict.receiver: sdReceiver else: sdShot)
-                    else: whole.sideOf
+                  let fileSide = whole.sideOf(verdict)
                   var fileId = -1
+                  if fileSide == sdOpen:
+                    # Told after the pass, by the files that are not open; kept as one
+                    # trace's keys, which is all a check of one station needs.
+                    fileId = merge.addFile(rel)
+                    var kept = false
+                    for k in s.file.index.keys:
+                      if not kept and k.status != tsAuxiliary and
+                          hasStation(k.rcvLine, k.rcvPoint) and hasStation(k.srcLine, k.srcPoint):
+                        opened.add (file: fileId, keys: k)
+                        kept = true
+                  var votes = [0, 0] # gathers checked as shots, as receivers
                   for g in gathers:
-                    if g.traces.len > 0:
+                    if g.traces.len > 0 and fileSide != sdOpen:
                       beat(ctx, g.traces.len)
                       var side = fileSide
                       if side == sdNeither:
                         var own = initStations()
                         for t in g.traces: own.note(s.file.index.keys[t])
-                        side = own.sideOf
+                        side = own.sideOf((known: false, receiver: false, continuous: false))
+                        # One slice of a file of several receivers and sources.
+                        if side == sdOpen: side = sdReceiver
                         if side == sdNeither:
                           let k = s.file.index.keys[g.traces.a]
                           unmatched.add (path: rel, record: wholeRecord(k.record),
                             why: neitherWhy(own))
                       case side
-                      of sdNeither: discard
+                      of sdNeither, sdOpen: discard
                       of sdShot:
-                        var checked = relations[].recordCompleteness(s.file.rowsOf(g.traces))
-                        var why = ""
-                        if checked.recordMatch == rmSourceStation and
-                            checked.candidates.len > 1:
-                          # Several X records at this source: the data decides, never
-                          # the record number.
-                          (checked, why) = relations[].bestOfSeveral(s.file, g.traces,
-                            checked, ctx)
-                        if why.len == 0: why = unmatchedWhy(checked)
-                        if why.len > 0:
-                          unmatched.add (path: rel, record: fieldId(checked), why: why)
-                        else:
-                          shot.addGather(relations[].templateStations(checked.xpsRecord),
-                            checked)
+                        inc votes[0]
+                        if shot.checkShot(relations[], s.file.rowsOf(g.traces), rel, ctx,
+                            unmatched):
                           anyShot = true
                       of sdReceiver:
                         # Kept by receiver station over the whole scan: each receiver is
                         # checked once at the end, over every slice and file of it.
-                        if fileId < 0:
-                          fileId = receiverPaths.len
-                          receiverPaths.add rel
+                        inc votes[1]
+                        if fileId < 0: fileId = merge.addFile(rel)
                         var stations = 0
                         for t in g.traces:
                           let k = s.file.index.keys[t]
@@ -570,6 +597,8 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
                           let k = s.file.index.keys[g.traces.a]
                           unmatched.add (path: rel, record: wholeRecord(k.record),
                             why: NoReceiverStation)
+                  if votes[0] > votes[1]: inc decided[0]
+                  elif votes[1] > votes[0]: inc decided[1]
           except SegCancelledError:
             raise newException(JobCancelledError, "cancelled")
           except JobCancelledError:
@@ -583,12 +612,23 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
           if anyShot: shot.noteFile()
         if not ctx.progress(i + 1, paths.len):
           raise newException(JobCancelledError, "cancelled")
+      # An open file takes the side most of the files that were not open took; with
+      # none, it is a slice.
+      let openAsShot = decided[0] > decided[1]
+      for o in opened:
+        ctx.checkCancelled()
+        if openAsShot:
+          if shot.checkShot(relations[], rowsOf([o.keys], [0]), merge.files[o.file], ctx,
+              unmatched):
+            shot.noteFile()
+        else:
+          merge.add(o.file, o.keys)
       if merge.list.len > 0:
         ctx.setPhase "checking the receivers"
         let rels = relations[].receiverRelationsOf(relations[].highestRecord + 1)
         var receiver = initSurveyGeometry()
         receiver.addSps(SpsFile(relations: rels), rdSource)
-        let files = checkReceivers(recv, merge, receiver, receiverPaths, ctx, unmatched)
+        let files = checkReceivers(recv, merge, receiver, merge.files, ctx, unmatched)
         for _ in 1 .. files.len: recv.noteFile()
       ctx.setPhase "reporting"
       ctx.checkCancelled()

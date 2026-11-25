@@ -5,14 +5,17 @@
 ## derived O records, a folder, a record with no source station or a wrong
 ## record number, files of one receiver (one trace, one station, one slice),
 ## sliced receivers with a record number for each slice or one for all, two X
-## records at one source and two O records at one receiver.
+## records at one source and two O records at one receiver, and a shot of one
+## live receiver among other shots.
 ##
 ## Seen to fail: with a file of one receiver checked as a shot,
 ## `one_receiver_files` rejected 100 in the template, 1 found, 99 missing; with
 ## the X record at a shared source picked by the record number,
 ## `two_x_records_at_one_source` rejected found 0, missing 4; with the O record
 ## of a receiver picked by the record number, `two_o_records_at_one_receiver`
-## rejected found 0, missing 3 (record 5) and an unmatched receiver (record 9).
+## rejected found 0, missing 3 (record 5) and an unmatched receiver (record 9);
+## with any file of one receiver taken for receiver data,
+## `a_shot_of_one_live_receiver_among_shots` rejected 4 shots and no missing receiver.
 
 import std/[os, strutils]
 import parseSEG
@@ -297,6 +300,58 @@ proc main*() =
       expect(r.shot.figures, "0 0 0 0 0 | 0 0 0")
       expect(r.receiver.figures, "1 1 5 1 4 | 5 1 4 1/2x1 1/3x1 1/4x1 1/5x1")
       doAssert r.singleSlice
+
+  block a_shot_of_one_live_receiver_among_shots:
+    ## Shots 1..5 of receivers 1..100, a file each; shot 1's file holds receiver 7 only
+    ## (one trace, or its three components). One receiver and one source cannot say
+    ## which it is; the other files are shots, so it is shot 1, lacking 99 receivers,
+    ## and nothing is checked as a receiver. Alone, as the File tab checks it, it is
+    ## a slice of receiver 7.
+    var xs: seq[string] = @[]
+    for s in 1 .. 5: xs.add xRec(s, "1.00", $s & ".00", 1, 100, 10, 1, 100)
+    let sv = surveyOf(xs)
+    for components in [1, 3]:
+      let folder = dir / ("shots-" & $components & "c")
+      createDir(folder)
+      var paths: seq[string] = @[]
+      for s in 1 .. 5:
+        let p = folder / ("s" & $s & ".sgd")
+        var trs: seq[Tr] = @[]
+        if s == 1:
+          for c in 1 .. components: trs.add (1, 1.0, 7.0, c, 1)
+        else:
+          for r in 1 .. 100: trs.add (s, float64(s), float64(r), 1, 1)
+        traceFile(p, trs)
+        paths.add p
+      let r = run(folder, paths, sv)
+      doAssert r.unmatched.len == 0 and not r.singleSlice, $r.unmatched
+      let t = r.shot.stats
+      doAssert t.files == 5 and t.records == 5 and t.inTemplate == 100 and t.found == 100 and
+        t.missing == 99, $components & " " & $t
+      doAssert t.expectedInRecords == 500 and t.presentInRecords == 401 and
+        t.missingInRecords == 99, $t
+      doAssert r.shot.rows.len == 99 and r.shot.rows[0].point == 1 and r.shot.rows[0].missing == 1
+      expect(r.receiver.figures, "0 0 0 0 0 | 0 0 0")
+      let one = run(folder, @[paths[0]], sv)
+      expect(one.shot.figures, "0 0 0 0 0 | 0 0 0")
+      expect(one.receiver.figures, "1 1 5 1 4 | 5 1 4 1/2x1 1/3x1 1/4x1 1/5x1")
+      doAssert one.singleSlice
+
+  block a_shot_and_a_receiver_in_one_folder:
+    ## A shot of source 1 (receivers 1..3 of 1..4) and receiver 2 cut in slices of
+    ## sources 2 and 3: each is checked on its own side.
+    var xs: seq[string] = @[]
+    for s in 1 .. 3: xs.add xRec(s, "1.00", $s & ".00", 1, 4, 10, 1, 4)
+    let sv = surveyOf(xs)
+    createDir(dir / "mix")
+    let sh = dir / "mix" / "shot1.sgd"
+    traceFile(sh, [(1, 1.0, 1.0, 1, 1), (1, 1.0, 2.0, 1, 1), (1, 1.0, 3.0, 1, 1)])
+    let sl = dir / "mix" / "slice.sgd"
+    slicedFile(sl, 2.0, [2.0, 3.0], true)
+    let r = run(dir / "mix", @[sh, sl], sv)
+    doAssert r.unmatched.len == 0, $r.unmatched
+    expect(r.shot.figures, "1 1 4 3 1 | 4 3 1 10/4x1")
+    expect(r.receiver.figures, "1 1 3 2 1 | 3 2 1 1/1x1")
 
   block sliced_receiver_with_a_record_number_for_each_slice_or_one:
     let xs = [xRec(1, "1.00", "1.00", 1, 3, 10, 1, 3), xRec(2, "1.00", "2.00", 1, 3, 10, 1, 3),

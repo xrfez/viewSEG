@@ -324,13 +324,16 @@ records that call for the same receivers (a reshoot of the same patch) count as 
 two X records with different receivers fit the shot equally, it is listed under
 **Unmatched**, as only the record number could tell them apart.
 
-Which of the two a file is: a file whose traces hold one receiver station is always
-receiver data, a single shot slice or many, so a file of one receiver is never taken
-for a shot that lacks every other receiver. Otherwise the recording kind the program
-shows for the file decides (shot gather, sliced receiver gather, continuous receiver
-recording). When the kind cannot be told, the stations in the trace headers decide: one
-source station and several receivers is a shot; several sources and several receivers is
-neither, and is listed under **Unmatched** with the reason.
+Which of the two a file is: a continuous receiver recording is not checked. Otherwise the
+stations in the trace headers decide. Several receivers and one source is a shot; one
+receiver and several sources is a receiver. One receiver and one source can be either a
+single shot slice or a shot that only one receiver recorded, so the other files of the
+folder decide: it is checked the way most of the files that could be told were. A file
+on its own (the File tab), or a folder of nothing but such files, is taken for a slice.
+When the traces hold several sources and several receivers, the recording kind the
+program shows for the file decides (shot gather or time-sliced receiver gather); when that
+cannot be told either, each record of the file is judged on its own, and one that is
+neither one shot nor one receiver is listed under **Unmatched** with the reason.
 
 A receiver is checked once, over all its traces: in a file, however many records (one
 for each shot slice) its traces are cut into, and on the Folder tab across every file of
