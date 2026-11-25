@@ -10,16 +10,16 @@ import filetable, outputbinaryedit, outputtextedit, outputwords
 type
   RunRecord* = object
     ## What the run was asked, as the window had it when Run was clicked.
-    startedAt*: string                 ## local time, "2026-11-25 14:03:59"
+    startedAt*: string             ## local time, "2026-11-25 14:03:59"
     source*, dest*: string
     format*: OutputFormat
     revision*: OutputRevision
     reversals*, dropKilled*, ownFilters*, processing*, shifts*, sortOn*: bool
     keepOwnPositions*, correlated*, mirror*: bool
-    processingSentence*: string        ## what the Processing tick wrote, when it was on
-    reference*: string                 ## the reference when Correlated
-    sort*: string                      ## the plot's keys when the Sort tick was on
-    pattern*: string                   ## the file names' pattern, "" for the source's names
+    processingSentence*: string    ## what the Processing tick wrote, when it was on
+    reference*: string             ## the reference when Correlated
+    sort*: string                  ## the plot's keys when the Sort tick was on
+    pattern*: string               ## the file names' pattern, "" for the source's names
     textName*, binaryName*: string ## the templates in use, "" for none
 
 func logName*(t: DateTime): string =
