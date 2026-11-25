@@ -122,6 +122,41 @@ proc axisBox(dl: ptr ImDrawList; text: string; along: ScreenAxis; at: float32; p
   ImDrawList_AddText_Vec2(dl, inside, u32(t.roles[rlText]), text.cstring, nil)
   (lo, hi)
 
+iterator legendPlaces(p: CurvePlot; width: float32): (int, float32, float32) =
+  ## Each curve's place in the rows of names above the plot (`legendAbove`), wrapped at
+  ## `width`: its index, x and y from the rows' top left.
+  let line = igGetTextLineHeight()
+  var (x, y) = (0'f32, 0'f32)
+  for i, c in p.curves:
+    let w = line + 4 + textWidth(c.name)
+    if x > 0 and x + w > width: (x, y) = (0'f32, y + line + 2)
+    yield (i, x, y)
+    x += w + igGetFontSize()
+
+proc legendAboveHeight*(p: CurvePlot; width: float32): float32 =
+  ## The height the rows of names above a plot of `p` take at `width` (with the spacing
+  ## after them); 0 when its legend is not above it.
+  result = 0
+  if p.legend and p.legendAbove and p.curves.len > 0:
+    for (_, _, y) in legendPlaces(p, width): result = y
+    result += igGetTextLineHeight() + igGetStyle().ItemSpacing.y
+
+proc legendAbove(p: CurvePlot; t: Theme; width: float32) =
+  ## The curves' names in rows above the plot, each after a square of its colour, wrapped at
+  ## `width`; the cursor moved past them.
+  let dl = igGetWindowDrawList()
+  let line = igGetTextLineHeight()
+  let top = igGetCursorScreenPos()
+  var bottom = 0'f32
+  for (i, x, y) in legendPlaces(p, width):
+    let c = p.curves[i]
+    ImDrawList_AddRectFilled(dl, ImVec2_c(x: top.x + x + 2, y: top.y + y + 2),
+      ImVec2_c(x: top.x + x + line - 2, y: top.y + y + line - 2), u32(c.colour), 0, 0)
+    ImDrawList_AddText_Vec2(dl, ImVec2_c(x: top.x + x + line + 4, y: top.y + y),
+      u32(t.roles[rlText]), c.name.cstring, nil)
+    bottom = y + line
+  igDummy(ImVec2_c(x: width, y: bottom))
+
 proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; size: ImVec2_c;
     fitKey: string; marks: var Marks; held = PlotCursor(); follow = true): CurveOutput =
   ## Draws `p` in a plot of `size` (ImPlot's: 0 or less takes the room
@@ -132,8 +167,19 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
   ## zoomed it. `follow` false: only `fitKey` fits, as for a panel whose
   ## view stays where the user left it.
   result.reading = Reading(index: -1, x: NaN)
+  # a legend above the plot (`legendAboveHeight`) takes its rows from `size`
+  var size = size
+  let above = p.legend and p.legendAbove and p.curves.len > 0
+  if above:
+    let top = igGetCursorScreenPos()
+    let width = if size.x > 0: size.x else: igGetContentRegionAvail().x
+    let used = legendAboveHeight(p, width)
+    legendAbove(p, t, width)
+    marks.markRect(id & ".legendrow", top, ImVec2_c(x: top.x + width, y: top.y + used))
+    if size.y > 0: size.y = max(size.y - used, igGetFontSize() * 4)
   let flags = ImPlot_Flags_NoTitle.cint or ImPlot_Flags_NoMenus.cint or
-    ImPlot_Flags_NoMouseText.cint or (if p.legend: 0 else: ImPlot_Flags_NoLegend.cint)
+    ImPlot_Flags_NoMouseText.cint or
+    (if p.legend and not above: 0 else: ImPlot_Flags_NoLegend.cint)
   # The last x tick label is centred on the plot's right edge: leave it room.
   let pad = ImPlot_GetStyle().PlotPadding
   if p.roomRight:

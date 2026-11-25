@@ -83,6 +83,9 @@ type
     legendInside*: bool
       ## the legend, small, in the plot's top right corner, over the data's room (else outside
       ## the plotting area: a column at the right, or a row above)
+    legendAbove*: bool
+      ## the legend in rows above the plotting area, wrapped to its width (a plot whose long
+      ## names would cover its curves in the corner, or not fit one row)
     note*: string ## shown over an empty plot: why it is empty
     aside*: string ## appended to the readout (a delay taken off, in ms)
     bareX*: bool ## the x axis has no label and no tick labels (a plot above one that shares it)

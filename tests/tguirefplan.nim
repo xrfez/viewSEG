@@ -8,12 +8,15 @@
 ## - the phase plot has two lines: the ground force against the file's reference (near 0°)
 ##   and against the stored reference (far off), in two colours of the theme's series; the
 ##   frequency plot has three: the file's reference, the stored reference and the ground force;
+## - the phase plot's long names stand in rows above it, not over its lines; the readout under
+##   the plots names them short ("GF/stored ref") and is in view whole;
 ## - with no reference chosen, the verdict says it was judged against the file's own pilot.
 ##
 ## `REFPLAN_SHOT_FAIL` and `REFPLAN_SHOT_OWN` name PNG files the two states are saved to.
 ##
 ## Seen to fail: with the verdict drawn as one fitted line (cut with "..."), "the verdict is
-## one line".
+## one line"; with the legend in the phase plot's corner and the readout one line of the long
+## names, "the legend is not above the phase plot" and "the readout is cut".
 ##
 ## Needs a display: run under the tester, which gives each file its own.
 
@@ -107,9 +110,30 @@ proc main*() =
       doAssert names(r, 2) == @[FileRefName, StoredRefName, "GF"], $names(r, 2)
       let plots = r.curvePlots(f.theme, f.core.settings.units)
       doAssert plots[0].legend and plots[0].curves[0].colour != plots[0].curves[1].colour
+      # the phase plot's long names in rows above it, not over its lines; short in the readout
+      doAssert plots[0].legendAbove and not plots[2].legendAbove
+      doAssert plots[0].curves[0].short == "GF/file ref" and
+        plots[0].curves[1].short == "GF/stored ref", plots[0].curves[0].short
+      let row = f.markOf("new plot 1.plot 0.legendrow")
+      let area = f.markOf("new plot 1.plot 0.data")
+      doAssert row.size.y > 0 and row.pos.y + row.size.y <= area.pos.y + 1,
+        "the legend is not above the phase plot: " & $row & " " & $area
+      f.whole("against the plan")
+      true)
+    step("the cursor held on the phase plot", proc (f: FrameInfo) =
+      f.apply(Command(kind: ckPlotCursor, plot: f.core.plots[0].id, plotCursorOn: 0,
+        plotCursor: PlotCursor(held: true, x: 560, y: 0))),
+      after(10))
+    step("the readout in view whole", noop, proc (f: FrameInfo): bool =
+      let text = f.plotWindows.readoutOf(f.core.plots[0].id)
+      doAssert "GF/stored ref" in text and AgainstStored notin text, text
+      let win = f.markOf("new plot 1")
+      let readout = f.markOf("new plot 1.readout")
+      doAssert readout.pos.x + readout.size.x <= win.pos.x + win.size.x and
+        readout.pos.y + readout.size.y <= win.pos.y + win.size.y,
+        "the readout is cut: " & $readout & " in " & $win
       let shot = getEnv("REFPLAN_SHOT_FAIL")
       if shot.len > 0: discard f.savePng(shot)
-      f.whole("against the plan")
       true)
     step("no reference chosen", proc (f: FrameInfo) =
       f.apply(Command(kind: ckSelectReference, refId: "")),
