@@ -23,24 +23,25 @@ const
 type
   OFileSummary* = object
     ## What was written, and what O records cannot say of the X records.
-    file*: string    ## the file written; "" until it is
-    records*: int    ## O records
-    receivers*: int  ## gathers: one per receiver station
-    sources*: int    ## distinct source points among the traces
-    pairs*: int      ## source and receiver pairs written (the gathers' traces)
+    file*: string   ## the file written; "" until it is
+    records*: int   ## O records
+    receivers*: int ## gathers: one per receiver station
+    sources*: int   ## distinct source points among the traces
+    pairs*: int     ## source and receiver pairs written (the gathers' traces)
     revision*: SpsRevision
-    headers*: int    ## H records copied from the X file
+    headers*: int   ## H records copied from the X file
     components*: int
       ## channels of a station beyond its first, in X records that cover several per
       ## station: O records have no place for them
     shared*: int
-      ## pairs the X records give twice through channels two runs cover, written once
-    noStations*: int ## X records without receiver stations
+      ## pairs the X records give twice, through channels two runs cover or in two files,
+      ## written once
     error*: string ## why nothing was written; "" when the file was
 
   OFileSink* = ref object
     ## Filled when the job ends. Read it after the job is no longer running.
-    source*, dest*: string
+    sources*: seq[string] ## the X files, in the order of the survey; the first gives the layout
+    dest*: string
     summary*: OFileSummary
 
 func plural(n: int; one, many: string): string =
@@ -79,15 +80,65 @@ proc countSources(rels: openArray[SpsRelation]): int =
       seen.incl pointKey(r.rcvLine, r.fromReceiver + float64(i) * step, r.rcvIndex)
   seen.len
 
-proc deriveOFile*(g: SurveyGeometry; head: SpsFile): tuple[file: SpsFile; summary: OFileSummary] =
+type PairKey = (float64, float64, int16, float64, float64, int16)
+
+func pairKey(src, rcv: StationKey): PairKey =
+  (src.line, src.point, src.index, rcv.line, rcv.point, rcv.index)
+
+proc mergedX(gs: openArray[ref SurveyGeometry]): tuple[g: SurveyGeometry; shared: int] =
+  ## The X relations of every geometry in one, a pair that an earlier one
+  ## has left out (counted in `shared`). Field records are numbered on after the
+  ## ones before, so two files' records do not meet.
+  var rels: seq[SpsRelation]
+  var seen = initHashSet[PairKey]()
+  var offset = 0'i64
+  for g in gs:
+    var fresh = initHashSet[PairKey]()
+    var highest = 0'i64
+    for rec in g[].records(rdSource):
+      highest = max(highest, rec)
+      for run in g[].relationRuns(rec, rdSource):
+        var first = -1
+        proc flush(last: int) =
+          if first >= 0:
+            var r = initSpsRelation()
+            r.fieldRecord = rec + offset
+            (r.srcLine, r.srcPoint, r.srcIndex) =
+              (run.fixed.line, run.fixed.point, int(run.fixed.index))
+            r.fromChannel = run.fromChannel + int64(first) * run.channelStep
+            r.toChannel = run.fromChannel + int64(last) * run.channelStep +
+              int64(run.components) - 1
+            r.channelIncrement = int(run.channelStep)
+            (r.rcvLine, r.fromReceiver, r.toReceiver, r.rcvIndex) =
+              (run.line, run.station(first).point, run.station(last).point, int(run.index))
+            rels.add r
+            first = -1
+        for i in 0 ..< run.stations:
+          let k = pairKey(run.fixed, run.station(i))
+          if k in seen:
+            inc result.shared
+            flush(i - 1)
+          else:
+            fresh.incl k
+            if first < 0: first = i
+        flush(run.stations - 1)
+    seen.incl fresh
+    offset += highest
+  result.g = initSurveyGeometry()
+  result.g.multiComponent = gs[0][].multiComponent
+  result.g.addSps(SpsFile(relations: rels), rdSource)
+
+proc deriveOFile*(g: SurveyGeometry; head: SpsFile; shared = 0):
+    tuple[file: SpsFile; summary: OFileSummary] =
   ## The O records of `g`'s X relations, in a file that has `head`'s revision,
-  ## line ending and H records, and what they leave out.
+  ## line ending and H records, and what they leave out. `shared` counts pairs
+  ## already left out of `g` because another file gave them.
   let rev = if head.revision == spsAuto: sps21 else: head.revision
   var file = SpsFile(name: head.name, revision: rev,
     revisionDeclared: head.revisionDeclared, crlf: head.crlf, headers: head.headers,
     relations: g.receiverRelations(1, 'O'), finalNewline: true)
   var s = OFileSummary(records: file.relations.len, revision: rev,
-    headers: head.headers.len)
+    headers: head.headers.len, shared: shared)
   var gathers = initHashSet[int64]()
   for r in file.relations:
     gathers.incl r.fieldRecord
@@ -98,14 +149,20 @@ proc deriveOFile*(g: SurveyGeometry; head: SpsFile): tuple[file: SpsFile; summar
   var channels = 0
   for rec in g.records(rdSource):
     for run in g.relationRuns(rec, rdSource):
-      if run.stations <= 0 or run.toChannel < run.fromChannel:
-        inc s.noStations
-      else:
-        x += run.stations
-        channels += run.stations * run.components
+      x += run.stations
+      channels += run.stations * run.components
   s.components = channels - x
-  s.shared = max(x - s.pairs, 0)
+  s.shared += max(x - s.pairs, 0)
   (file, s)
+
+proc deriveOFile*(gs: openArray[ref SurveyGeometry]; head: SpsFile):
+    tuple[file: SpsFile; summary: OFileSummary] =
+  ## `deriveOFile` of the X relations of every geometry of `gs` together.
+  if gs.len == 1:
+    result = deriveOFile(gs[0][], head)
+  else:
+    let m = mergedX(gs)
+    result = deriveOFile(m.g, head, m.shared)
 
 proc refusedTarget*(dest: string; sources: openArray[string]): string =
   ## Why `dest` may not be written: it is one of `sources` (the survey's files
@@ -135,8 +192,8 @@ proc oFileSpec*(dest: string): JobSpec =
   JobSpec(title: "Generate O file " & dest.extractFilename, lane: jlBackground,
     exclusive: @[dest])
 
-proc oFileWork*(g: ref SurveyGeometry; sink: OFileSink): JobWork =
-  ## Writes the O records of `g` (the X file `sink.source`'s relations) to
+proc oFileWork*(gs: seq[ref SurveyGeometry]; sink: OFileSink): JobWork =
+  ## Writes the O records of the X relations `gs` (those of the files `sink.sources`) to
   ## `sink.dest` on a job thread. `sink.summary` is set before the job
   ## returns; its `error` is empty when the file was written. A file already
   ## at `dest` is replaced, whole or not at all; a cancel leaves it as it was.
@@ -145,10 +202,10 @@ proc oFileWork*(g: ref SurveyGeometry; sink: OFileSink): JobWork =
       var s = OFileSummary()
       try:
         ctx.setPhase("Reading the X file's headers")
-        let head = readHead(sink.source)
+        let head = readHead(sink.sources[0])
         ctx.checkCancelled()
         ctx.setPhase("Deriving the O records")
-        let made = deriveOFile(g[], head)
+        let made = deriveOFile(gs, head)
         s = made.summary
         ctx.checkCancelled()
         ctx.setPhase("Writing")
@@ -168,21 +225,20 @@ proc oFileWork*(g: ref SurveyGeometry; sink: OFileSink): JobWork =
         s.error = if e.msg.len > 0: e.msg else: "the O file could not be made"
       sink.summary = s
 
-func oFileSentences*(s: OFileSummary; name, source: string): string =
+func oFileSentences*(s: OFileSummary; name: string; sources: openArray[string]): string =
   ## What was written, and what it leaves out, in sentences; with how to use it.
   result = "Wrote " & plural(s.records, "O record", "O records") & " to " & name & ": " &
     plural(s.receivers, "receiver", "receivers") & ", " &
     plural(s.sources, "source point", "source points") & ", " &
     plural(s.pairs, "source and receiver pair", "source and receiver pairs") &
-    ", made from the X records of " & source & " in its SPS revision " & $s.revision & " with " &
+    ", made from the X records of " & sources.join(", ") & " in its SPS revision " & $s.revision &
+        " with " &
     plural(s.headers, "H record", "H records") & "."
   if s.components > 0:
     result.add " O records have no component: " & plural(s.components, "channel", "channels") &
       " beyond each station's first are not in the file."
   if s.shared > 0:
     result.add " " & plural(s.shared, "pair", "pairs") &
-      " that the X records give through channels two runs share are written once."
-  if s.noStations > 0:
-    result.add " " & plural(s.noStations, "X record has", "X records have") &
-      " no receiver stations and give no O record."
+      " that the X records give twice (through channels two runs share, or in two files) " &
+      "are written once."
   result.add " The file is not imported: add it in the Import survey window to use it."

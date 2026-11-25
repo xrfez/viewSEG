@@ -9767,13 +9767,15 @@ proc finishO(state: var AppState; job: JobInfo) =
   let sink = state.oSink
   let res = if sink.isNil: OFileSummary() else: sink.summary
   let dest = if sink.isNil: "" else: sink.dest
-  let source = if sink.isNil: "" else: sink.source.extractFilename
+  var sources: seq[string]
+  if not sink.isNil:
+    for p in sink.sources: sources.add p.extractFilename
   state.oJob = NoJob
   state.oSink = nil
   state.oPath = ""
   if job.state == jsDone and res.error.len == 0:
     state.oPath = dest
-    state.oOutcome = oFileSentences(res, dest.extractFilename, source)
+    state.oOutcome = oFileSentences(res, dest.extractFilename, sources)
     state.log.add(sevInfo, "generate O file", state.oOutcome)
   elif job.state == jsCancelled:
     state.oOutcome = "The O file was not written: generating it was cancelled."
@@ -12275,11 +12277,16 @@ proc generateOFileCmd(state: var AppState; cmd: Command) =
     state.log.add(sevError, "generate O file", state.oOutcome)
     state.ignore(cmd, why)
     return
-  template l: untyped = state.survey.layers[r]
-  state.oSink = OFileSink(source: l.path, dest: dest)
+  var sources: seq[string]
+  var geometries: seq[ref SurveyGeometry]
+  for l in state.survey.layers:
+    if l.origin == loSurveyFile and l.xRuns > 0:
+      sources.add l.path
+      geometries.add l.relations
+  state.oSink = OFileSink(sources: sources, dest: dest)
   state.oOutcome = ""
   state.oPath = ""
-  state.oJob = state.jobs.submit(oFileSpec(dest), oFileWork(l.relations, state.oSink))
+  state.oJob = state.jobs.submit(oFileSpec(dest), oFileWork(geometries, state.oSink))
 
 proc watchRecording*(state: var AppState; wanted: bool) =
   ## Keeps a job reading the shown file as a recording (`describeRecording`)

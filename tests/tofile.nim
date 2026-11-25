@@ -62,8 +62,8 @@ proc cancelAtWrite(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, rais
 proc runOFile(g: ref SurveyGeometry; source, dest: string):
     tuple[st: JobState; sink: OFileSink] =
   lane = initJobs()
-  let sink = OFileSink(source: source, dest: dest)
-  let id = lane.submit(oFileSpec(dest), oFileWork(g, sink))
+  let sink = OFileSink(sources: @[source], dest: dest)
+  let id = lane.submit(oFileSpec(dest), oFileWork(@[g], sink))
   doAssert waitUntil(lane.state(id) in {jsDone, jsFailed, jsCancelled}),
     "the job did not finish: " & $lane.state(id)
   (lane.state(id), sink)
@@ -163,7 +163,7 @@ proc main*() =
     doAssert channels > stations, "obn.x has no component runs here"
     doAssert made.summary.components == channels - stations, $made.summary
     doAssert made.summary.pairs == stations, $made.summary
-    let said = oFileSentences(made.summary, "obn.ops", "obn.x")
+    let said = oFileSentences(made.summary, "obn.ops", ["obn.x"])
     doAssert "have no component" in said or "no component" in said, said
 
   block file_written_beside_and_atomically:
@@ -254,6 +254,40 @@ proc main*() =
       doAssert err.len > 0, "a truncated file was reported as written: '" & err & "'"
       doAssert readFile(dest) == "OLD", "the target was touched"
       doAssert toSeq(walkFiles(dir / "full.ops*")) == @[dest], "a temporary file was left"
+
+  block every_x_file_is_used:
+    # Two files give receivers 1 to 3 the sources (1, 2) and (2, 3): source 2 is in both.
+    const H00 = "H00 SPS format version number   SPS 2.1;"
+    let one = dir / "one.x"
+    let two = dir / "two.x"
+    writeFile(one, [H00, xRec(1, 1, 1, 3, 1, 3), xRec(2, 2, 1, 3, 1, 3)].join("\n") & "\n")
+    writeFile(two, [H00, xRec(1, 2, 1, 3, 1, 3), xRec(2, 3, 1, 3, 1, 3)].join("\n") & "\n")
+    var union = initHashSet[string]()
+    var each: seq[ref SurveyGeometry]
+    for p in [one, two]:
+      let g = new SurveyGeometry
+      g[] = geometryOf(p, false)
+      each.add g
+      union.incl g[].xPairs
+    doAssert union.len == 9
+    let made = deriveOFile(each, parseSps(readFile(one), one))
+    doAssert made.summary.shared == 3, $made.summary
+    doAssert made.summary.sources == 3 and made.summary.receivers == 3, $made.summary
+    var back = initSurveyGeometry()
+    back.addSps(parseSps(spsText(made.file).text, "both.ops"))
+    doAssert back.oPairs == union, "pairs differ: " & $back.oPairs.len & " against " & $union.len
+    doAssert made.summary.pairs == 9
+    var st = initAppState()
+    st.apply Command(kind: ckLoadSurvey, paths: @[one, two])
+    doAssert st.settle(st.survey.layers.len == 2 and st.relationLayer >= 0), "no two X files"
+    let dest = dir / "both.ops"
+    st.apply Command(kind: ckGenerateOFile, oDest: dest)
+    doAssert st.settle(not st.oFileRunning and st.oFileWritten.len > 0), st.oFileOutcome
+    doAssert "one.x, two.x" in st.oFileOutcome and "written once" in st.oFileOutcome,
+      st.oFileOutcome
+    var file = initSurveyGeometry()
+    file.addSps(dest)
+    doAssert file.oPairs == union
 
   block the_command:
     let source = dir / "cmd.x"
