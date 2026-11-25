@@ -305,11 +305,14 @@ proc vibratorOf*(state: AppState; w: AnalysisWindow): int =
   if i >= 0: sigVibrator(state.sessions[i]) else: 0
 
 func seedHundred(params: var AnalysisParams; p: VibQcProfile; vibrator: int) =
-  ## The 100 % force the project's profile holds for `vibrator`, as a window opens with it (NaN
-  ## when the vibrator has none: it is not judged on force, and never borrows another's).
+  ## The 100 % force the project's profile holds for `vibrator`, in the unit and set it was
+  ## given in, as a window opens with it (NaN when the vibrator has none: it is not judged on
+  ## force, and never borrows another's).
   let h = p.hundredOf(vibrator)
   params.forceHundredPct = h.pct
-  params.forceHundredUnit = if h.pct.isNaN: "" else: p.forceHundredUnit
+  params.forceHundredUnit = if h.pct.isNaN: "" else: h.unit
+  (params.forceHundredSet, params.forceHundredSetKnown) = if h.pct.isNaN: (params.accelSet, true)
+    else: (h.accelSet, h.setKnown)
   params.forceHundredHow = h.how
   params.forceHundredFile = h.file
   params.forceHundredAtPct = h.atPct
@@ -329,7 +332,7 @@ proc vibProfileOf*(state: AppState; w: AnalysisWindow): VibQcProfile =
   profileOf(p.qc, p.qcWindowMs, p.harmonics, p.accelSet, state.settings.forceScale,
     p.forceHundredPct, p.targetPct, refId, top, p.forceHundredUnit, p.forceHundredSet,
     w.file, p.roles.judge, p.reactionMassKg, p.baseplateMassKg, p.forceHundredWeighted,
-    p.forceHundredHow, p.forceHundredAtPct, state.vibratorOf(w))
+    p.forceHundredHow, p.forceHundredAtPct, state.vibratorOf(w), p.forceHundredSetKnown)
 
 proc signatureAsk(state: AppState; s: Session; p: AnalysisParams): SignatureAsk =
   ## What a signature file adds to the Vibrator window's ask: the user's force scale (the
@@ -974,8 +977,6 @@ proc openPlot(state: var AppState; cmd: Command) =
       (w.params.qcWindowMs, w.params.harmonics) = (p.qcWindowMs, p.harmonics)
       if s.signature.kind == sgVib: w.params.accelSet = p.accelSet
       w.params.seedHundred(p, sigVibrator(s))
-      w.params.forceHundredSet = if p.forceHundredSetKnown: p.forceHundredSet
-        else: w.params.accelSet
       w.params.targetPct = p.targetPct
     if samePlaces(cmd.plotParams.roles, VibRoles()):
       w.params.roles = state.rolesOf(s, traces, w.params.roles, s.name, w.params.accelSet)
@@ -1074,8 +1075,10 @@ proc showPlot(state: var AppState; cmd: Command) =
         params.forceHundredUnit != pw.params.forceHundredUnit:
       # a 100 % force typed now: in pound-counts, those of the set judged now (on the other
       # set it is another force, and is not applied)
-      params.forceHundredSet = params.accelSet
-    else: params.forceHundredSet = pw.params.forceHundredSet
+      (params.forceHundredSet, params.forceHundredSetKnown) = (params.accelSet, true)
+    else:
+      params.forceHundredSet = pw.params.forceHundredSet
+      params.forceHundredSetKnown = pw.params.forceHundredSetKnown
   elif pw.view == avVibrator:
     # where the roles came from is the window's to say: "Roles from the codes" puts the
     # code-given places back (and forgets the layout's remembered choice); a role given

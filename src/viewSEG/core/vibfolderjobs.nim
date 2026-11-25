@@ -400,12 +400,16 @@ proc judgeFile(ctx: JobContext; item: FolderListed; pairPath: string; pairInfo: 
     names.add label & " (archive)"
     at[vsReference] = rows.high
   var params = folderParams(ask, roles, facts.kind)
-  # the 100 % force of this file's vibrator (its pair's for a `.vib`), else the project's one
+  # the 100 % force of this file's vibrator (its pair's for a `.vib`), else the project's one,
+  # each in the unit and set it was given in
   var vibrator = item.info.vibrator
   if vibrator == 0 and pairInfo.vibrator > 0: vibrator = pairInfo.vibrator
-  let hundred = hundredFor(ask.hundredByVibrator, VibHundred(pct: ask.options.forceHundredPct),
-    vibrator)
+  let hundred = hundredFor(ask.hundredByVibrator, VibHundred(pct: ask.options.forceHundredPct,
+    unit: ask.forceHundredUnit, accelSet: ask.forceHundredSet,
+    setKnown: ask.forceHundredSetKnown), vibrator)
   params.forceHundredPct = hundred.pct
+  params.forceHundredUnit = hundred.unit
+  (params.forceHundredSet, params.forceHundredSetKnown) = (hundred.accelSet, hundred.setKnown)
   let sig = if item.converted: SignatureAsk()
     else: folderSignature(facts, ask.forceScale, ask.accelSet, pair, ask.options.targetPct)
   var answer = vibratorOf(rows, names, at, dtMs, params, recorded, ask.topHz, NaN, note, sig)

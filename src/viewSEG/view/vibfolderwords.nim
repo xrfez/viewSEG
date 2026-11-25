@@ -269,6 +269,13 @@ func profileLines*(p: VibQcProfile): seq[string] =
       line.add " "
       line.add p.forceHundredUnit
     line.add "."
+  if p.hundredByVibrator.len > 0:
+    # each vibrator's own, in the unit it was given in
+    var each: seq[string] = @[]
+    for e in p.hundredByVibrator:
+      each.add "vibrator " & $e.vibrator & " " & sensible(e.pct) &
+        (if e.unit.len > 0: " " & e.unit else: " (unit not known: set it again)")
+    line.add " 100% force for " & each.join(", ") & "."
   if not p.targetPct.isNaN:
     line.add " Drive " & sensible(p.targetPct) & "%."
   if not p.topHz.isNaN:

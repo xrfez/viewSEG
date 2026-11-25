@@ -90,8 +90,11 @@ Land 2026/                  the project folder: this is what is opened
 - **`cache/`** holds only what the program can make again from the data.
 - The project document also holds the job's vibrator QC profile (`vibProfile`), when one
   was taken from a Vibrator window: the six limits, the statistics window, the harmonics,
-   the accelerometer set, the force scale, a typed 100 % force, the unit it was
-   typed in and the accelerometer set that a pound-counts force was typed on,
+   the accelerometer set, the force scale, the 100 % force of each vibrator
+   (`vibratorHundred`: the vibrator, the value, the unit it was given in and the accelerometer
+   set that a pound-counts force was given on, how and where it was given) and the project's
+   one 100 % force of a version before (with its own unit and set; a `hundredFor` of a version
+   that kept one unit for every vibrator is read with no known unit, to be set again),
    a drive level, the reference's archive id, the top typed for that
   reference and the name of the file the Vibrator window was showing (`fromFile`, a
   label only). The profile is kept as the window's settings change. A document without it has

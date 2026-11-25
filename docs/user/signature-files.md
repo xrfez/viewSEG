@@ -212,7 +212,12 @@ for which vibrator. Set it once on a high-force sweep and every later sweep of t
 read against it, so a low-force sweep simply reads low. It is kept **per vibrator** in the
 project's QC profile: a vibrator with no value says so and is not judged on force (it never takes
 another vibrator's); a project saved before keeps its one value as the default for every
-vibrator until a vibrator gets its own. If the file carries the controller's own average force
+vibrator until a vibrator gets its own. Each vibrator's value keeps the unit (and, for
+pound-counts, the accelerometer set) it was given in, so one set in counts before the force scale
+was given is converted exactly with the scale for the window and the folder QC, and one set in
+newtons is not read as counts when the scale is taken away (that vibrator is not judged on force,
+and says to set it again). A value kept by a version that had one unit for every vibrator has no
+known unit: set it again. If the file carries the controller's own average force
 and it differs from the target you typed by more than 10 percentage points when you press Set from
 this sweep, the value is set all the same and a line under the box (and Messages) says what a
 sweep at the target would then read. The force in pounds (the force scale) is under **Advanced:

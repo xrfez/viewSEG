@@ -11,14 +11,21 @@
 ##   vibrator 12 does not give it to vibrator 13 (which then says it has none and is not judged on
 ##   force), an older project's one value is every vibrator's default, and a project written
 ##   with per-vibrator values reads back;
-## - a folder run judges each file with its own vibrator's value.
+## - each vibrator's value keeps the unit it was given in: vibrator 11 set in counts before the
+##   force scale was given and vibrator 12 in newtons after it; vibrator 11 is then converted
+##   exactly with the scale, and with the scale taken away vibrator 12 is not judged on force;
+##   a value kept under the older tag (one unit for all) reads with no unit, to be set again;
+## - a folder run judges each file with its own vibrator's value, in its own unit.
 ##
 ## Seen to fail: with the guard's threshold removed the 60 against 60 file warned; with the
-## value written to the project's one slot, vibrator 13 had vibrator 12's.
+## value written to the project's one slot, vibrator 13 had vibrator 12's; with the window given
+## the project's one unit, vibrator 11 opened in "" instead of counts; with the folder run given
+## that one unit, vibrator 12's row was not judged on force.
 
 import std/[math, os, strutils]
 import viewSEG/core/[analysis, jobs, log, project, projectnif, settings, signatures, sigtypes,
-  state, sweepinfo, threads, vibfolderjobs, vibfolderqc, vibjudge, vibprofile]
+  state, sweepinfo, threads, units, vibfolderjobs, vibfolderqc, vibjudge, vibprofile]
+import viewSEG/view/vibfolderwords
 import utils/[fixtures, sigfiles, waiting]
 
 template settle(st: var AppState; cond: untyped): bool =
@@ -154,6 +161,94 @@ proc main*() =
       doAssert forceJudged[0] and not forceJudged[1], $(forceJudged, why)
       doAssert "no 100 % force is set for vibrator 13" in why[1], why[1]
       st.shutdown()
+
+  block unitPerVibrator:
+    # each vibrator's 100 % force keeps the unit it was given in: vibrator 11 set in counts with
+    # no force scale, then the scale given and vibrator 12 set in newtons; vibrator 11 is still in
+    # counts (converted exactly with the scale), and with the scale taken away vibrator 12's
+    # newtons are not read as counts (not judged on force, and said)
+    withFixtures fx:
+      let dir = fx.dir / "config"
+      createDir(dir)
+      var st = initAppState()
+      st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      st.apply Command(kind: ckNewProject, projectPath: fx.dir / "job", projectName: "Job")
+      doAssert st.settle(st.inProject)
+      let a = datFile(fx.dir, "v11.dat", SynthDat(samples: 12000, vibrator: 11))
+      let b = datFile(fx.dir, "v12.dat", SynthDat(samples: 12000, vibrator: 12))
+      let w11 = st.window(a)
+      st.setFromSweep(w11, 750000, 60)
+      var settings = st.settings
+      settings.forceScale = ForceScale(datCountsPerLbf: 8.0)
+      st.apply Command(kind: ckSettings, settings: settings)
+      let w12 = st.window(b)
+      var p = st.plots[w12].params
+      (p.forceHundredPct, p.forceHundredUnit) = (417000.0, "N")
+      st.change(w12, p)
+      let prof = st.project.doc.vibProfile
+      doAssert prof.hundredOf(11).unit == "counts" and prof.hundredOf(12).unit == "N",
+        $prof.hundredByVibrator
+      doAssert prof.forceHundredUnit == "", "the project's one unit was written"
+      # vibrator 11 again, with the scale on: its counts, applied in newtons with the scale
+      let again = st.window(datFile(fx.dir, "v11b.dat", SynthDat(samples: 12000, vibrator: 11)))
+      let r11 = st.plots[again].result
+      doAssert st.plots[again].params.forceHundredUnit == "counts"
+      doAssert r11.hundredProblem == "" and
+        abs(r11.qc.hundredPct - 750000.0 * NPerLbf / 8.0) < 1e-6, $r11.qc.hundredPct
+      # saved and read back: each with its unit, never under the older tag
+      var problems: seq[string]
+      let text = projectDocument(st.project.doc)
+      doAssert "hundredFor" notin text and "(unit \"counts\")" in text and
+        "(unit \"N\")" in text, text
+      let back = readProject(text, "project.nif", problems)
+      doAssert problems.len == 0, $problems
+      doAssert back.vibProfile == prof
+      # the folder run with the scale on: both judged on force, each on its own value
+      var ask = applied(prof, [])
+      ask.forceScale = settings.forceScale
+      let jobs = initJobs()
+      var sink = FolderQcSink()
+      let files = @[listed(a), listed(b)]
+      var id = jobs.submit(folderQcSpec(files), folderQcWork(ask, VibJobWeights(), files, sink))
+      doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled})
+      for row in sink.result.rows:
+        doAssert row.forceWhy == "", row.path & ": " & row.forceWhy
+      # the scale taken away: vibrator 12's newtons are not counts
+      settings.forceScale = ForceScale()
+      st.apply Command(kind: ckSettings, settings: settings)
+      let off = st.window(datFile(fx.dir, "v12b.dat", SynthDat(samples: 12000, vibrator: 12)))
+      let r12 = st.plots[off].result
+      doAssert "typed in N" in r12.hundredProblem and r12.qc.hundredPct.isNaN,
+        r12.hundredProblem & " " & $r12.qc.hundredPct
+      ask.forceScale = ForceScale()
+      sink = FolderQcSink()
+      id = jobs.submit(folderQcSpec(files), folderQcWork(ask, VibJobWeights(), files, sink))
+      doAssert waitUntil(jobs.info(id).get.state in {jsDone, jsFailed, jsCancelled})
+      for row in sink.result.rows:
+        if row.path == b:
+          doAssert "does not apply (typed in N" in row.forceWhy, row.forceWhy
+        else: doAssert row.forceWhy == "", row.forceWhy
+      st.shutdown()
+
+  block unitlessValues:
+    # a value kept under the older tag, which had one unit for every vibrator, is read with no
+    # unit (set it again), and stands over the same vibrator's value written before it
+    let text = "(project (name \"Old\") (vibProfile (harmonics 5) (accelSet B) " &
+      "(forceHundredUnit \"N\") " &
+      "(vibratorHundred (vibrator 11) (pct 750000.0) (unit \"counts\") (set B)) " &
+      "(vibratorHundred (vibrator 13) (pct 9.0) (unit \"kg\")) " &
+      "(hundredFor (vibrator 11) (pct 417000.0)) (hundredFor (vibrator 12) (pct 5.0))))"
+    var problems: seq[string]
+    let back = readProject(text, "project.nif", problems)
+    let p = back.vibProfile
+    doAssert p.hundredOf(11).pct == 417000 and p.hundredOf(11).unit == "" and
+      not p.hundredOf(11).setKnown, $p.hundredByVibrator
+    doAssert p.hundredOf(12).unit == "" and p.hundredOf(12).pct == 5
+    var unitProblems = 0
+    for x in problems:
+      if "(unit) needs one of counts, pound-counts and N" in x: inc unitProblems
+    doAssert p.hundredOf(13).unit == "" and unitProblems == 1, $problems
+    doAssert "unit not known: set it again" in profileLines(p)[0], profileLines(p)[0]
 
   block olderProject:
     # a project that kept one 100 % force: it is every vibrator's default

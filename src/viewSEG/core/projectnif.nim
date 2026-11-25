@@ -218,9 +218,13 @@ proc writeVibProfile(w: var NifWriter; p: VibQcProfile) =
   if p.hundredHow == hhSweep: w.choice("hundredHow", "sweep")
   if finite(p.hundredAtPct): w.value("hundredAtPct", p.hundredAtPct)
   for e in p.hundredByVibrator:
-    w.open "hundredFor"
+    # (a tag of its own: a reader that took one unit for every vibrator's value keeps these
+    # as fields it does not know, and judges no vibrator on another's unit)
+    w.open "vibratorHundred"
     w.value("vibrator", int64(e.vibrator))
     w.value("pct", e.pct)
+    if e.unit.len > 0: w.value("unit", e.unit)
+    if e.setKnown: w.choice("set", $e.accelSet)
     if e.how == hhSweep: w.choice("how", "sweep")
     if finite(e.atPct): w.value("atPct", e.atPct)
     if e.file.len > 0: w.value("file", e.file)
@@ -755,9 +759,17 @@ proc forceScale(r: var Reading; n: NifNode; p: var VibQcProfile) =
       of "vibAccMvPerCount": r.number(k, ForceScaleRange, p.forceScale.vibAccMvPerCount)
       else: p.later.add k
 
+proc hundredUnit(r: var Reading; n: NifNode; unit: var string) =
+  ## `(tag "N")`: `unit` when it is one of `HundredUnits`; another is a problem and `unit` stays.
+  var said = ""
+  r.text(n, said)
+  if said in HundredUnits: unit = said
+  else: r.problem(n, "(" & n.tag & ") needs one of counts, pound-counts and N")
+
 proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
   ## One profile. A field this version does not know is kept and written back.
   d.hasVibProfile = true
+  var unitless: seq[VibHundred] = @[]
   for c in n.kids:
     if c.kind != nkTree: r.problem(c, "(vibProfile) holds trees")
     else:
@@ -769,7 +781,7 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
       of "limits": r.limits(c, d.vibProfile)
       of "forceScale": r.forceScale(c, d.vibProfile)
       of "forceHundredPct": r.number(c, MassKgRange, d.vibProfile.forceHundredPct)
-      of "forceHundredUnit": r.text(c, d.vibProfile.forceHundredUnit)
+      of "forceHundredUnit": r.hundredUnit(c, d.vibProfile.forceHundredUnit)
       of "forceHundredSet":
         if r.accel(c, d.vibProfile.forceHundredSet):
           d.vibProfile.forceHundredSetKnown = true
@@ -779,18 +791,26 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
           d.vibProfile.hundredHow = hhSweep
         else: r.problem(c, "(hundredHow) needs sweep")
       of "hundredAtPct": r.number(c, TargetPctRange, d.vibProfile.hundredAtPct)
-      of "hundredFor":
+      of "vibratorHundred", "hundredFor":
+        # `hundredFor` was written with one unit for every vibrator's value: its unit is not
+        # known, so it is not applied until it is set again, and it stands over a value of the
+        # same vibrator written before it (the older version set it last)
         var e = VibHundred()
         for k in c.kids:
           if k.kind == nkTree:
             case k.tag
             of "vibrator": r.whole(k, 1, 1_000_000, e.vibrator)
             of "pct": r.number(k, MassKgRange, e.pct)
+            of "unit": r.hundredUnit(k, e.unit)
+            of "set": e.setKnown = r.accel(k, e.accelSet)
             of "how": e.how = hhSweep
             of "atPct": r.number(k, TargetPctRange, e.atPct)
             of "file": r.text(k, e.file)
             else: discard
-        if e.vibrator > 0 and not e.pct.isNaN: d.vibProfile.hundredByVibrator.add e
+        if c.tag == "hundredFor": (e.unit, e.setKnown) = ("", false)
+        if e.vibrator > 0 and not e.pct.isNaN:
+          if c.tag == "hundredFor": unitless.add e
+          else: d.vibProfile.hundredByVibrator.add e
       of "judge":
         if c.kids.len == 1 and c.kids[0].kind == nkIdent and c.kids[0].text == "made":
           d.vibProfile.judge = joWeighted
@@ -804,6 +824,9 @@ proc vibProfile(r: var Reading; n: NifNode; d: var ProjectDoc) =
       of "topHz": r.number(c, TopHzRange, d.vibProfile.topHz)
       of "fromFile": r.text(c, d.vibProfile.fromFile)
       else: d.vibProfile.later.add c
+  for e in unitless:
+    d.vibProfile.hundredByVibrator.keepItIf(it.vibrator != e.vibrator)
+    d.vibProfile.hundredByVibrator.add e
 
 proc columnRole(name: string): tuple[ok: bool; role: ColumnRole] =
   for role in ColumnRole:
