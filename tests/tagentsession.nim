@@ -482,6 +482,9 @@ proc main*() =
       st.agent(%*{"kind": "map layer", "mapLayer": toJson(st.survey.layers[
         st.survey.find(layer)].keyOf(prReceiver)), "shown": false})
       st.agent(%*{"kind": "select points", "points": [toJson(point)]})
+      # no shot log is loaded here: the command clears the rows chosen, which is what it does
+      st.agent(%*{"kind": "select shot log rows", "shotLogId": 0, "shotRows": [1],
+        "shotTraces": true})
       st.agent(%*{"kind": "hover points", "points": [toJson(point)]})
       st.agent(%*{"kind": "show points' record", "points": [toJson(point)]})
       st.agent(%*{"kind": "unload survey", "layer": int(layer)})
