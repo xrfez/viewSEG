@@ -11,7 +11,8 @@
 ## cancelled and its result never read. Edits are copied on the UI thread (`editsSnapshot`)
 ## before a job is submitted: the worker must not read `AppState`. The relation records a job
 ## reads are given to it by address, never as a `ref`, and the state keeps them until the job's
-## work is back (`holdGeometry`); so are the sink it fills and the note it sets (`holdRef`). Nothing here is looked up by a record number.
+## work is back (`holdGeometry`); so are the sink it fills, the note it sets and the survey
+## it joins (`holdRef`). Nothing here is looked up by a record number.
 
 import std/[algorithm, os, strutils, tables]
 from parseSEG import SurveyGeometry
