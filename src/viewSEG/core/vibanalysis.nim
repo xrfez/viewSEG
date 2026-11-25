@@ -789,7 +789,10 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     let traceEnd = float64(shortest - 1) * dtMs
     if shortest > 0 and not (e0.startMs.isNaN or e0.endMs.isNaN) and
         e0.endMs > e0.startMs and traceEnd + SweepTimeSteps * stepMs < e0.endMs:
-      result.qc.recordedPct = 100 * max(0.0, traceEnd - e0.startMs) / (e0.endMs - e0.startMs)
+      # the share judged: to the judged part's end (the last point whose window lies in the
+      # traces, `cutMs`), not to their last sample
+      let judgedEnd = if cutMs.isNaN: traceEnd else: min(cutMs, traceEnd)
+      result.qc.recordedPct = 100 * max(0.0, judgedEnd - e0.startMs) / (e0.endMs - e0.startMs)
       let words = "the last " & seconds(e0.endMs - max(traceEnd, e0.startMs)) &
         " of the reference sweep lie past the end of this file's traces: not judged"
       result.qc.lengthWords = if result.qc.lengthWords.len > 0:

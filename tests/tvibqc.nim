@@ -761,7 +761,9 @@ proc againstThePlan() =
   ## applied (`withBasis` keeping the ground force's), "another end frequency" passed the pilot;
   ## with the listen-time test left out, the listen tail warned "the last 2 000 ms of the
   ## reference have no data"; with `recordedPct` not read, "traces shorter than the sweep"
-  ## read a clean "✓ PASS"; with the file's reference unit dropped, the phase plot had one line.
+  ## read a clean "✓ PASS"; with the file's reference unit dropped, the phase plot had one line;
+  ## with the share taken to the traces' last sample, not the judged part's end, "traces
+  ## shorter than the sweep" read 80 % (8 s of 10) where 7.95 s was judged.
   block same_sweep_longer_listen_tail_is_no_difference:
     # 12 001 samples stored, the same 10 s sweep and 2 s of listen time: nothing to say
     let file = planSweep()
@@ -842,7 +844,10 @@ proc againstThePlan() =
     file.cutAtS = 8
     let r = againstPlan(file, planSweep().referenceOf.sweepRow)
     doAssert r.qc.verdict == qvPass and r.qc.plan.verdict == qvPass, r.qc.line
-    doAssert r.qc.line.startsWith("✓ pass on the part recorded (80 % of the reference " &
+    # the judged part ends where the last window still lies in the traces (half a 100 ms
+    # window before 8 s): 7.95 s of a 10 s sweep
+    doAssert near(r.qc.recordedPct, 79.5, 0.2), $r.qc.recordedPct
+    doAssert r.qc.line.startsWith("✓ pass on the part recorded (79 % of the reference " &
       "sweep): "), r.qc.line
     doAssert "the last 2.0 s of the reference sweep lie past the end of this file's " &
       "traces: not judged" in r.qc.line, r.qc.line
