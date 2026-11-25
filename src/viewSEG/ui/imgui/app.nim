@@ -1665,7 +1665,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     for c in quality.commands.mitems:
       ui.core.apply move c
     if quality.exportAsked: ui.ask(dkExportQuality, quality.exportPath)
-    if quality.askFolder: ui.ask(dkQualityFolder, quality.askAt)
+    if quality.askFolder: ui.ask(dkQualityFolder, quality.askAt, explicit = true)
   if ui.windows.shows(awVibFolder):
     ui.windows.beforeDrawing(awVibFolder)
     var folderQc = ui.vibfolder.drawVibFolder(vibfolderTitle, ui.core, ui.marks)

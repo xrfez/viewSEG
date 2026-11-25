@@ -102,6 +102,7 @@ func pickerName*(kind: DialogKind): string =
   of dkExportShotSps: "exportShotSps"
   of dkOutputLog: "outputLog"
   of dkOutputText: "outputText"
+  of dkQualityFolder: "qualityFolder"
   of dkVibFolder: "vibFolder"
   of dkVibFiles: "vibFiles"
   of dkGenerateOFile: "generateOFile"
@@ -109,7 +110,8 @@ func pickerName*(kind: DialogKind): string =
 func isFolderDialog*(kind: DialogKind): bool =
   ## Whether the dialog chooses a folder (its answer is the place to remember).
   kind in {dkOpenFolder, dkOpenProject, dkProjectPlace, dkProjectData, dkLocateFolder,
-    dkOutputSource, dkOutputDest, dkCutDest, dkMissingFolder, dkVibFolder}
+    dkOutputSource, dkOutputDest, dkCutDest, dkMissingFolder, dkQualityFolder,
+    dkVibFolder}
 
 func isSaveDialog*(kind: DialogKind): bool =
   ## Whether the dialog names a file to write.
