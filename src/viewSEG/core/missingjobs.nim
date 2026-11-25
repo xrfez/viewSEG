@@ -525,9 +525,9 @@ proc readItem(it: ItemContext; a: ptr MissingItems; i: int): MissingFile {.nimca
     s = nil
     clearCycleRoots()
 
-proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeometry;
+proc scanMissing*(folder: string; paths: seq[string]; relations: ptr SurveyGeometry;
     target: MissingSink; cacheDir = ""; forced = initTable[string, RecordingKind]();
-    receivers: ref SurveyGeometry = nil; receiversDerived = false;
+    receivers: ptr SurveyGeometry = nil; receiversDerived = false;
     untold = ukNotChecked; folderRun = false): JobWork =
   ## The work of a job that scans `paths` (relative to `folder` in messages)
   ## against `relations` and fills `target` (`missingSpec` is the spec to
@@ -544,6 +544,9 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
   ## that are told when all of those are of one (`takenNote` says so), else left out.
   ## Up to the item pool's threads of files are open at once, one file's keys each; their
   ## results are added to the scan in file order, so the report is the same on any number.
+  ## `relations` and `receivers` are read in place: the work holds their addresses, never a
+  ## `ref`, and the caller keeps them alive and unchanged until the work is back
+  ## (`Jobs.workingOn`; the app's `holdGeometry`).
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     if relations == nil or not relations[].hasRelations:
@@ -564,7 +567,7 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
     proc readFiles(list: seq[string]; round: int; lead = 0) {.gcsafe.} =
       ## Reads each of `list` (a batch of items) and adds it to the scan, in order. The
       ## `lead` items before it are done already (the bar goes on from there).
-      var args = MissingItems(relations: unsafeAddr relations[], shared: MissingShared(
+      var args = MissingItems(relations: relations, shared: MissingShared(
         paths: newSeq[string](lead) & list, cacheDir: cacheDir, forced: forced, untold: untold,
         folderRun: folderRun, round: round, takenAs: takenAs, lead: lead))
       var sizes = newSeq[int64](lead + list.len)
@@ -663,11 +666,12 @@ proc scanMissing*(folder: string; paths: seq[string]; relations: ref SurveyGeome
       fail(target, if e.msg.len > 0: e.msg else: $e.name, skipped)
 
 proc folderScan*(folder: string; subfolders: bool; cacheDir: string;
-    relations: ref SurveyGeometry; sink: MissingSink; note: ScanNote = nil;
-    forced = initTable[string, RecordingKind](); receivers: ref SurveyGeometry = nil;
+    relations: ptr SurveyGeometry; sink: MissingSink; note: ScanNote = nil;
+    forced = initTable[string, RecordingKind](); receivers: ptr SurveyGeometry = nil;
     receiversDerived = false; untold = ukNotChecked): JobWork =
   ## The work of a job that lists the seismic files of `folder`, its
-  ## subfolders only when `subfolders`, and scans them as `scanMissing` does.
+  ## subfolders only when `subfolders`, and scans them as `scanMissing` does (`relations`
+  ## and `receivers` read in place as it reads them).
   ## `note.capped` says the list stopped at the file limit.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()

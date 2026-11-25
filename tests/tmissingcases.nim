@@ -173,8 +173,8 @@ proc run(folder: string; paths: seq[string]; relations: ref SurveyGeometry;
   let jobs = initJobs()
   let sink = MissingSink()
   let id = jobs.submit(missingSpec(folder, paths),
-    scanMissing(folder, paths, relations, sink, "", forced, receivers, false, untold,
-      folderRun))
+    scanMissing(folder, paths, addr relations[], sink, "", forced,
+      (if receivers.isNil: nil else: addr receivers[]), false, untold, folderRun))
   doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}), "the scan did not end"
   doAssert jobs.state(id) == jsDone, jobs.info(id).get.error
   sink.result

@@ -28,13 +28,16 @@
 ## `receiver_index_zero_and_one` rejected no receiver checked (a shot of two records)
 ## and `cancel_while_the_receivers_are_checked` rejected a job that finished done.
 ## With the X record at a shared source picked by the record number,
-## `several_x_records_at_one_source` rejected found 0 missing 4 at record number 2.
+## `several_x_records_at_one_source` rejected found 0 missing 4 at record number 2. With the
+## `holdGeometry` call left out of `the_survey_is_held_*`, the records were freed under the job
+## and another geometry took their place: it found 9 stations missing where 1 was.
 
-import std/[os, strutils, tables, times]
+import std/[atomics, os, strutils, tables, times]
 when defined(release):
   import std/[monotimes, times]
 import parseSEG
-import viewSEG/core/[jobs, missingjobs, missingreport, recordingkind, reportside]
+import viewSEG/core/[filesystem, jobs, missingjobs, missingreport, recordingkind, reportside,
+  state]
 import utils/[faultyfs, kindfiles, waiting]
 
 proc put(line: var string; at: int; text: string) =
@@ -217,7 +220,8 @@ proc run(folder: string; paths: seq[string]; relations: ref SurveyGeometry; cach
   let jobs = initJobs()
   let sink = MissingSink()
   let id = jobs.submit(missingSpec(folder, paths),
-    scanMissing(folder, paths, relations, sink, cacheDir, forced, receivers))
+    scanMissing(folder, paths, (if relations.isNil: nil else: addr relations[]), sink, cacheDir,
+      forced, (if receivers.isNil: nil else: addr receivers[])))
   doAssert waitUntil(jobs.state(id) in {jsDone, jsFailed, jsCancelled}),
     "the scan did not finish: " & $jobs.state(id)
   let info = jobs.info(id).get
@@ -246,6 +250,19 @@ proc stopOnReport(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raise
 
 proc stopOnReceivers(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
   if not back and phase == "checking the receivers": discard lane.cancel(id)
+
+var gate: Gate
+var reached: Atomic[bool]
+var mainThread: int
+
+proc holdOpen(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
+  {.cast(gcsafe).}:
+    if op in {foOpen, foMapped} and path.endsWith("held.sgd") and getThreadId() != mainThread:
+      reached.store(true)
+      var waited = 0
+      while not gate.isOpen and waited < 60_000:
+        sleep 1
+        inc waited
 
 proc main*() =
   let dir = getTempDir() / ("viewseg-missing-" & $getCurrentProcessId())
@@ -392,7 +409,7 @@ proc main*() =
       let lane = initJobs()
       let sink = MissingSink()
       let id = lane.submit(missingSpec(root, @[root]),
-        folderScan(root, subfolders, "", survey, sink))
+        folderScan(root, subfolders, "", addr survey[], sink))
       doAssert waitUntil(lane.state(id) in {jsDone, jsFailed, jsCancelled}),
         "the walk did not finish"
       doAssert lane.state(id) == jsDone, lane.info(id).get.error
@@ -746,7 +763,7 @@ proc main*() =
     let two = dir / "two.sgd"
     let survey = surveyOf(xRec(1, "1.00", "1.00", 1, 4, 10, 1, 4))
     let id = lane.submit(missingSpec(dir, @[one, two]),
-      scanMissing(dir, @[one, two], survey, sink))
+      scanMissing(dir, @[one, two], addr survey[], sink))
     doAssert waitUntil(lane.state(id) in {jsDone, jsFailed, jsCancelled}),
       "the scan did not finish: " & $lane.state(id)
     doAssert lane.state(id) == jsCancelled, $lane.state(id) & " " & lane.info(id).get.error
@@ -762,7 +779,7 @@ proc main*() =
     defer: setJobHook(nil)
     let one = dir / "sub" / "one.sgd"
     let survey = surveyOf(xRec(1, "1.00", "1.00", 1, 4, 10, 1, 4))
-    let id = lane.submit(missingSpec(dir, @[one]), scanMissing(dir, @[one], survey, sink))
+    let id = lane.submit(missingSpec(dir, @[one]), scanMissing(dir, @[one], addr survey[], sink))
     doAssert waitUntil(lane.state(id) in {jsDone, jsFailed, jsCancelled}),
       "the scan did not finish: " & $lane.state(id)
     doAssert lane.state(id) == jsCancelled, $lane.state(id) & " " & lane.info(id).get.error
@@ -783,7 +800,8 @@ proc main*() =
       xRec(2, "1.00", "2.00", 1, 2, 10, 7, 8))
     let folder = dir / "across-receivers"
     let paths = @[folder / "r7.sgd", folder / "r8.sgd"]
-    let id = lane.submit(missingSpec(folder, paths), scanMissing(folder, paths, survey, sink))
+    let id = lane.submit(missingSpec(folder, paths),
+      scanMissing(folder, paths, addr survey[], sink))
     doAssert waitUntil(lane.state(id) in {jsDone, jsFailed, jsCancelled}),
       "the scan did not finish: " & $lane.state(id)
     doAssert lane.state(id) == jsCancelled, $lane.state(id) & " " & lane.info(id).get.error
@@ -848,6 +866,37 @@ proc main*() =
       doAssert got.sink.result.shot.stats.missing == 0
       echo "tmissingjobs: ", paths.len, " files, ", ms, " ms, ",
         paths.len.float64 * 1000.0 / float64(max(ms, 1)), " files/s"
+
+  block the_survey_is_held_for_the_job_until_its_work_is_back:
+    ## The job reads the relation records by address: the app keeps them for it
+    ## (`holdGeometry`), so the state letting go of its own `ref` meanwhile changes nothing.
+    mainThread = getThreadId()
+    let folder = dir / "held"
+    createDir(folder)
+    let one = folder / "held.sgd"
+    shotFile(one, [(record: 1, src: 1.0, receivers: 1 .. 3)])
+    var st = initAppState()
+    st.rememberFilesIn(dir / "held-config")
+    var survey = surveyOf(xRec(1, "1.00", "1.00", 1, 4, 10, 1, 4))
+    gate.close()
+    reached.store(false)
+    setFsHook(holdOpen)
+    let sink = MissingSink()
+    let id = st.jobs.submit(missingSpec(folder, @[one]),
+      scanMissing(folder, @[one], addr survey[], sink))
+    st.holdGeometry(id, survey)
+    doAssert waitUntil(reached.load), "the job did not reach its file"
+    survey = nil # the state's own `ref` goes (a layer unloaded): only the hold keeps them
+    # a geometry made now takes the memory of one freed: one that calls for 12 stations
+    let other = surveyOf(xRec(1, "1.00", "1.00", 1, 12, 10, 1, 12))
+    gate.open
+    doAssert waitUntil((discard st.drainInbox(); st.persist();
+      st.jobs.state(id) in {jsDone, jsFailed, jsCancelled})), "the scan did not finish"
+    setFsHook(nil)
+    doAssert st.jobs.state(id) == jsDone, st.jobs.info(id).get.error
+    doAssert sink.result.shot.stats.missing == 1, $sink.result.shot.stats
+    doAssert other[].relationCount(rdSource) == 1
+    st.shutdown()
 
   echo "tmissingjobs: ok"
 
