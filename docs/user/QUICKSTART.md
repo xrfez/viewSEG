@@ -1388,47 +1388,49 @@ Each shot has one instant, and slicing and matching use it. When **GPSTB** is ch
 instant is read from it alone: a row whose GPSTB is empty, a missing value or does not read
 has no time, Problems says "GPSTB missing" on that row, and the row is not sliced or matched
 by time; Time (UTC) is never used for it instead, so two clocks are never mixed in one log.
-Without GPSTB the instant is read from **Time (UTC)**. If both are chosen and a
-row's two differ by more than a millisecond, Problems says so, naming both values and
-that GPSTB is used. **Time (UTC)** is chosen for at most one column, like every other
-system column, and the dialog refuses a second. Its cell is read by one pattern for the whole
-column: a text such as `2024-03-01 00:00:00.5` or `2024-061 00:00:00Z`, or seconds or
-microseconds since 1970. The program decides the pattern from the cells it samples (the first
-64 rows) and shows it ("Time (UTC) is read as yyyy-mo-dd hh:mi:ss"); type another when it is
-wrong. In a pattern `yyyy` (four digits) or `yy` (two: 50 to 99 is 19xx) is the year, `ddd`
-the day of the year, `mo` the month, `dd` the day of the month, `hh` the hour, `mi` the
-minute, `ss` the second, `f` the digits of the fraction of the second (read to the microsecond, half up, after a dot or a
+Without GPSTB the instant is read from **Time (UTC)**. If both are chosen and a row's two
+differ by more than a millisecond, Problems says so, naming both values and that GPSTB is
+used. **Time (UTC)** is chosen for at most one column, like every other system column, and the
+dialog refuses a second. Its cell is read by one pattern for the whole column: a text such as
+`2024-03-01 00:00:00.5` or `2024-061 00:00:00Z`, or seconds or microseconds since 1970. The
+program decides the pattern from the cells it samples (the first 64 rows) and shows it ("Time
+(UTC) is read as yyyy-mo-dd hh:mi:ss"); type another when it is wrong. In a pattern `yyyy`
+(four digits) or `yy` (two: 50 to 99 is 19xx) is the year, `ddd` the day of the year, `mo` the
+month, `dd` the day of the month, `hh` the hour, `mi` the minute, `ss` the second, `f` the
+digits of the fraction of the second (read to the microsecond, half up, after a dot or a
 comma), `u` whole microseconds, and any other character must be there as written:
-`yyyy-mo-dd hh:mi:ss.ffffff`, `dd/mo/yyyy hh:mi:ss`. A `Z` at the end is accepted. `mm` is not a
-field, because it could be the month or the minute: write `mo` or `mi`. The whole pattern can
-also be `epoch seconds` or `epoch microseconds`. A field takes at most its width in digits, so a
-long run of digits does not match rather than read as something else.
+`yyyy-mo-dd hh:mi:ss.ffffff`, `dd/mo/yyyy hh:mi:ss`. A `Z` at the end is accepted. `mm` is not a field,
+because it could be the month or the minute: write `mo` or `mi`. The whole pattern can also be
+`epoch seconds` or `epoch microseconds`. A field takes at most its width in digits, so a long
+run of digits does not match rather than read as something else.
 
 The program proposes a pattern only when it is sure. It does so for a four-digit year first,
 followed by a month and a day (`-`, `/` or `.` between them) or by a day of year, then an
 hour, a minute and a second, in the same form on every sampled row; a fraction of the second
 on some rows and not on others is read where it is there (`.ffffff`), and a `Z` at the end is
 accepted. For a year and a day of year it does so when some day is above 12 or every day has
-three digits. The form is decided from the shapes of the rows: a row of that form whose
-value is not a date or a time (30 February, hour 25) is a problem on that row, and the other
-rows are read. 24:00:00 is read as 00:00:00 of the next day. A month above 12 on any sampled
-row may be a day, so then nothing is proposed. It does not guess a day or a month first (`dd/mo/yy`, `mo/dd/yy`, `yy/mo/dd`), a four-digit
-year in the third place (`dd/mo/yyyy` against `mo/dd/yyyy`), a time with a zone offset
-(`+01`, `-0500`), a column whose rows are in different forms, or GPS seconds. The dialog
-then says "The time's form could not be decided: type the pattern, for example dd/mo/yyyy
-hh:mi:ss", and until a pattern is typed no time is read from that column (one problem at the
-top of Problems says so, not one per row). A column of whole microseconds may be GPS
-microseconds or microseconds since 1970, and the number alone cannot tell which: it is GPSTB
-only when its header says GPS (GPSTB, GPS time, TB, Time break), and Time (UTC) read as `epoch
-microseconds` only when its header says UTC, Unix, epoch or posix. Under any other header, or
-none, nothing is read from it until you choose: the dialog and one problem at the top say
-"Time holds microsecond times, GPS or Unix: choose GPSTB or Time (UTC)." Plain seconds are
-read as `epoch seconds` only under a header that says UTC, Unix, epoch or posix too; under a
-header such as Time they may be GPS seconds, which are not read, and the dialog says "Time
-holds seconds, GPS or Unix: choose Time (UTC) and type epoch seconds if they are Unix
-seconds; GPS seconds are not read." A time that
-does not read says so in Problems with the row, the time and the pattern: "time '2024 361
-23:59:xx' does not match yyyy ddd hh:mi:ss".
+three digits. The form is decided from the shapes of the rows: a row of that form whose value
+is not a date or a time (30 February, hour 25) is a problem on that row, and the other rows
+are read. 24:00:00 is read as 00:00:00 of the next day. A month above 12 on any sampled row
+may be a day, so then nothing is proposed. It does not guess a day or a month first
+(`dd/mo/yy`, `mo/dd/yy`, `yy/mo/dd`), a four-digit year in the third place (`dd/mo/yyyy`
+against `mo/dd/yyyy`), a time with a zone offset (`+01`, `-0500`), a column whose rows are in
+different forms, or GPS seconds. The dialog then says "The time's form could not be decided:
+type the pattern, for example dd/mo/yyyy hh:mi:ss", and until a pattern is typed no time is
+read from that column (one problem at the top of Problems says so, not one per row). A column
+of whole microseconds may be GPS microseconds or microseconds since 1970, and the number alone
+cannot tell which: it is GPSTB only when its header says GPS (GPSTB, GPS time, TB, Time
+break), and Time (UTC) read as `epoch microseconds` only when its header says UTC, Unix, epoch
+or posix. Under any other header, or none, nothing is read from it until you choose: the
+dialog and one problem at the top say "Time holds microsecond times, GPS or Unix: choose GPSTB,
+or Time (UTC) and type epoch microseconds." Choosing Time (UTC) for a column of plain numbers
+does not decide it either: until `epoch seconds` or `epoch microseconds` is typed, the dialog
+says so and nothing is read. Plain seconds are read as `epoch seconds` only under a header that says UTC,
+Unix, epoch or posix too; under a header such as Time they may be GPS seconds, which are not
+read, and the dialog says "Time holds seconds, GPS or Unix: choose Time (UTC) and type epoch
+seconds if they are Unix seconds; GPS seconds are not read." A time that does not read says so
+in Problems with the row, the time and the pattern: "time '2024 361 23:59:xx' does not match
+yyyy ddd hh:mi:ss".
 
 When GPSTB is chosen, a time column whose form could not be decided is left user defined, and
 the dialog says so ("Shot time is user defined: its time's form could not be decided, and
@@ -1450,16 +1452,17 @@ rows have more columns than the header has names (a delimiter after the last val
 names fit the leading columns and the rest are "Column N".
 
 A project saved with the earlier column meanings (UTC seconds, year, day of year, gun array
-and the others) opens as the same columns under the present names. Of the older time
-columns, the first of UTC microseconds, else of UTC seconds, else of date-time text becomes
-the one Time (UTC) column, with the pattern that reads it the same way (an older `mm` or
-`m` is written `mo` or `mi`, and a single `h`, `d` or `s` is written `hh`, `dd` or `ss`; a
-single letter directly before another field, as in `yyyymmddhmmss`, took exactly one digit,
-which no pattern says now, so the dialog asks for the pattern again); the year, day of year, month, day of month, hour, minute, second and
-microsecond columns become user defined columns named by their old word, and are not read.
-If the log's time was only in those columns, the project opens and its rows have no time
-until GPSTB or one Time (UTC) column is chosen; Problems says so once at the top. Gun array,
-volume, pressure, heading, speed and text become user defined columns.
+and the others) opens as the same columns under the present names. Of the older time columns,
+the first of UTC microseconds, else of UTC seconds, else of date-time text becomes the one
+Time (UTC) column, with the pattern that reads it the same way (an older `mm` or `m` is
+written `mo` or `mi`, and a single `h`, `d` or `s` is written `hh`, `dd` or `ss`; a single
+letter directly before another field, as in `yyyymmddhmmss`, took exactly one digit, which no
+pattern says now, so the dialog asks for the pattern again); the year, day of year, month, day
+of month, hour, minute, second and microsecond columns become user defined columns named by
+their old word, and are not read. If the log's time was only in those columns, the project
+opens and its rows have no time until GPSTB or one Time (UTC) column is chosen; Problems says
+so once at the top. Gun array, volume, pressure, heading, speed and text become user defined
+columns.
 
 The project remembers the column map of the last shot log imported or re-mapped, and does
 not forget it when that log is removed. The next import, if no map is given, reads the file

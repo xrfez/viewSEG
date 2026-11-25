@@ -1408,18 +1408,18 @@ proc detectTimePattern*(cells: openArray[string]): string =
   ## The pattern of the form of the non-blank cells of one column, or ""
   ## when the cells do not decide one. The form is decided from the cells'
   ## shapes: a cell of that form whose value is not a time (30 February, hour
-  ## 25) is a problem on its row in `shots`, not a reason to refuse the form. Plain numbers are never proposed: seconds or
-  ## microseconds may be on the GPS clock or since 1970, and the number cannot
-  ## tell (`timePattern` proposes them under a header that says UTC).
-  ## Proposed: a date and a time, as `shapeOf` says, when every cell has the
-  ## same form, a fraction of the second and a trailing `Z` aside (a fraction
-  ## on some rows makes it optional on all), and, for a year and a day of
-  ## year, a day above 12 is there or every day has three digits. Not
-  ## proposed: a leading
-  ## one or two digit run (dd/mo/yy, mo/dd/yy, yy/mo/dd), a four-digit year
-  ## in the third place (dd/mo/yyyy or mo/dd/yyyy), a month above 12 in any
-  ## cell (it may be the day), a zone offset, and forms that differ between
-  ## cells; the pattern is then typed.
+  ## 25) is a problem on its row in `shots`, not a reason to refuse the
+  ## form. Plain numbers are never proposed: seconds or microseconds may be
+  ## on the GPS clock or since 1970, and the number cannot tell (`timePattern`
+  ## proposes them under a header that says UTC). Proposed: a date and a
+  ## time, as `shapeOf` says, when every cell has the same form, a fraction
+  ## of the second and a trailing `Z` aside (a fraction on some rows makes it
+  ## optional on all), and, for a year and a day of year, a day above 12 is
+  ## there or every day has three digits. Not proposed: a leading one or two
+  ## digit run (dd/mo/yy, mo/dd/yy, yy/mo/dd), a four-digit year in the third
+  ## place (dd/mo/yyyy or mo/dd/yyyy), a month above 12 in any cell (it may
+  ## be the day), a zone offset, and forms that differ between cells; the
+  ## pattern is then typed.
   detectWith(cells, false)
 
 proc nameLike(s: string): bool =
@@ -1782,8 +1782,9 @@ proc guessMap*(text: string): ShotLogMap {.raises: [].} =
   ## and the other columns are user defined, named by their header. Of the
   ## columns that read as a time, the first whose form the sampled rows
   ## decide is Time (UTC), its pattern `dateTimePattern` (with none decided,
-  ## the only one, with no pattern); the others are user defined. The clock stays UTC and the length unit stays metres unless a
-  ## header says feet.
+  ## the only one, with no pattern, unless GPSTB is there); the others are
+  ## user defined. The clock stays UTC and the length unit stays metres
+  ## unless a header says feet.
   result = initShotLogMap()
   if text.len > high(int32): return
   var phys = 0
@@ -2067,7 +2068,7 @@ proc timeAsk(log: ShotLog; map: ShotLogMap): tuple[col: int; text: string] =
       let cells = sampleCells(log, map, col)
       if microsLike(cells):
         return (col, "\"" & name & "\" holds microsecond times, GPS or Unix: choose " &
-          "GPSTB or Time (UTC).")
+          "GPSTB, or Time (UTC) and type epoch microseconds.")
       let timeNamed = header.len > 0 and roleOfName(header) == crTime
       if timeNamed and not gpsHeader(header) and secondsLike(cells):
         return (col, "\"" & name & "\" holds seconds, GPS or Unix: choose Time (UTC) and " &
@@ -2117,9 +2118,10 @@ proc shots*(log: ShotLog; map: ShotLogMap): ShotView {.raises: [].} =
   ## nor Time (UTC) mapped, has one problem at the top and no times. When
   ## both sources are there and differ by more than a millisecond, that is a
   ## problem naming both values and saying GPSTB is used; a gap of 18 s is
-  ## called out as GPS and UTC mixed. Times that go backwards, a repeated (source line, source point, index) and a repeated
-  ## FFID are problems too. An instant outside years 1900..2200 is a bad
-  ## number and is not the row's time. A time that does not read as the
+  ## called out as GPS and UTC mixed. Times that go backwards, a repeated
+  ## (source line, source point, index) and a repeated FFID are problems too.
+  ## An instant outside years 1900..2200 is a bad number and is not the row's
+  ## time. A time that does not read as the
   ## pattern says is a problem naming the row's time text and the pattern. A
   ## second of 60 is kept, rolled into the next minute, and reported. Missing
   ## cells and sentinels are empty, not faults. A column mapped to Ignore is

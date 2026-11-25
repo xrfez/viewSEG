@@ -126,6 +126,7 @@ proc runMain() =
       var m = initShotLogMap()
       m.hasHeader = true
       m.roles = @[crSourceLine, crShotPoint, crX, crY, crTime]
+      m.dateTimePattern = EpochMicros
       f.apply Command(kind: ckRemapShotLog, logIndex: 0, logMap: m)
     step("the columns as they are", remap, proc (f: FrameInfo): bool =
       result = f.core.survey.findShotLog(f.core.shotLogId(0)) >= 0 and wait > 8 and

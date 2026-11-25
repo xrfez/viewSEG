@@ -90,6 +90,7 @@ proc writeLog(path: string): ShotLogMap =
   result = initShotLogMap()
   result.hasHeader = false
   result.roles = @[crFileNumber, crTime]
+  result.dateTimePattern = EpochMicros
 
 proc start(dir: string): AppState =
   result = initAppState()

@@ -177,7 +177,7 @@ proc main*() =
     doAssert v.rows[0].timeUtcUs.isNone
     doAssert v.rows[0].texts == @[$GpsMarch, "2024", "1.5"]
     doAssert v.problems.items[0].text == "\"Column 1\" holds microsecond times, GPS or " &
-      "Unix: choose GPSTB or Time (UTC)."
+      "Unix: choose GPSTB, or Time (UTC) and type epoch microseconds."
     var chosen = g
     chosen.roles[0] = crGpsMicros
     doAssert shots(parseShotLog(text, chosen), chosen).rows[0].timeUtcUs.get == UtcMarch
@@ -710,8 +710,8 @@ proc main*() =
       doAssert g.roles == @[crFileNumber, crText], header
       doAssert g.dateTimePattern == "", header
       let log = parseShotLog(text, g)
-      let ask = "\"" & header & "\" holds microsecond times, GPS or Unix: choose GPSTB or " &
-        "Time (UTC)."
+      let ask = "\"" & header & "\" holds microsecond times, GPS or Unix: choose GPSTB, " &
+        "or Time (UTC) and type epoch microseconds."
       doAssert timeNote(log, g) == ask, header
       let v = shots(log, g)
       doAssert v.rows[0].timeUtcUs.isNone and v.rows[1].timeUtcUs.isNone, header

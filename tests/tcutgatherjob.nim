@@ -94,6 +94,7 @@ proc logOf(files: openArray[int]; offsetsUs: openArray[int64]): ShotView =
   var m = initShotLogMap()
   m.hasHeader = false
   m.roles = @[crFileNumber, crTime]
+  m.dateTimePattern = EpochMicros
   shots(parseShotLog(text, m), m)
 
 const
@@ -365,6 +366,7 @@ proc main*() =
     var m = initShotLogMap()
     m.hasHeader = false
     m.roles = @[crFileNumber, crPointIndex, crTime]
+    m.dateTimePattern = EpochMicros
     var raw = ""
     raw.add "101,3," & $(BaseUs + 3_000_000) & "\n"
     raw.add "102,4,\n"
@@ -424,6 +426,7 @@ proc main*() =
     var m = initShotLogMap()
     m.hasHeader = false
     m.roles = @[crFileNumber, crTime, crSourceLine, crShotPoint, crX, crY]
+    m.dateTimePattern = EpochMicros
     var raw = ""
     for i in 0 ..< 7:
       raw.add $Files[i] & "," & $(BaseUs + Offsets[i]) & ",5," & $(100 + i) & "," &
@@ -488,6 +491,7 @@ proc main*() =
     var m = initShotLogMap()
     m.hasHeader = false
     m.roles = @[crFileNumber, crTime, crSourceLine, crShotPoint, crPointIndex]
+    m.dateTimePattern = EpochMicros
     var raw = ""
     for i in 0 ..< 7:
       raw.add $Files[i] & "," & $(BaseUs + Offsets[i]) & ",5," & $(100 + i) & "," & $i & "\n"

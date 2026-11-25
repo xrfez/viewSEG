@@ -49,6 +49,7 @@ proc logOf(two = false): ShotView =
   var m = initShotLogMap()
   m.hasHeader = false
   m.roles = @[crFileNumber, crTime]
+  m.dateTimePattern = EpochMicros
   shots(parseShotLog("101," & $(BaseUs + 20_000) & "\n" &
     (if two: "102," & $(BaseUs + 1_500_000) & "\n" else: ""), m), m)
 

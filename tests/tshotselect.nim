@@ -84,6 +84,7 @@ proc logMap(): ShotLogMap =
   result = initShotLogMap()
   result.hasHeader = true
   result.roles = @[crSourceLine, crShotPoint, crX, crY, crTime]
+  result.dateTimePattern = EpochMicros
 
 proc layerOf(st: AppState): SurveyLayer =
   st.survey.layers[st.survey.findShotLog(st.shotLogId(0))]

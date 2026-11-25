@@ -131,6 +131,7 @@ proc shotsAt(offsetsUs: openArray[int64]): CutShots =
   var m = initShotLogMap()
   m.hasHeader = false
   m.roles = @[crFileNumber, crTime]
+  m.dateTimePattern = EpochMicros
   shotsInTime(shots(parseShotLog(text, m), m).rows)
 
 proc main*() =

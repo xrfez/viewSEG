@@ -157,6 +157,7 @@ proc shotsOf(withFiles: bool): CutShots =
   var m = initShotLogMap()
   m.hasHeader = false
   m.roles = roles
+  m.dateTimePattern = EpochMicros
   shotsInTime(shots(parseShotLog(text, m), m).rows)
 
 type Ran = tuple[st: JobState; res: CutResult; error: string]
@@ -307,6 +308,7 @@ proc gapShots(): CutShots =
   var m = initShotLogMap()
   m.hasHeader = false
   m.roles = @[crFileNumber, crTime]
+  m.dateTimePattern = EpochMicros
   shotsInTime(shots(parseShotLog(text, m), m).rows)
 
 proc checkGapsAndRefusals(dir: string; jobs: Jobs) =
@@ -346,6 +348,7 @@ proc checkGapsAndRefusals(dir: string; jobs: Jobs) =
     var m = initShotLogMap()
     m.hasHeader = false
     m.roles = @[crFileNumber, crTime]
+    m.dateTimePattern = EpochMicros
     shotsInTime(shots(parseShotLog(text, m), m).rows)
   let viaKeys = runCut(jobs, ref0, sgy, dir / "out" / "gapkeys.sgd", two, opts)
   doAssert viaKeys.st == jsDone and not viaKeys.res.carried, viaKeys.error & viaKeys.res.reason
@@ -507,6 +510,7 @@ proc checkRev2SourcePlace(dir: string; jobs: Jobs) =
   var m = initShotLogMap()
   m.hasHeader = false
   m.roles = @[crFileNumber, crTime]
+  m.dateTimePattern = EpochMicros
   let bare = shotsInTime(shots(parseShotLog(timesOnly, m), m).rows)
   const
     NoPlace = "The recording has no source header block: the shot log's source line and " &
@@ -558,6 +562,7 @@ proc checkRev2Time(dir: string; jobs: Jobs; csUs = 0'i64) =
   var m = initShotLogMap()
   m.hasHeader = false
   m.roles = @[crFileNumber, crTime]
+  m.dateTimePattern = EpochMicros
   let sh = shotsInTime(shots(parseShotLog(text, m), m).rows)
   let dest = dir / "out" / ("t2cs" & $csUs & ".sgd")
   let got = runCut(jobs, src, path, dest, sh, initCutOptions(LengthMs, StartMs))
@@ -601,6 +606,7 @@ proc checkRev3(dir: string; jobs: Jobs; comps: int; startMs: float64; origin: in
   var m = initShotLogMap()
   m.hasHeader = false
   m.roles = @[crFileNumber, crTime]
+  m.dateTimePattern = EpochMicros
   let sh = shotsInTime(shots(parseShotLog(text, m), m).rows)
   let dest = dir / "out" / (tag & ".sgd")
   let got = runCut(jobs, src, path, dest, sh, initCutOptions(LengthMs, startMs))
