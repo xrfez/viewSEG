@@ -745,19 +745,24 @@ func isSplitName(raw: string): bool =
   let n = normHeader(raw)
   n in SplitNames
 
-func gpsHeader(raw: string): bool =
-  ## Whether the header name says GPS time: a GPSTB name ("GPS TB", "Time
-  ## break") or a name with "gps" in it.
-  roleOfName(raw) == crGpsMicros or "gps" in nameKey(raw)
-
-func utcHeader(raw: string): bool =
-  ## Whether the header name says its numbers are UTC: "utc", "unix", "epoch"
-  ## or "posix" in it, parentheses included ("Time (UTC)"), and no "gps".
+func saysUtc(raw: string): bool =
+  ## Whether the header name has "utc", "unix", "epoch" or "posix" in it,
+  ## parentheses included ("Time (UTC)").
   let k = nameKey(raw)
-  if "gps" in k: return false
   for w in ExplicitEpoch:
     if w in k: return true
   false
+
+func gpsHeader(raw: string): bool =
+  ## Whether the header name says GPS time: a GPSTB name ("GPS TB", "Time
+  ## break") or a name with "gps" in it, unless it also says UTC ("GPS UTC
+  ## time" is UTC from a GPS receiver).
+  (roleOfName(raw) == crGpsMicros or "gps" in nameKey(raw)) and not saysUtc(raw)
+
+func utcHeader(raw: string): bool =
+  ## Whether the header name says its numbers are UTC: "utc", "unix", "epoch"
+  ## or "posix" in it, and no "gps".
+  "gps" notin nameKey(raw) and saysUtc(raw)
 
 func knownHeader(raw: string): bool =
   roleOfName(raw) != crText or isSplitName(raw)

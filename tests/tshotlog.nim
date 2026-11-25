@@ -704,7 +704,8 @@ proc main*() =
     # 16 digits are GPS or Unix microseconds, and the number cannot tell which: under a
     # header that says neither nothing is read until the user chooses
     let unix = 1_690_000_000_000_000'i64 ## 2023-07-22 04:26:40 UTC
-    for header in ["Time", "Timestamp", "Date Time", "Counter"]:
+    # a name that says both GPS and UTC (UTC taken from a GPS receiver) is generic too
+    for header in ["Time", "Timestamp", "Date Time", "Counter", "GPS UTC time", "UTC GPS"]:
       let text = "FFID," & header & "\n1," & $unix & "\n2," & $(unix + 10_000_000) & "\n"
       let g = guessMap(text)
       doAssert g.roles == @[crFileNumber, crText], header
@@ -738,6 +739,12 @@ proc main*() =
       let g = guessMap(text)
       doAssert g.roles == @[crFileNumber, crTime] and g.dateTimePattern == EpochMicros, header
       doAssert shots(parseShotLog(text, g), g).rows[0].timeUtcUs.get == unix, header
+    # a plain GPS header over a GPS microsecond value is still GPSTB
+    for header in ["GPSTB", "GPS time"]:
+      let text = "FFID," & header & "\n1," & $GpsMarch & "\n"
+      let g = guessMap(text)
+      doAssert g.roles == @[crFileNumber, crGpsMicros], header
+      doAssert shots(parseShotLog(text, g), g).rows[0].timeUtcUs.get == UtcMarch, header
     # with a time chosen elsewhere nothing is asked
     let other = "FFID,GPSTB,Counter\n1," & $GpsMarch & "," & $unix & "\n"
     let og = guessMap(other)
