@@ -2700,6 +2700,8 @@ const
   GatherRunning* = "a receiver gather is already being collected"
   GatherSurveyLoading* = "the survey is still loading: ask for the receiver gather again " &
     "when it is on the map"
+  GatherSurveyUpdating* = "the project's survey is being updated: ask for the receiver " &
+    "gather again when it is done"
   GatherNoFiles* = "no seismic file is listed in the Files window, so there is nothing to " &
     "gather from"
 
@@ -7585,6 +7587,10 @@ proc startReceiverGather(state: var AppState; cmd: Command) =
   if cmd.gatherComponent notin AnyComponent .. 255:
     state.ignore(cmd, "a component is a number from 0 to 255, or -1 for any")
     return
+  if state.project.survey == srKeeping and not state.project.geometry.isNil:
+    # "Update survey" on a survey that is already loaded: the old one is still on the map
+    state.ignore(cmd, GatherSurveyUpdating)
+    return
   if (state.importing and not state.joining.auto) or
       state.project.survey in {srLoading, srKeeping} or state.loading.anyIt(it.session == NoSession):
     state.ignore(cmd, GatherSurveyLoading)
@@ -7608,7 +7614,8 @@ proc startReceiverGather(state: var AppState; cmd: Command) =
     relations: (if relations.isNil: nil else: addr relations[]), stations: stations,
     options: (if state.inProject: state.project.doc.options else: state.settings.join),
     moves: state.project.doc.stationMoves, cacheDir: state.indexCache,
-    surveyNotLoaded: state.projectSurveyLoading)
+    surveyNotLoaded: state.inProject and state.project.doc.hasSurvey and
+      state.project.geometry.isNil)
   for i in 0 ..< state.fileList.entries.len:
     if state.fileList.entries[i].kind in SeismicKinds - SignatureFileKinds:
       var kills = state.editsAt(state.fileList.entries[i].path).shown.lists[teKilled]

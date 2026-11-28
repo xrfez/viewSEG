@@ -25,7 +25,10 @@
 ## - The gather's key reaches no file system call, a reopen is refused, a station move leaves
 ##   its keys alone, and replacing it says it was closed.
 ##
-## Seen to fail: with the refusal on `projectSurveyLoading` back, a cancelled project survey load
+## - A project survey being updated while one is loaded refuses the command with its own
+##   sentence; a survey that failed to load gets the same note as one never loaded.
+##
+## Seen to fail: with the project-survey update not told apart, "surveyUpdating" found the loading sentence; with the refusal on `projectSurveyLoading` back, a cancelled project survey load
 ## refused the gather for good; with the window test taken out, "b-far.sgy" came as a trace of zeros; with the
 ## refusal in `editTraces` taken out, "an edit is refused" failed on
 ## the first edit; with the sort by record time left out, trace 0 was the first file's, not
@@ -446,6 +449,29 @@ proc main*() =
       st.apply Command(kind: ckShowFile, panel: MainPanel, path: d3 / "a-first.sgy")
       doAssert st.settle(st.sessions.len == 1 and not st.sessions[0].gathered)
 
+    block windowBoundary:
+      # the 16 sample window at 2 ms is 32 ms long: a start at 32.0 ms is outside it and is
+      # named; one at 30.0 ms keeps its first sample as the window's last
+      let d4 = fx.dir / "boundary"
+      createDir(d4)
+      shotFile(d4 / "a-first.sgy", 1, Time0 + 100)
+      shotFile(d4 / "b-edge.sgy", 2, Time0 + 200, t0Ms = 32.0)
+      shotFile(d4 / "c-inside.sgy", 3, Time0 + 300, t0Ms = 30.0)
+      st.apply Command(kind: ckBrowse, paths: @[d4])
+      doAssert st.settle(not st.fileList.scanning and st.fileList.folder == d4)
+      st.ask()
+      doAssert st.settle(st.jobs.active.len == 0 and st.sessions.len == 1 and
+        st.sessions[0].gathered), st.lastSaid
+      let said = st.lastSaid
+      doAssert st.sessions[0].len == 2, $st.sessions[0].len & ": " & said
+      doAssert "b-edge.sgy (starts outside the gather's time window)" in said, said
+      doAssert "c-inside.sgy" notin said, said
+      let kept = gatherSamples(st.sessions[0], 1)
+      doAssert kept[15] == 3050'f32, $kept
+      for j in 0 ..< 15: doAssert kept[j] == 0'f32, $kept
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: d4 / "a-first.sgy")
+      doAssert st.settle(st.sessions.len == 1 and not st.sessions[0].gathered)
+
     block listedTwice:
       let top = fx.dir / "top"
       createDir top / "sub"
@@ -526,6 +552,45 @@ proc main*() =
       doAssert "The project's survey is not loaded: stations come from the headers and " &
         "the survey files on the map." in re.lastSaid, re.lastSaid
       re.shutdown()
+
+    block surveyUpdating:
+      # "Update survey" with the survey loaded: the gather is refused with its own sentence
+      sleep 20 # a later modification time than the copy's
+      let original = open(sps.s, fmAppend)
+      original.write "\n"
+      original.close()
+      var up = initAppState()
+      up.rememberFilesIn(fx.dir / "config4")
+      up.apply Command(kind: ckOpenProject, projectPath: fx.dir / "Job 1")
+      doAssert up.settle(up.inProject and up.project.survey == srLoaded and up.project.offer),
+        "the project did not open with a changed original"
+      up.apply Command(kind: ckBrowse, paths: @[dir])
+      doAssert up.settle(not up.fileList.scanning and up.fileList.folder == dir)
+      up.apply Command(kind: ckUpdateSurvey)
+      doAssert up.project.survey == srKeeping, "the update did not start"
+      up.ask()
+      doAssert up.sayings("is being updated") == 1, "refused with another sentence"
+      doAssert up.sayings("still loading") == 0
+      doAssert up.settle(up.jobs.active.len == 0 and up.project.survey in {srLoaded, srFailed})
+      up.flushFiles()
+      up.shutdown()
+
+    block surveyFailed:
+      # a survey that failed to load is not loaded: the gather runs and says so
+      # (survey.bin and the project's copies of the survey files are gone: it cannot be made)
+      removeDir(fx.dir / "Job 1" / "survey")
+      var bad = initAppState()
+      bad.rememberFilesIn(fx.dir / "config5")
+      bad.apply Command(kind: ckOpenProject, projectPath: fx.dir / "Job 1")
+      doAssert bad.settle(bad.inProject and bad.project.survey == srFailed),
+        "the survey did not fail: " & $bad.project.survey
+      bad.apply Command(kind: ckBrowse, paths: @[dir])
+      doAssert bad.settle(not bad.fileList.scanning and bad.fileList.folder == dir)
+      bad.ask()
+      doAssert bad.settle(bad.jobs.active.len == 0 and
+        "No listed file holds receiver station 100/105" in bad.lastSaid), bad.lastSaid
+      doAssert "The project's survey is not loaded" in bad.lastSaid, bad.lastSaid
+      bad.shutdown()
   echo "treceivergather: done"
 
 when isMainModule:
