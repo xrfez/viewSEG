@@ -188,6 +188,8 @@ type
       ## `pressKey`, `typeText`, `dropPaths`). Delivered through one button
       ## change a frame, so a press and a release left together are each seen,
       ## and a key released after the click is not seen before it
+    pressHeld: bool ## a test press waits for the window under the pointer (`deliverInput`)
+    pressHeldSince: MonoTime
 
   FrameInfo* = object
     ## What a frame hook sees. The hook runs after the main window is drawn and
@@ -510,16 +512,56 @@ proc trayProblem*(frame: FrameInfo): string =
   ## Why the tray icon could not be shown; "" when it could or was not asked.
   frame.ui.trayProblem
 
+const PressHoldLimit = initDuration(milliseconds = 500)
+  ## The longest a test press waits for the window under the pointer.
+
+func holds(v: ptr ImGuiViewport; p: ImVec2_c): bool =
+  p.x >= v.Pos.x and p.y >= v.Pos.y and p.x < v.Pos.x + v.Size.x and p.y < v.Pos.y + v.Size.y
+
+proc viewportUnder(p: ImVec2_c): ptr ImGuiViewport =
+  ## The viewport that takes input at `p` (desktop coordinates): the last made of those that
+  ## hold it, as a popup's own window lies over the one it opened from; the main one otherwise.
+  result = igGetMainViewport()
+  let all = igGetPlatformIO_Nil().Viewports
+  for i in 0 ..< all.Size.int:
+    let v = cast[ptr UncheckedArray[ptr ImGuiViewport]](all.Data)[i]
+    if (v.Flags and ImGui_ViewportFlags_NoInputs.cint) == 0 and v.holds(p): result = v
+
+proc pointerSettled(ev: SDL_Event): bool =
+  ## The window Dear ImGui takes for the one under the pointer is the one under the press
+  ## `ev`. With viewports the SDL backend learns that window from the system's enter event,
+  ## which a warped pointer gets a frame or more after a test's own events: a press sent before
+  ## it lands in the window the pointer left, outside every item there, and closes the open
+  ## popups (a submenu in a window of its own, say). A real pointer enters a window before it
+  ## can press in it.
+  let io = igGetIO_Nil()
+  if (io.ConfigFlags and ImGui_ConfigFlags_ViewportsEnable.cint) == 0 or
+      (io.BackendFlags and ImGui_BackendFlags_HasMouseHoveredViewport.cint) == 0:
+    return true
+  let main = igGetMainViewport()
+  let reported = igFindViewportByID(io.MouseHoveredViewport)
+  if reported != nil and (reported.Flags and ImGui_ViewportFlags_NoInputs.cint) != 0:
+    return true # ignored by Dear ImGui, which then finds the window itself
+  reported == viewportUnder(ImVec2_c(x: main.Pos.x + ev.button.x, y: main.Pos.y + ev.button.y))
+
 proc deliverInput(ui: var Ui) =
   ## Hands the window the input a test queued, through one button change.
   ## A press and a release left in the same frame are each seen by a frame:
   ## together, the release cancels the press and the click is lost. Nothing
   ## after that button is handed over this frame, so a key released after the
-  ## click is still held when the click is taken.
+  ## click is still held when the click is taken. A press waits (at most
+  ## `PressHoldLimit`) until the window under the pointer is known (`pointerSettled`).
   var n = 0
   var sent = false
   while n < ui.pendingInput.len:
     if sent: break
+    if ui.pendingInput[n].ev.type_field == SDL_EVENT_MOUSE_BUTTON_DOWN.uint32 and
+        not pointerSettled(ui.pendingInput[n].ev):
+      let now = getMonoTime()
+      if not ui.pressHeld:
+        ui.pressHeld = true
+        ui.pressHeldSince = now
+      if now - ui.pressHeldSince < PressHoldLimit: break
     var ev = ui.pendingInput[n].ev
     let owned = ui.pendingInput[n].owned
     if owned >= 0:
@@ -529,6 +571,7 @@ proc deliverInput(ui: var Ui) =
     discard SDL_PushEvent(addr ev)
     let kind = ev.type_field
     inc n
+    if kind == SDL_EVENT_MOUSE_BUTTON_DOWN.uint32: ui.pressHeld = false
     if kind == SDL_EVENT_MOUSE_BUTTON_DOWN.uint32 or
         kind == SDL_EVENT_MOUSE_BUTTON_UP.uint32:
       sent = true

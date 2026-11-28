@@ -2,7 +2,11 @@
 ## files and from one file, chips, badges, swap, clear.
 ##
 ## Seen to fail: with the plot menu's compare items missing, "the plot's menu
-## offers Compare did not happen".
+## offers Compare did not happen". With the test press sent before the system says
+## the pointer entered the submenu's own window (`deliverInput` not waiting for
+## it), "Compare: set as A from the first file did not happen": the menu, opened
+## mid-plot or low in it, reaches past the window's bottom edge and so is a window
+## of its own, as is its submenu.
 
 import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, spectra, state]
@@ -19,6 +23,10 @@ type Step = object
 
 func centre(r: Rect): Vec2 =
   vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
+
+func low(r: Rect): Vec2 =
+  ## Near the plot's bottom edge.
+  vec2(r.centre.x, round(r.pos.y + r.size.y * 0.92))
 
 proc click(f: FrameInfo; q: Vec2; button = 1) =
   f.moveMouse(q)
@@ -127,6 +135,26 @@ proc main*() =
       if f.core.compareA.filled or f.core.compareB.filled:
         discard f.clickMark("compare.clear")
       not f.core.compareA.filled and not f.core.compareB.filled)
+
+    # Low in the plot the menu cannot open below the pointer: it is pushed up and still reaches
+    # past the main window's bottom edge, so it is a window of its own, as its submenu is.
+    step("Compare: set as A from a right-click low in the plot", proc (f: FrameInfo) =
+      f.apply Command(kind: ckCompareWindow, compareOpen: false)
+      plot = f.markOf("plot.data")
+      f.moveMouse(plot.low), proc (f: FrameInfo): bool =
+      if f.core.compareOpen:
+        f.apply Command(kind: ckCompareWindow, compareOpen: false)
+        return false
+      if not f.core.compareA.filled:
+        if f.markOf("plot.menu.compare").size.x == 0 and wait mod 8 == 2:
+          f.click(plot.low, button = 3)
+        elif f.markOf("plot.menu.compareA").size.x == 0 and
+            f.markOf("plot.menu.compare").size.x > 0 and wait mod 6 == 3:
+          f.click(f.markOf("plot.menu.compare").centre)
+        elif f.markOf("plot.menu.compareA").size.x > 0 and wait mod 6 == 3:
+          f.click(f.markOf("plot.menu.compareA").centre)
+      result = f.core.compareA.filled
+      if result: f.apply Command(kind: ckClearCompare, compareSlot: cwA))
 
     step("set A and B from one file", proc (f: FrameInfo) =
       f.apply Command(kind: ckCompareWindow, compareOpen: false)
