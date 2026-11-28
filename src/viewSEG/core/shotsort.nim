@@ -5,7 +5,9 @@
 ## and a row with no value in a key's column comes last, whichever way the key sorts.
 ## A number column sorts by value, Time (UTC) and GPSTB by instant, anything else by
 ## text without regard to case; a user defined column whose every filled cell is a
-## number sorts by value too.
+## number sorts by value too. A key whose every filled cell is a whole number compares
+## them exactly by their digits; one cell with a fraction or an exponent makes the
+## whole key compare as float64, where values it cannot tell apart tie.
 ##
 ## A `SortBuild` reads the keys' cells a batch of rows at a time, so a long log never
 ## holds a frame; the last batch sorts. It is kept by its caller, which makes a new one
@@ -33,7 +35,8 @@ type
     times: seq[seq[int64]]
     haveTime: seq[seq[bool]]
     texts: seq[seq[string]]
-    exact: seq[seq[string]] ## per number key; a plain integer's `exactInt`, else ""
+    exact: seq[seq[string]] ## per number key while `whole`; a plain integer's `exactInt`, else ""
+    whole: seq[bool]        ## per number key: every filled cell so far is a plain integer
     order*: seq[int32]      ## the sorted rows, once `done`
     done*: bool
 
@@ -61,11 +64,13 @@ proc newSortBuild*(rows: int; keys: openArray[RowKey]; decimalComma = false): So
   result.haveTime = newSeq[seq[bool]](k)
   result.texts = newSeq[seq[string]](k)
   result.exact = newSeq[seq[string]](k)
+  result.whole = newSeq[bool](k)
   for i, key in keys:
     case key.kind
     of rkNumber:
       result.nums[i] = newSeq[float64](rows)
       result.exact[i] = newSeq[string](rows)
+      result.whole[i] = true
     of rkInstant:
       result.times[i] = newSeq[int64](rows)
       result.haveTime[i] = newSeq[bool](rows)
@@ -116,20 +121,23 @@ func isMissing(text: string; map: ShotLogMap): bool =
   for s in map.sentinels:
     if text == s: return true
 
-proc compareRows(b: SortBuild; x, y: int32): int =
+proc cmpRows*(b: SortBuild; x, y: int32): int =
+  ## How rows `x` and `y` compare in a finished sort: by the keys in turn, then the file
+  ## order, so only a row ties with itself.
   for i, key in b.keys:
     var c = 0
     var missingX, missingY = false
     case key.kind
     of rkNumber:
-      let ex = b.exact[i][x]
-      let ey = b.exact[i][y]
-      missingX = ex.len == 0 and b.nums[i][x] != b.nums[i][x]
-      missingY = ey.len == 0 and b.nums[i][y] != b.nums[i][y]
-      if not missingX and not missingY:
+      if b.whole[i]:
         # whole numbers compare by digits, so 17 or more of them do not tie as float64
-        c = if ex.len > 0 and ey.len > 0: cmpExact(ex, ey)
-          else: cmp(b.nums[i][x], b.nums[i][y])
+        missingX = b.exact[i][x].len == 0
+        missingY = b.exact[i][y].len == 0
+        if not missingX and not missingY: c = cmpExact(b.exact[i][x], b.exact[i][y])
+      else:
+        missingX = b.nums[i][x] != b.nums[i][x]
+        missingY = b.nums[i][y] != b.nums[i][y]
+        if not missingX and not missingY: c = cmp(b.nums[i][x], b.nums[i][y])
     of rkInstant:
       missingX = not b.haveTime[i][x]
       missingY = not b.haveTime[i][y]
@@ -145,35 +153,40 @@ proc compareRows(b: SortBuild; x, y: int32): int =
   cmp(x, y) # a tie keeps the file order
 
 proc finish(b: SortBuild) =
-  ## Sorts. A text key whose filled cells are all numbers sorts by value, and plain
-  ## integers compare exactly; one cell of other text (say `n/a`) keeps the whole column
-  ## sorting as text, on purpose.
+  ## Sorts. A text key whose filled cells are all numbers sorts by value; one cell of
+  ## other text (say `n/a`) keeps the whole column sorting as text, on purpose. A number
+  ## key compares exactly by digits only when every filled, non-"nan" cell is a plain
+  ## integer, and as float64 otherwise: the two rules never mix within one key.
   for i, key in b.keys.mpairs:
-    if key.kind != rkText: continue
-    var all = true
-    var filled = 0
-    var vals = newSeq[float64](b.rows)
-    var ints = newSeq[string](b.rows)
-    for r in 0 ..< b.rows:
-      if b.texts[i][r].len == 0:
-        vals[r] = NaN
-        continue
-      inc filled
-      ints[r] = exactInt(b.texts[i][r])
-      vals[r] = number(b.texts[i][r], b.comma)
-      if ints[r].len > 0: continue # a plain integer is a number, whatever float64 makes of it
-      # "nan" is a number that is missing, like an empty cell; any other text is not
-      if vals[r] != vals[r] and cmpIgnoreCase(b.texts[i][r].strip, "nan") != 0:
-        all = false
-        break
-    if all and filled > 0:
-      key.kind = rkNumber
-      b.nums[i] = vals
-      b.exact[i] = ints
-      b.texts[i] = @[]
+    if key.kind == rkText:
+      var all = true
+      var filled = 0
+      var vals = newSeq[float64](b.rows)
+      for r in 0 ..< b.rows:
+        let text = b.texts[i][r]
+        if text.len == 0:
+          vals[r] = NaN
+        elif all:
+          inc filled
+          vals[r] = number(text, b.comma)
+          # "nan" is a number that is missing, like an empty cell; any other text is not
+          if vals[r] != vals[r] and cmpIgnoreCase(text.strip, "nan") != 0: all = false
+      if all and filled > 0:
+        # a plain integer always parses (as inf when it is too long), so `vals` has them
+        var ints = newSeq[string](b.rows)
+        var whole = true
+        for r in 0 ..< b.rows:
+          if whole and vals[r] == vals[r]:
+            ints[r] = exactInt(b.texts[i][r])
+            if ints[r].len == 0: whole = false
+        key.kind = rkNumber
+        b.nums[i] = vals
+        b.whole[i] = whole
+        b.exact[i] = if whole: ints else: @[]
+        b.texts[i] = @[]
   b.order = newSeq[int32](b.rows)
   for r in 0 ..< b.rows: b.order[r] = int32(r)
-  b.order.sort(proc (x, y: int32): int = compareRows(b, x, y))
+  b.order.sort(proc (x, y: int32): int = cmpRows(b, x, y))
   b.done = true
 
 proc advance*(b: SortBuild; log: ShotLog; view: ShotView; map: ShotLogMap; batch: int):
@@ -191,7 +204,12 @@ proc advance*(b: SortBuild; log: ShotLog; view: ShotView; map: ShotLogMap; batch
           b.nums[i][r] = NaN
         else:
           b.nums[i][r] = number(text, map.decimalComma)
-          b.exact[i][r] = exactInt(text)
+          if b.whole[i] and b.nums[i][r] == b.nums[i][r]:
+            b.exact[i][r] = exactInt(text)
+            if b.exact[i][r].len == 0:
+              # a fraction or an exponent: the whole key compares as float64
+              b.whole[i] = false
+              b.exact[i] = @[]
       of rkInstant:
         let us = if r < view.rows.len: view.rows[r].timeUtcUs else: none(int64)
         if us.isSome:

@@ -569,7 +569,7 @@ proc main*() =
       up.apply Command(kind: ckUpdateSurvey)
       doAssert up.project.survey == srKeeping, "the update did not start"
       up.ask()
-      doAssert up.sayings("is being updated") == 1, "refused with another sentence"
+      doAssert up.sayings("is being copied into the project") == 1, "refused with another sentence"
       doAssert up.sayings("still loading") == 0
       doAssert up.settle(up.jobs.active.len == 0 and up.project.survey in {srLoaded, srFailed})
       up.flushFiles()

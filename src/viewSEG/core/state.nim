@@ -2700,8 +2700,8 @@ const
   GatherRunning* = "a receiver gather is already being collected"
   GatherSurveyLoading* = "the survey is still loading: ask for the receiver gather again " &
     "when it is on the map"
-  GatherSurveyUpdating* = "the project's survey is being updated: ask for the receiver " &
-    "gather again when it is done"
+  GatherSurveyUpdating* = "the survey is being copied into the project: ask for the " &
+    "receiver gather again when it is done"
   GatherNoFiles* = "no seismic file is listed in the Files window, so there is nothing to " &
     "gather from"
 
@@ -7588,7 +7588,8 @@ proc startReceiverGather(state: var AppState; cmd: Command) =
     state.ignore(cmd, "a component is a number from 0 to 255, or -1 for any")
     return
   if state.project.survey == srKeeping and not state.project.geometry.isNil:
-    # "Update survey" on a survey that is already loaded: the old one is still on the map
+    # a first import, a new project made with the map's survey, or "Update survey" on one
+    # already loaded: the survey is being copied in
     state.ignore(cmd, GatherSurveyUpdating)
     return
   if (state.importing and not state.joining.auto) or
