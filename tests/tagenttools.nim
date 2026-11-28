@@ -511,6 +511,9 @@ proc main*() =
         s["program"]["workingFolder"].getStr == getCurrentDir(), $s["program"]
       let layers = s["map"]["layers"]
       doAssert layers.len == 2, $layers # the file's sources and receivers
+      let options = s["map"]["options"]
+      doAssert options.len > 2 and options[0]["explain"].getStr.len > 0 and
+        options[options.len - 1]["id"].getStr == "map.layer.highlight", $options
       var receivers = newJNull()
       for l in layers:
         doAssert l["shown"].getBool and l["points"].getInt > 0, $l
@@ -522,6 +525,8 @@ proc main*() =
       doAssert hidden.len == 2 and (hidden[0]["shown"].getBool != hidden[1]["shown"].getBool),
         "the receivers were not hidden: " & $hidden
       doAssert not st.run(%*{"kind": "map layer", "mapLayer": key}).isError # shown again
+      doAssert not st.run(%*{"kind": "map layer", "mapLayer": {"kind": "highlight"}}).isError,
+        "the highlight's key as the options spell it"
       for l in st.stateReport(fe, """{"parts":["map"]}""").body["map"]["layers"]:
         doAssert l["shown"].getBool, "\"shown\" did not default to true"
       let point = %*{"layer": receivers["layer"], "role": "receiver", "point": 0}

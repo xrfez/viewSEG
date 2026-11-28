@@ -24,8 +24,8 @@
 
 import std/[algorithm, base64, json, math, monotimes, os, sets, strutils, tables, times]
 import parseSEG
-import ../core/[explain, firstbreaks, geometry, join, log, properties, shortcuts, state,
-  traceorder, treatas, units, versions]
+import ../core/[explain, firstbreaks, geometry, join, log, optiondocs, properties, shortcuts,
+  state, traceorder, treatas, units, versions]
 import protocol, schema
 
 const
@@ -136,7 +136,9 @@ proc toolList*(): string =
         "the file list (fileList), the open files (files), the panels " &
        "(panels: the file, record, layout, view, display and gain, filters, display header, " &
        "order, trace filter, polarity, the traces at each position, the edits, whether " &
-       "the picture is complete), the selection, the map (its view, its layers, each " &
+       "the picture is complete), the selection, the map (its view, its options: each " &
+        "filter and layer explained as its tooltip says, with its value and the command " &
+        "that changes it, its layers, each " &
        "in its group, Preplot (the survey files) or Recorded (the seismic files' own " &
        "positions), shown or hidden by its own toggle and drawn or not, the groups " &
        "hidden, the template box: the spread planned for the record on show, its X or O " &
@@ -634,6 +636,13 @@ proc pointJson(state: AppState; p: PointRef): JsonNode =
     result["y"] = toJson(ps.index.y(p.point))
     if p.point < ps.station.len: result["station"] = toJson(ps.station[p.point])
 
+proc optionJson(o: OptionDoc): JsonNode =
+  ## One option's description; what is empty is left out.
+  result = %*{"id": o.id, "label": o.label, "value": o.value, "available": o.available}
+  for (k, v) in [("explain", o.explain), ("unit", o.unit), ("whyNot", o.whyNot),
+      ("change", o.change), ("refused", o.refused)]:
+    if v.len > 0: result[k] = %v
+
 proc mapJson(state: AppState; limit: int): JsonNode =
   ## The map: its view, its layers (each role of each survey layer, shown or
   ## hidden, with its points), the points selected and hovered.
@@ -653,6 +662,9 @@ proc mapJson(state: AppState; limit: int): JsonNode =
           "group": $l.groupOf, "mapLayer": toJson(key), "points": l.points[role].len,
           "shown": m.shown(key), "drawn": m.drawn(hiddenGroups, l, role)}
   result["layers"] = layers
+  var options = newJArray()
+  for o in state.filterDocs & state.layerDocs: options.add optionJson(o)
+  result["options"] = options
   # The template box: the spread planned for the record on show.
   var spread = %*{"shown": state.settings.map.templateBox}
   if state.settings.map.templateBox:
