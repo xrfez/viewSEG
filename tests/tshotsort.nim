@@ -7,9 +7,16 @@
 ## Seen to fail: with empty cells compared as the smallest value, `emptyLast` listed a
 ## blank first in a descending key; with the file order not the last tie-break,
 ## `stable` reversed equal rows; with a number compared as text, `numbers` put 10 before
-## 9; with the layout's unknown columns dropped, `newColumn` lost the new column.
+## 9; with the layout's unknown columns dropped, `newColumn` lost the new column; with
+## "nan" not counted as missing, `nanIsMissing` left a numeric text column as text; with
+## whole numbers compared as float64, `longIntegers` found 17 digit values tied; with two
+## whole numbers compared by digits but each against a fraction as float64 in the same
+## key, `mixedKeyTies` sorted 1400000000000000001 before 1400000000000000003 though the
+## fraction 1400000000000000002.5 ties with both, and `totalOrder` found
+## 9007199254740993 < 9007199254740992.5 < 9007199254740992 but not the first before the
+## last.
 
-import std/[monotimes, options, strutils, times]
+import std/[algorithm, monotimes, options, strutils, times]
 import viewSEG/core/[nif, shotlayout, shotlog, shotsort]
 
 proc build(text: string): tuple[log: ShotLog, view: ShotView, map: ShotLogMap] =
@@ -18,11 +25,18 @@ proc build(text: string): tuple[log: ShotLog, view: ShotView, map: ShotLogMap] =
   result.map = map
   result.view = result.log.shots(map)
 
-proc sorted(text: string; keys: openArray[RowKey]): seq[int32] =
+proc finished(text: string; keys: openArray[RowKey]): SortBuild =
   let b = build(text)
-  let s = newSortBuild(b.log.len, keys)
-  while not s.advance(b.log, b.view, b.map, 3): discard
-  s.order
+  result = newSortBuild(b.log.len, keys)
+  while not result.advance(b.log, b.view, b.map, 3): discard
+
+proc sorted(text: string; keys: openArray[RowKey]): seq[int32] =
+  finished(text, keys).order
+
+proc column(cells: openArray[string]): string =
+  ## A log whose second column holds `cells`, one row each.
+  result = "a,b\n"
+  for c in cells: result.add "x," & c & "\n"
 
 proc main*() =
   const text = "shot point,name,Y\n" &
@@ -61,6 +75,91 @@ proc main*() =
     # a text column of numbers sorts by value
     let o = sorted("a,b\nx,10\ny,9\nz,\n", [RowKey(col: 1, kind: rkText)])
     doAssert o == @[1'i32, 0, 2], $o
+
+  block longIntegers:
+    # whole numbers of 17 or more digits tie as float64: they compare by their digits
+    let t = "a,b\nx,12345678901234569\ny,12345678901234568\n"
+    doAssert sorted(t, [RowKey(col: 1, kind: rkText)]) == @[1'i32, 0]
+    doAssert sorted(t, [RowKey(col: 1, kind: rkNumber)]) == @[1'i32, 0]
+    doAssert sorted(t, [RowKey(col: 1, kind: rkNumber, descending: true)]) == @[0'i32, 1]
+    # signs, leading zeros and mixed lengths
+    let m = "a,b\nx,-7\ny,+007\nz,-12345678901234568\nw,-12345678901234569\nv,0\n"
+    doAssert sorted(m, [RowKey(col: 1, kind: rkText)]) == @[3'i32, 2, 0, 4, 1]
+    # three 5000 digit cells that differ in the last digit
+    let big = repeat('7', 4999)
+    let h = "a,b\nx," & big & "3\ny," & big & "1\nz," & big & "2\n"
+    doAssert sorted(h, [RowKey(col: 1, kind: rkText)]) == @[1'i32, 2, 0]
+    doAssert sorted(h, [RowKey(col: 1, kind: rkNumber, descending: true)]) == @[0'i32, 2, 1]
+    # one cell of other text keeps the column sorting as text (deliberately)
+    let n = "a,b\nx,10\ny,9\nz,n/a\n"
+    doAssert sorted(n, [RowKey(col: 1, kind: rkText)]) == @[0'i32, 1, 2]
+
+  block nanIsMissing:
+    # "nan" is a missing number: last like an empty cell, and a text column of numbers
+    # and "nan" still sorts by value
+    let t = "a,b\nx,10\ny,9\nz,nan\nw,NaN\n"
+    doAssert sorted(t, [RowKey(col: 1, kind: rkText)]) == @[1'i32, 0, 2, 3]
+    doAssert sorted(t, [RowKey(col: 1, kind: rkNumber)]) == @[1'i32, 0, 2, 3]
+
+  block mixedKeyTies:
+    # one cell with a fraction or an exponent makes the whole key compare as float64:
+    # values float64 cannot tell apart tie and keep their file order, whatever that is
+    let cases = [
+      (@["1400000000000000003", "1400000000000000002.5", "1400000000000000001"], false),
+      (@["-9007199254740993", "-9007199254740992.5", "-9007199254740992"], true),
+      (@["1" & repeat('0', 400), "2" & repeat('0', 400), "1e400", "inf"], false)]
+    for (cells, desc) in cases:
+      var p = newSeq[int](cells.len)
+      for i in 0 ..< p.len: p[i] = i
+      var expected = newSeq[int32](cells.len)
+      for i in 0 ..< expected.len: expected[i] = int32(i)
+      while true:
+        var shuffled: seq[string]
+        for i in p: shuffled.add cells[i]
+        for kind in [rkText, rkNumber]:
+          let o = sorted(column(shuffled), [RowKey(col: 1, kind: kind, descending: desc)])
+          doAssert o == expected, $shuffled & " " & $kind & ": " & $o
+        if not p.nextPermutation: break
+    # without the fraction the same whole numbers compare by their digits
+    let t = column(["1400000000000000003", "1400000000000000001"])
+    doAssert sorted(t, [RowKey(col: 1, kind: rkText)]) == @[1'i32, 0]
+    doAssert sorted(t, [RowKey(col: 1, kind: rkNumber)]) == @[1'i32, 0]
+
+  block totalOrder:
+    # the comparison is a total order (antisymmetric, transitive, ties only a row with
+    # itself) on a key of whole numbers and on one mixing them with other numbers; the
+    # mixed key puts a fraction between two long whole numbers it cannot tell apart
+    let ints = @["0", "-0", "+0", "000", "7", "+007", "-7", "-12", "9007199254740993",
+      "9007199254740992", "-9007199254740993", "-9007199254740992", "1400000000000000003",
+      "1400000000000000001", "12345678901234567890", "-12345678901234567890",
+      "1" & repeat('0', 400), "2" & repeat('0', 400), "-1" & repeat('0', 400), "", "nan",
+      "NaN"]
+    let others = @["0.0", "-0.0", "1e3", "1000.0", "9.5", "-3.25", "1e-300", "-1e-300",
+      "9007199254740992.5", "9007199254740993.0", "-9007199254740992.5",
+      "9.007199254740993e15", "1400000000000000002.5", "inf", "-inf", "+5.0", "1e400",
+      "-1e400", "5e0"]
+    var mixed: seq[string]
+    for i in 0 ..< ints.len:
+      mixed.add ints[i]
+      if i < others.len: mixed.add others[i]
+    for cells in [ints, mixed, others & ints]:
+      for kind in [rkText, rkNumber]:
+        for desc in [false, true]:
+          let s = finished(column(cells), [RowKey(col: 1, kind: kind, descending: desc)])
+          let n = int32(cells.len)
+          let what = $kind & " descending " & $desc & " of " & $n
+          for x in 0'i32 ..< n:
+            for y in 0'i32 ..< n:
+              let c = s.cmpRows(x, y)
+              doAssert c == -s.cmpRows(y, x), what & ": " & cells[x] & " " & cells[y]
+              doAssert (c == 0) == (x == y), what
+              if c < 0:
+                for z in 0'i32 ..< n:
+                  if s.cmpRows(y, z) < 0:
+                    doAssert s.cmpRows(x, z) < 0,
+                      what & ": " & cells[x] & " < " & cells[y] & " < " & cells[z]
+          for i in 1 ..< s.order.len:
+            doAssert s.cmpRows(s.order[i - 1], s.order[i]) < 0, what
 
   block noKeys:
     doAssert sorted(text, newSeq[RowKey]()) == @[0'i32, 1, 2, 3, 4]

@@ -751,7 +751,9 @@ proc shotLayouts(r: var Reading; n: NifNode; x: var seq[SavedShotLayout]) =
         c.kids[1].isTree("layout") and c.kids[0].text.len > 0:
       if got.len < MaxSavedLayouts:
         got.add SavedShotLayout(headers: c.kids[0].text, layout: readLayout(c.kids[1]))
-    else: r.unusable(c, n.tag, "(headers \"names\" (layout ...))")
+    else:
+      r.problem(c, "(headers \"names\" (layout ...)) needs a name and a layout, not " &
+        describe(c) & "; this entry is skipped.")
   x = got
 
 proc breakModel(r: var Reading; n: NifNode; m: var BreakModel) =

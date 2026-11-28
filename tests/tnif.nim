@@ -113,6 +113,7 @@ proc main*() =
         "(n 1.2.3)", "(n --1)"]:
       expectError(bad, "bad number")
     doAssert nifFloat(3) == "3.0" and nifFloat(1e20).contains('e')
+    doAssert nifFloat(NaN) == "0.0" and nifFloat(Inf) == "0.0" and nifFloat(-Inf) == "0.0"
 
   block controlBytes:
     for c in {'\x00'..'\x1f'} - {'\t', '\r', '\n'}:

@@ -1945,7 +1945,7 @@ trace's time window, and killed traces. A trace that starts a whole number of sa
 shifted onto the first trace's time axis, and a shorter or longer one is padded with zeros or
 cut to its length, and Messages says how many. A file listed twice is read once. The gather
 stops at 20 000 traces or 512 MiB of samples and says so; a survey still loading on the
-map is waited for, and a project whose survey is not loaded gathers from the headers and the
+map is waited for (so is one being copied into the project), and a project whose survey is not loaded gathers from the headers and the
 survey files on the map.
 
 ## Spectra

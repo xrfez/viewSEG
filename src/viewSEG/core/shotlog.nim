@@ -2059,6 +2059,7 @@ proc epochPreset*(log: ShotLog; map: ShotLogMap; col: int): string {.raises: [].
   ## It is only a suggestion for the pattern box: the number cannot tell Unix from GPS,
   ## and nothing is read until the choice is applied.
   if log == nil or col < 0 or col >= log.width: return ""
+  if gpsHeader(log.columnName(col)): return "" # GPS microseconds are not Unix times
   let cells = sampleCells(log, map, col)
   if microsLike(cells): EpochMicros
   elif secondsLike(cells): EpochSeconds
