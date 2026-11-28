@@ -10,7 +10,8 @@
 ## read the default layout; with the settings not told, `sessionOnly` found the
 ## layout gone after the same log was imported again; with the settings writer
 ## leaving the layouts out, `sessionOnly` found none kept. With the widths stored as
-## given, `badWidths` found a NaN width kept.
+## given, `badWidths` found a NaN width kept. With the settings' layout not used for a stored
+## log that has none, `projectWithoutLayout` found the default layout.
 
 import std/[os, strutils]
 import viewSEG/core/[filesystem, project, settings, settingsnif, shotlayout, shotlog, state]
@@ -78,6 +79,29 @@ proc main*() =
       doAssert other.settings.shotLayouts.len == 0
       discard other.shutdown()
 
+    block projectWithoutLayout:
+      # a stored log with no layout of its own takes the settings' layout for its headers
+      let job = root / "JobNoLayout"
+      var st = start(root / "config-e")
+      st.apply Command(kind: ckNewProject, projectPath: job)
+      doAssert st.settle(st.inProject and st.jobs.active.len == 0)
+      st.apply Command(kind: ckImportShotLog, logPath: Sample)
+      doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
+      doAssert st.shotLayout(0).isDefault
+      st.flushFiles()
+      st.apply Command(kind: ckCloseProject)
+      doAssert st.settle(not st.inProject and st.jobs.active.len == 0)
+      # the settings come to hold a layout for these headers, from a log outside a project
+      st.apply Command(kind: ckImportShotLog, logPath: Sample)
+      doAssert st.settle(st.shotLogCount == 1 and st.jobs.active.len == 0)
+      st.apply Command(kind: ckShotLayout, slogIndex: 0, slogLayout: layoutOf())
+      doAssert st.settings.shotLayouts.len == 1
+      st.apply Command(kind: ckRemoveShotLog, logIndex: 0)
+      st.apply Command(kind: ckOpenProject, projectPath: job)
+      doAssert st.settle(st.inProject and st.shotLogCount == 1 and st.jobs.active.len == 0)
+      doAssert st.shotLayout(0) == layoutOf(), $st.shotLayout(0)
+      discard st.shutdown()
+
     block settingsFile:
       var s = Settings()
       s.shotLayouts.remember("a\x1fb", layoutOf())
@@ -103,6 +127,7 @@ proc main*() =
       for i in 0 .. 3:
         doAssert kept.columns[i].width == 0, $kept.columns[i]
       doAssert kept.columns[4].width == 12.5'f32
+      # this only checks that the clamped widths survive the file: `kept` is already clamped
       var w = initNifWriter()
       w.writeLayout kept
       var back = ShotLayout()

@@ -8646,6 +8646,11 @@ proc tookShotLoad(state: var AppState; w: ShotLogWork) =
     stored: w.stored, map: r.map, log: r.log, view: r.view, revision: 1)
   for s in state.project.doc.shotLogs:
     if s.file == w.stored: loaded.layout = s.layout
+  if loaded.layout.isDefault:
+    # a project saved before layouts existed: the settings' layout for these headers
+    var names: seq[string] = @[]
+    for c in 0 ..< r.log.width: names.add columnKey(r.log.columnName(c), c)
+    loaded.layout = state.settings.shotLayouts.layoutFor(headerKey(names))
   inc state.nextShotId
   state.shotLogs.add loaded
   state.follow.keep(loaded.id, r.index)

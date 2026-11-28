@@ -97,9 +97,9 @@ func nifString*(s: string): string =
 
 func nifFloat*(x: float64): string =
   ## `x` as a NIF float literal: always with a fraction or an exponent, so it
-  ## reads back as a float. `x` must be finite (NIF has no NaN or infinity).
-  assert x == x and x != Inf and x != -Inf, "NIF has no literal for " & $x
-  result = $x
+  ## reads back as a float. NIF has no NaN or infinity: a non-finite `x` is written
+  ## as 0.0.
+  result = if x == x and x != Inf and x != -Inf: $x else: "0.0"
   if not result.contains({'.', 'e', 'E'}): result.add ".0"
 
 func initNifWriter*(breakDepth = 2): NifWriter =

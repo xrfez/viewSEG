@@ -8,7 +8,8 @@
 ## blank first in a descending key; with the file order not the last tie-break,
 ## `stable` reversed equal rows; with a number compared as text, `numbers` put 10 before
 ## 9; with the layout's unknown columns dropped, `newColumn` lost the new column; with
-## "nan" not counted as missing, `nanIsMissing` left a numeric text column as text.
+## "nan" not counted as missing, `nanIsMissing` left a numeric text column as text; with
+## whole numbers compared as float64, `longIntegers` found 17 digit values tied.
 
 import std/[monotimes, options, strutils, times]
 import viewSEG/core/[nif, shotlayout, shotlog, shotsort]
@@ -62,6 +63,24 @@ proc main*() =
     # a text column of numbers sorts by value
     let o = sorted("a,b\nx,10\ny,9\nz,\n", [RowKey(col: 1, kind: rkText)])
     doAssert o == @[1'i32, 0, 2], $o
+
+  block longIntegers:
+    # whole numbers of 17 or more digits tie as float64: they compare by their digits
+    let t = "a,b\nx,12345678901234569\ny,12345678901234568\n"
+    doAssert sorted(t, [RowKey(col: 1, kind: rkText)]) == @[1'i32, 0]
+    doAssert sorted(t, [RowKey(col: 1, kind: rkNumber)]) == @[1'i32, 0]
+    doAssert sorted(t, [RowKey(col: 1, kind: rkNumber, descending: true)]) == @[0'i32, 1]
+    # signs, leading zeros and mixed lengths
+    let m = "a,b\nx,-7\ny,+007\nz,-12345678901234568\nw,-12345678901234569\nv,0\n"
+    doAssert sorted(m, [RowKey(col: 1, kind: rkText)]) == @[3'i32, 2, 0, 4, 1]
+    # three 5000 digit cells that differ in the last digit
+    let big = repeat('7', 4999)
+    let h = "a,b\nx," & big & "3\ny," & big & "1\nz," & big & "2\n"
+    doAssert sorted(h, [RowKey(col: 1, kind: rkText)]) == @[1'i32, 2, 0]
+    doAssert sorted(h, [RowKey(col: 1, kind: rkNumber, descending: true)]) == @[0'i32, 2, 1]
+    # one cell of other text keeps the column sorting as text (deliberately)
+    let n = "a,b\nx,10\ny,9\nz,n/a\n"
+    doAssert sorted(n, [RowKey(col: 1, kind: rkText)]) == @[0'i32, 1, 2]
 
   block nanIsMissing:
     # "nan" is a missing number: last like an empty cell, and a text column of numbers

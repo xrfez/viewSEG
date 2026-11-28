@@ -33,6 +33,7 @@ type
     times: seq[seq[int64]]
     haveTime: seq[seq[bool]]
     texts: seq[seq[string]]
+    exact: seq[seq[string]] ## per number key; a plain integer's `exactInt`, else ""
     order*: seq[int32]      ## the sorted rows, once `done`
     done*: bool
 
@@ -59,9 +60,12 @@ proc newSortBuild*(rows: int; keys: openArray[RowKey]; decimalComma = false): So
   result.times = newSeq[seq[int64]](k)
   result.haveTime = newSeq[seq[bool]](k)
   result.texts = newSeq[seq[string]](k)
+  result.exact = newSeq[seq[string]](k)
   for i, key in keys:
     case key.kind
-    of rkNumber: result.nums[i] = newSeq[float64](rows)
+    of rkNumber:
+      result.nums[i] = newSeq[float64](rows)
+      result.exact[i] = newSeq[string](rows)
     of rkInstant:
       result.times[i] = newSeq[int64](rows)
       result.haveTime[i] = newSeq[bool](rows)
@@ -80,6 +84,33 @@ proc number(text: string; decimalComma: bool): float64 =
   var v = 0.0
   if parseutils.parseFloat(u, v) == u.len: v else: NaN
 
+func exactInt(text: string): string =
+  ## A plain integer (optional sign, digits only) as a sign and its digits without
+  ## leading zeros, so integers of any length compare exactly; "" for any other text.
+  let t = text.strip
+  var i = 0
+  var neg = false
+  if t.len > 0 and t[0] in {'+', '-'}:
+    neg = t[0] == '-'
+    inc i
+  if i >= t.len: return ""
+  for j in i ..< t.len:
+    if t[j] notin {'0' .. '9'}: return ""
+  while i < t.len - 1 and t[i] == '0': inc i
+  if t[i] == '0': return "0"
+  (if neg: "-" else: "") & t.substr(i)
+
+func cmpExact(a, b: string): int =
+  ## Order of two `exactInt` strings: by sign, then digit count, then the digits.
+  let na = a[0] == '-'
+  let nb = b[0] == '-'
+  if na != nb: return if na: -1 else: 1
+  let da = if na: a.len - 1 else: a.len
+  let db = if nb: b.len - 1 else: b.len
+  var c = cmp(da, db)
+  if c == 0: c = cmp(a, b)
+  if na: -c else: c
+
 func isMissing(text: string; map: ShotLogMap): bool =
   if text.strip.len == 0: return true
   for s in map.sentinels:
@@ -91,9 +122,14 @@ proc compareRows(b: SortBuild; x, y: int32): int =
     var missingX, missingY = false
     case key.kind
     of rkNumber:
-      missingX = b.nums[i][x] != b.nums[i][x]
-      missingY = b.nums[i][y] != b.nums[i][y]
-      if not missingX and not missingY: c = cmp(b.nums[i][x], b.nums[i][y])
+      let ex = b.exact[i][x]
+      let ey = b.exact[i][y]
+      missingX = ex.len == 0 and b.nums[i][x] != b.nums[i][x]
+      missingY = ey.len == 0 and b.nums[i][y] != b.nums[i][y]
+      if not missingX and not missingY:
+        # whole numbers compare by digits, so 17 or more of them do not tie as float64
+        c = if ex.len > 0 and ey.len > 0: cmpExact(ex, ey)
+          else: cmp(b.nums[i][x], b.nums[i][y])
     of rkInstant:
       missingX = not b.haveTime[i][x]
       missingY = not b.haveTime[i][y]
@@ -109,18 +145,23 @@ proc compareRows(b: SortBuild; x, y: int32): int =
   cmp(x, y) # a tie keeps the file order
 
 proc finish(b: SortBuild) =
-  # a text key whose filled cells are all numbers sorts by value
+  ## Sorts. A text key whose filled cells are all numbers sorts by value, and plain
+  ## integers compare exactly; one cell of other text (say `n/a`) keeps the whole column
+  ## sorting as text, on purpose.
   for i, key in b.keys.mpairs:
     if key.kind != rkText: continue
     var all = true
     var filled = 0
     var vals = newSeq[float64](b.rows)
+    var ints = newSeq[string](b.rows)
     for r in 0 ..< b.rows:
       if b.texts[i][r].len == 0:
         vals[r] = NaN
         continue
       inc filled
+      ints[r] = exactInt(b.texts[i][r])
       vals[r] = number(b.texts[i][r], b.comma)
+      if ints[r].len > 0: continue # a plain integer is a number, whatever float64 makes of it
       # "nan" is a number that is missing, like an empty cell; any other text is not
       if vals[r] != vals[r] and cmpIgnoreCase(b.texts[i][r].strip, "nan") != 0:
         all = false
@@ -128,6 +169,7 @@ proc finish(b: SortBuild) =
     if all and filled > 0:
       key.kind = rkNumber
       b.nums[i] = vals
+      b.exact[i] = ints
       b.texts[i] = @[]
   b.order = newSeq[int32](b.rows)
   for r in 0 ..< b.rows: b.order[r] = int32(r)
@@ -145,7 +187,11 @@ proc advance*(b: SortBuild; log: ShotLog; view: ShotView; map: ShotLogMap; batch
       case key.kind
       of rkNumber:
         let text = log.cell(r, key.col)
-        b.nums[i][r] = if isMissing(text, map): NaN else: number(text, map.decimalComma)
+        if isMissing(text, map):
+          b.nums[i][r] = NaN
+        else:
+          b.nums[i][r] = number(text, map.decimalComma)
+          b.exact[i][r] = exactInt(text)
       of rkInstant:
         let us = if r < view.rows.len: view.rows[r].timeUtcUs else: none(int64)
         if us.isSome:
