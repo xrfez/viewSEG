@@ -1151,6 +1151,7 @@ proc openReopen(ui: var Ui) =
   ## "Reopen with options" for the file the Seismic window shows.
   let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
   if i < 0: ui.say("Reopen with options: no file is shown.", mlWarning)
+  elif ui.core.sessions[i].gathered: ui.say("Reopen with options: " & GatherNoReopen, mlWarning)
   else:
     let s = ui.core.sessions[i]
     ui.reopen.open(s.path, ui.core.openChoiceOf(s.path), s.facts.opened, s.signature.kind)
@@ -1502,7 +1503,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     else: ""), memoryShown: ui.memory.shown, themes: ui.themes, theme: ui.selected,
     follows: DefaultThemeNames[resolveTheme(ui.choice, ui.system)],
     recent: ui.core.settings.recentFiles, recentFolders: ui.core.settings.recentFolders,
-    canClose: ui.core.shownFile(ui.core.findPanel(MainPanel)) >= 0, layouts: ui.core.layouts,
+    canClose: shownAt >= 0, canReopen: shownAt >= 0 and not ui.core.sessions[shownAt].gathered,
+    layouts: ui.core.layouts,
     signature: signatureWord(ui.core), pairName: pairNameOf(ui.core),
     keepsLayouts: ui.keepsLayouts, followLatest: ui.core.settings.files.followLatest,
     agentOn: ui.agent.running, agentSocket: ui.agentSocket,
@@ -1585,6 +1587,14 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.core.apply Command(kind: ckOpenPlot, plotOf: MainPanel, plotView: bar.plotView)
   let job = jobStatus(ui.core.jobs.active, getMonoTime(), fs.now(), ui.statusJob)
   ui.statusJob = job.job
+  # In a receiver gather, the file the trace under the pointer was read from.
+  var fromFile = ""
+  let hovered = ui.core.selection.hover
+  let hoveredIn = if hovered >= 0: ui.core.findTrace(hovered) else: -1
+  if hoveredIn >= 0 and ui.core.sessions[hoveredIn].gathered:
+    template ses: untyped = ui.core.sessions[hoveredIn]
+    let source = ses.gatherSource(hovered - ses.base)
+    if source.len > 0: fromFile = "Source file: " & source.extractFilename
   # The readout is last frame's pick: the bar is drawn before the plot.
   let status = drawStatusBar(ui.fonts, ui.theme,
     ChromeInfo(themeName: ui.theme.name, scale: ui.scale, agent: AgentSign(
@@ -1593,6 +1603,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
       lingering: ui.agent.clients == 0 and ui.agent.lingers(getMonoTime()))), job,
     ui.core.settings.readout, ui.pick, ui.marks, ui.mapCursor,
     if ui.core.hoverNote.len > 0: ui.core.hoverNote
+    elif fromFile.len > 0: fromFile
     else: withAuxHint(ui.core.correlateNote),
     if ui.core.profileNoted: ProfileStored else: "", ui.core.settings.amplitudeIn)
   if status.choseAmplitude:

@@ -473,6 +473,10 @@ proc breaksJson(b: FirstBreaks; unit: SurveyUnit; fromSurvey: bool): JsonNode =
 
 proc noteSession(node: JsonNode; s: Session) =
   ## `path` is the file on disk. A derived session says so, and names its origin.
+  if s.gathered:
+    node["path"] = %s.name # (its key is no path, and holds a NUL)
+    node["gathered"] = %true
+    return
   node["path"] = %s.diskPath
   if s.derived:
     node["derived"] = %true

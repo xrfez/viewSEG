@@ -1758,6 +1758,7 @@ traces"); the selection stays as it was. Over no trace it says "No trace here".
 | Correlate auxiliary trace *N* > In this file / In the project (every file) / Shift... | | on an auxiliary trace only: marks its position for correlation in the file or in the project, and sets the shift in milliseconds the marked trace gets before it is correlated (see Correlate in the user guide) |
 | **Map** | | |
 | Select its receiver on the map | `M` | the receiver the trace was recorded at (in a receiver gather, its source), or those of the selection, with their traces; greyed out where the trace has no place on the map |
+| Show this receiver across the listed files | | collects this receiver's trace (this component) from every seismic file the Files window lists into a temporary, read-only view; greyed out where the trace has no receiver station, or the window shows such a view already (see Receiver gather across files in the user guide) |
 | **Whole record** | | |
 | Reverse polarity of all traces | | every trace of the file, in the picture and every graph, ticked while on ([Polarity](#polarity)) |
 | Clear all edits for this file | | the traces as the file has them; Undo brings the edits back |

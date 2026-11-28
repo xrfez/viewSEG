@@ -14,7 +14,7 @@
 ## marked, and the trace under the plot's pointer too. A value is copied from
 ## its right-click menu, with its row or every row read.
 
-import std/[math, strutils]
+import std/[math, os, strutils]
 import imguin/cimgui
 from parseSEG import SeismicKind
 import ../../core/[explain, state]
@@ -263,7 +263,9 @@ proc drawTraceTable*(ui: var TableUi; st: AppState; fonts: Fonts; t: Theme; mark
   # The graph, above the rows.
   var visible = (a: ui.view.rows.a + RowMargin, b: ui.view.rows.a + RowMargin)
   # The table: the trace's number, then the columns.
-  let n = 1 + ui.view.fields.len
+  # (a receiver gather has a column for the file each trace was read from, after the number)
+  let extra = if ses.gathered: 1 else: 0
+  let n = 1 + extra + ui.view.fields.len
   const flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_ScrollY.cint or
     ImGui_TableFlags_ScrollX.cint or ImGui_TableFlags_Resizable.cint or
     ImGui_TableFlags_BordersInnerV.cint or ImGui_TableFlags_SizingFixedFit.cint or
@@ -278,6 +280,9 @@ proc drawTraceTable*(ui: var TableUi; st: AppState; fonts: Fonts; t: Theme; mark
   igTableSetupScrollFreeze(1, 1)
   igTableSetupColumn("#", ImGui_TableColumnFlags_DefaultSort.cint or
     ImGui_TableColumnFlags_NoHide.cint, igGetFontSize() * 5, 0)
+  if extra > 0:
+    igTableSetupColumn("Source file", ImGui_TableColumnFlags_NoSort.cint, igGetFontSize() * 14,
+      ImGuiID(1_000_000))
   for c, f in ui.view.fields:
     igTableSetupColumn((columnLabel(f, answer.catalogue) & "##" & f).cstring, 0, 0,
       ImGuiID(1 + c))
@@ -288,10 +293,15 @@ proc drawTraceTable*(ui: var TableUi; st: AppState; fonts: Fonts; t: Theme; mark
       let name = igTableGetColumnName_Int(cint(c))
       fonts.withFont(frHeading, 0):
         igTableHeader(name)
-      if c > 0:
-        marks.mark("table.header " & ui.view.fields[c - 1])
+      if extra > 0 and c == 1:
+        marks.mark("table.header source file")
         if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
-          igSetTooltip("%s", (ui.view.fields[c - 1] & "\nClick to sort by it").cstring)
+          igSetTooltip("%s", "The seismic file the trace was read from".cstring)
+      elif c > extra:
+        let field = ui.view.fields[c - 1 - extra]
+        marks.mark("table.header " & field)
+        if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
+          igSetTooltip("%s", (field & "\nClick to sort by it").cstring)
   igPopItemFlag()
   let specs = igTableGetSortSpecs()
   if specs != nil and specs.SpecsCount > 0 and specs.SpecsDirty:
@@ -364,6 +374,12 @@ proc drawTraceTable*(ui: var TableUi; st: AppState; fonts: Fonts; t: Theme; mark
         igSetTooltip("%s", words.cstring)
         if hasF and row < 400: marks.mark("table.filter tip " & filterWords(filt))
         if shiftMs != 0.0 and row < 400: marks.mark("table.shift tip " & shiftWords(shiftMs))
+      if extra > 0 and igTableNextColumn():
+        let source = if trace >= 0: ses.gatherSource(trace) else: ""
+        igTextUnformatted(source.extractFilename.cstring, nil)
+        if source.len > 0 and igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
+          igSetTooltip("%s", source.cstring)
+        if row < 400: marks.mark("table.source " & $row)
       if hasF and row < 400: marks.mark("table.filter " & $row)
       if shiftMs != 0.0 and row < 400: marks.mark("table.shift " & $row)
       if row < 400: marks.mark("table.row " & $row)

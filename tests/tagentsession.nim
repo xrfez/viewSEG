@@ -622,6 +622,8 @@ proc main*() =
       st.agent(%*{"kind": "close project"})
       st.agent(%*{"kind": "reload vendor maps"})
       st.agent(%*{"kind": "open pair"}) # (the panel shows no signature file: ignored, in words)
+      st.agent(%*{"kind": "receiver gather", "gatherLine": 100, "gatherPoint": 105,
+        "gatherComponent": 0}) # (no seismic file is listed here: ignored, in words)
       doAssert given == Offered, "not given: " & $(Offered - given)
       let session = flat(st.settings)
       let kept = flat(st.keptSettings)

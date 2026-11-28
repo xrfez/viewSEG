@@ -46,10 +46,10 @@
 ## takes out; Shift + click selects the stations along the line from the
 ## point clicked last.
 
-import std/[bitops, math, strutils]
+import std/[bitops, math, options, strutils]
 import imguin/cimgui
 import ../../core/[explain, foldactual, foldgrid, foldjobs, geometry, join, jobs, mapthin,
-  noisearea, state]
+  noisearea, receivergather, state]
 import ../../gpu/mappoints
 import ../../view/[maplayers, theme]
 import explainmenu, focus, icons, marks, style
@@ -343,6 +343,16 @@ proc tip(text: string) =
       ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
     igTextUnformatted(text.cstring, nil)
     igEndTooltip()
+
+func receiverStationOf(sv: Survey; points: openArray[PointRef]): Option[Station] =
+  ## The station of the first receiver point of `points` that has one.
+  result = none(Station)
+  for p in points:
+    let i = sv.find(p.layer)
+    if result.isNone and p.role == prReceiver and i >= 0 and
+        p.point in 0 ..< sv.layers[i].points[prReceiver].station.len:
+      let s = sv.layers[i].points[prReceiver].station[p.point]
+      if s.known: result = some(s)
 
 proc button(label: string; marks: var Marks; mark: string): bool =
   result = igButton(label.cstring, ImVec2_c(x: 0, y: 0))
@@ -1768,6 +1778,16 @@ proc drawMenu(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput)
         tip("Show this file's record of the shot")
       if places.len > menuShots:
         igTextDisabled("%s", ("... and " & $(places.len - menuShots) & " more").cstring)
+      let gatherAt = receiverStationOf(st.survey, mu.menuPoints)
+      if mu.menuPoints[0].role == prReceiver:
+        if igMenuItem_Bool("Show this receiver across the listed files", nil, false,
+            gatherAt.isSome):
+          res.commands.add Command(kind: ckReceiverGather, gatherLine: gatherAt.get.line,
+            gatherPoint: gatherAt.get.point, gatherComponent: AnyComponent)
+        marks.mark("map menu.gather")
+        tip(if gatherAt.isSome: "Collects this receiver's trace, of any component, " &
+            "from every seismic file the Files window lists into a temporary, read-only view."
+          else: "This receiver has no station (its line or point is not known).")
       let what = if traces == 0: "Select it"
                  elif traces == 1: "Select it and its trace"
                  else: "Select it and its " & $traces & " traces"
