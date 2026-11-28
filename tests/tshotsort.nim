@@ -7,7 +7,8 @@
 ## Seen to fail: with empty cells compared as the smallest value, `emptyLast` listed a
 ## blank first in a descending key; with the file order not the last tie-break,
 ## `stable` reversed equal rows; with a number compared as text, `numbers` put 10 before
-## 9; with the layout's unknown columns dropped, `newColumn` lost the new column.
+## 9; with the layout's unknown columns dropped, `newColumn` lost the new column; with
+## "nan" not counted as missing, `nanIsMissing` left a numeric text column as text.
 
 import std/[monotimes, options, strutils, times]
 import viewSEG/core/[nif, shotlayout, shotlog, shotsort]
@@ -61,6 +62,13 @@ proc main*() =
     # a text column of numbers sorts by value
     let o = sorted("a,b\nx,10\ny,9\nz,\n", [RowKey(col: 1, kind: rkText)])
     doAssert o == @[1'i32, 0, 2], $o
+
+  block nanIsMissing:
+    # "nan" is a missing number: last like an empty cell, and a text column of numbers
+    # and "nan" still sorts by value
+    let t = "a,b\nx,10\ny,9\nz,nan\nw,NaN\n"
+    doAssert sorted(t, [RowKey(col: 1, kind: rkText)]) == @[1'i32, 0, 2, 3]
+    doAssert sorted(t, [RowKey(col: 1, kind: rkNumber)]) == @[1'i32, 0, 2, 3]
 
   block noKeys:
     doAssert sorted(text, newSeq[RowKey]()) == @[0'i32, 1, 2, 3, 4]

@@ -121,7 +121,8 @@ proc finish(b: SortBuild) =
         continue
       inc filled
       vals[r] = number(b.texts[i][r], b.comma)
-      if vals[r] != vals[r]:
+      # "nan" is a number that is missing, like an empty cell; any other text is not
+      if vals[r] != vals[r] and cmpIgnoreCase(b.texts[i][r].strip, "nan") != 0:
         all = false
         break
     if all and filled > 0:

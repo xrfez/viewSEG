@@ -38,7 +38,8 @@
 ## 20240301000000 into the wrong fields.
 ##
 ## Seen to fail: with `epochPreset` giving seconds for 16 digits, `epochPresetFor` gave
-## "epoch seconds" for the microsecond column.
+## "epoch seconds" for the microsecond column. With the GPS header ignored, `epochPresetGps`
+## filled "epoch microseconds" for GPS microseconds.
 ##
 ## Seen to fail on the earlier guess: with 16 digits under Time taken as
 ## GPSTB, `microsAsked` read Unix microseconds of 2023 as 2033 and asked
@@ -1147,6 +1148,18 @@ proc main*() =
     chosen.dateTimePattern = epochPreset(log, map, 1)
     doAssert log.shots(chosen).rows[0].timeUtcUs == some(1_709_251_200_000_000'i64)
     doAssert epochPreset(nil, map, 1) == ""
+
+  block epochPresetGps:
+    # a column whose header says GPS is no Unix time, whatever its digits: the pattern
+    # box stays empty when it is chosen as Time (UTC)
+    let gps = "shot,GPS time\n1,1709251200000000\n2,1709251210000000\n"
+    var map = guessMap(gps)
+    let log = parseShotLog(gps, map)
+    doAssert epochPreset(log, map, 1) == "", "GPS microseconds read as Unix times"
+    var chosen = map
+    chosen.roles[1] = crTime
+    chosen.dateTimePattern = epochPreset(log, map, 1)
+    doAssert chosen.dateTimePattern == ""
 
   echo "tshotlog ok"
 

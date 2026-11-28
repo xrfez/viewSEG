@@ -8513,6 +8513,9 @@ proc shotLayoutCmd(state: var AppState; cmd: Command) =
     state.ignore(cmd, "the shot log is not loaded")
     return
   var layout = cmd.slogLayout
+  # the widths readLayout accepts: 0 to 1000 font sizes (NaN fails the test: 0)
+  for c in layout.columns.mitems:
+    if not (c.width >= 0 and c.width < 1000): c.width = 0
   if layout.columns.len > MaxLayoutColumns: layout.columns.setLen MaxLayoutColumns
   if layout.sort.len > MaxLayoutSort: layout.sort.setLen MaxLayoutSort
   loaded.layout = layout
