@@ -62,13 +62,11 @@ proc main*() =
       result = p.laidOut and f.markOf("plot.data").size.x > 0 and f.core.sessions.len >= 1
       if result: plot = f.markOf("plot.data"))
 
-    # Right-click high in the plot: the menu is tall and must fit below the pointer, or its
-    # submenus cannot be reached.
     step("set A and B from one file", proc (f: FrameInfo) =
       f.moveMouse(plot.centre), proc (f: FrameInfo): bool =
       if not f.core.compareA.filled:
         if f.markOf("plot.menu.compare").size.x == 0 and wait mod 8 == 2:
-          f.click(vec2(plot.pos.x + plot.size.x * 0.25, plot.pos.y + plot.size.y * 0.2), 3)
+          f.click(vec2(plot.pos.x + plot.size.x * 0.25, plot.pos.y + plot.size.y * 0.5), 3)
         elif f.markOf("plot.menu.compareA").size.x == 0 and
             f.markOf("plot.menu.compare").size.x > 0 and wait mod 6 == 3:
           f.click(f.markOf("plot.menu.compare").centre)
@@ -76,7 +74,7 @@ proc main*() =
           f.click(f.markOf("plot.menu.compareA").centre)
       elif not f.core.compareB.filled:
         if f.markOf("plot.menu.compare").size.x == 0 and wait mod 8 == 2:
-          f.click(vec2(plot.pos.x + plot.size.x * 0.72, plot.pos.y + plot.size.y * 0.2), 3)
+          f.click(vec2(plot.pos.x + plot.size.x * 0.72, plot.pos.y + plot.size.y * 0.5), 3)
         elif f.markOf("plot.menu.compareB").size.x == 0 and
             f.markOf("plot.menu.compare").size.x > 0 and wait mod 6 == 3:
           f.click(f.markOf("plot.menu.compare").centre)
