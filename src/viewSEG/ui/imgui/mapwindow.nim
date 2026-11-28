@@ -49,7 +49,7 @@
 import std/[bitops, math, options, strutils]
 import imguin/cimgui
 import ../../core/[explain, foldactual, foldgrid, foldjobs, geometry, join, jobs, mapthin,
-  noisearea, receivergather, state]
+  noisearea, optiondocs, receivergather, state]
 import ../../gpu/mappoints
 import ../../view/[maplayers, theme]
 import explainmenu, focus, icons, marks, style
@@ -431,12 +431,11 @@ proc layerRow(l: MapLayerView; i: int; marks: var Marks; res: var MapOutput) =
   tip("This layer's colour")
   igSameLine(0, -1)
   var on = l.own
-  let label = l.name & (if l.points > 0: "  (" & $l.points & ")" else: "")
-  if igCheckbox(label.cstring, addr on):
+  if igCheckbox(layerLabel(l.name, l.points).cstring, addr on):
     res.commands.add Command(kind: ckMapLayer, mapLayer: l.key, shown: on)
   marks.mark("map.layer " & (if l.key.kind == mlHighlight: "highlight"
     else: l.file & " " & roleWord(l.role)))
-  tip("Show or hide this layer")
+  tip(layerTip(l.key.kind, l.role))
   igPopID()
 
 const groupTips: array[MapGroup, string] = [
@@ -852,51 +851,6 @@ proc drawFoldRow(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutp
     else: discard
     igUnindent(0)
 
-const ClearCase = "A station marked both by a first-break filter and by \"header position" &
-  " disagrees with the survey\" is the clear case for \"Move this station...\" in the" &
-  " station-move menu"
-  ## what the position filter's and the first-break filters' tips end with
-
-const filterTips: array[MapFilter, string] = [
-  "Traces the file marks dead in their headers",
-  "Traces whose samples could not be decoded",
-  "Traces you killed (the plot's menu, K)",
-  "Traces outside the exclusion area (near the source) whose RMS is far above the others'" &
-    " (robust z over 3.5)",
-  "Traces with runs of samples at their maximum: a recorder or a conversion that saturated",
-  "Traces with samples far above their neighbours (spikes)",
-  "Traces whose every sample is the same value, not zero",
-  "Traces whose RMS is far below the others' (robust z under -3.5), judged against the traces" &
-    " outside the exclusion area",
-  "Traces whose mean is large against their deviation",
-  "Traces whose every sample is 0, whatever the header says",
-  "Traces with a sample that is not a number, or infinite",
-  "Stations the template (the relation records) plans for the record that it has no trace of",
-  "Traces at stations the template does not list for the record",
-  "Stations recorded twice in one component",
-  "Traces that are not seismic (time breaks, pilots): counted, they have no place on the map",
-  "Seismic traces the map cannot place (no coordinates, and no survey file has their station)",
-  "Traces whose polarity you reversed (the plot's menu, R)",
-  "Shots whose listed receivers are not those of the template the relation records describe",
-  "Traces outside the exclusion area far louder than those either side of them on their own" &
-    " line (a station that is loud against its neighbours, not noisy against the record)",
-  "Traces whose noise was not judged: inside the exclusion area, whose sensor or station is" &
-    " not known, or of a node with a component missing. They are not shown as good",
-  "Traces whose own header receiver or source position is not where the survey puts their" &
-    " station (a station that moved, or a survey that is not the file's). Any format. In the" &
-    " station-move menu, \"Move this station to the position in this trace's headers\"" &
-    " follows it. " & ClearCase,
-  "Traces whose first-break pick is further from the refraction model fitted to the record" &
-    " than the record's own scatter allows (three times the scatter of the picks near the" &
-    " model, never less than 12 ms), or whose break was found 100 to 400 ms from it (far off" &
-    " the model): the first-break overlay's flags, the same traces it joins with a line on the" &
-    " Seismic plot. Ticked with the overlay off, it has the overlay's picks made all the same;" &
-    " the overlay stays off. " & ClearCase,
-  "Traces whose first-break pick differs from those of the traces beside it on its receiver" &
-    " line by more than the record's scatter allows: a wrong station, even where the breaks" &
-    " bend away from a straight model. The first-break overlay's flags, as for \"off the" &
-    " model\". " & ClearCase]
-
 const NoiseWrapEm = 30'f32 ## the words' lines wrap at this many font sizes
 
 func geometryShown(st: AppState): seq[string] =
@@ -914,13 +868,6 @@ func noiseLines(st: AppState): seq[string] =
   if n.ready and st.settings.map.filters * NoiseFilters != {}:
     for line in [n.areaWords & ".", n.notesWords, "Not judged: " & n.notJudgedWords & "."]:
       if line.len > 1: result.add line
-
-const FilterOrder = [mfDead, mfUndecodable, mfKilled, mfNoisy, mfLouder, mfWeak, mfNotJudged,
-  mfClipped, mfSpiky, mfConstant, mfDcOffset, mfAllZero, mfNotANumber, mfMissing, mfUnlisted,
-  mfDuplicate, mfAuxiliary, mfNoPosition, mfReversed, mfSpreadDiffers, mfPositionOff,
-  mfBreakOffModel, mfBreakOffNeighbours]
-  ## the order the filters are listed in: the noisy-trace test's findings together
-static: doAssert FilterOrder.len == ord(high(MapFilter)) + 1, "a filter is not listed"
 
 proc toleranceRow(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput) =
   ## Beside the position filter: how far a header position may be from the position in
@@ -987,11 +934,7 @@ proc drawFilters(mu: var MapUi; st: AppState; hits: array[MapFilter, FilterHits]
       if on: s.map.filters.incl f else: s.map.filters.excl f
       res.commands.add Command(kind: ckSettings, settings: s)
     marks.mark("map.filter " & $f)
-    tip(filterTips[f] & (if h.note.len > 0 and h.state == fsNotChecked: ".\nNot checked: " &
-      h.note & "." elif h.note.len > 0 and h.state == fsDone: " (" & h.note & ")." else: ".") &
-      "\nMarked on the map with a " & $f.shapeOf & (if FilterMarks[f].symbol == syNone: ""
-      else: " with " & $FilterMarks[f].symbol & " inside") & ": the shape and the colour of " &
-      $FilterMarks[f].family & ".")
+    tip(filterTip(f, h))
     if on and h.traces.len > 0:
       igSameLine(0, -1)
       if igSmallButton("Select"):

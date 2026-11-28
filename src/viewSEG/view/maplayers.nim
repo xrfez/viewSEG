@@ -26,7 +26,8 @@
 
 import std/[algorithm, hashes, intsets, math, os, sets, strutils]
 from parseSEG import GatherKind, gkReceiver, gkUnknown, known, recordsAt, stationKey
-import ../core/[geometry, shotlog, shotselect, state]
+import ../core/[geometry, optiondocs, shotlog, shotselect, state]
+export optiondocs.filterLabel, optiondocs.roleName
 import plotink, shotlogwords, theme
 
 type
@@ -103,11 +104,6 @@ func mapInk*(t: Theme; colours: PlotColours; custom = CustomColours()): MapInk =
 func plural(n: int; one, many: string): string =
   $n & " " & (if n == 1: one else: many)
 
-func roleName(r: PointRole; many: bool): string =
-  case r
-  of prSource: (if many: "Sources" else: "Source")
-  of prReceiver: (if many: "Receivers" else: "Receiver")
-
 func layerShown*(st: AppState; l: SurveyLayer; r: PointRole): bool {.inline.} =
   ## Whether the map draws role `r` of survey layer `l` (and finds its
   ## points under the pointer and in a box): its own toggle on, its group
@@ -135,11 +131,9 @@ func mapLayers*(st: AppState; ink: MapInk): seq[MapLayerView] =
             of loTraces: msRing
             of loSurveyFile: msDisc
             of loShotLog: msDiamond),
-            name: (if origin == loShotLog: "Shots of " & l.name
-            else: roleName(r, true) & (if origin == loTraces: " in " else: " of ") &
-              l.name) & (if joined: " (joined)" else: ""))
-  result.add MapLayerView(key: HighlightKey, name: "Highlight: the trace under the " &
-    "pointer, the selection", colour: ink.hover, shape: msDisc,
+            name: layerName(key.kind, r, l.name, joined))
+  result.add MapLayerView(key: HighlightKey, name: layerName(mlHighlight, prSource, "", false),
+    colour: ink.hover, shape: msDisc,
     shown: st.map.shown(HighlightKey), own: st.map.shown(HighlightKey))
 
 func markerSize*(spacing, pixel: float64): float32 =
@@ -754,16 +748,6 @@ func markedHereText*(counts: openArray[(MapFilter, int)]): string =
   var parts: seq[string] = @[]
   for (f, n) in counts: parts.add $n & " " & $f
   "Marked here: " & parts.join(", ")
-
-func filterLabel*(f: MapFilter; h: FilterHits): string =
-  ## A filter's line in the Layers list: its name and what it found,
-  ## "noisy  (3)", "missing from the template  (computing...)".
-  let name = ($f)[0 .. 0].toUpperAscii & ($f)[1 .. ^1]
-  name & (case h.state
-    of fsOff: ""
-    of fsComputing: "  (computing...)"
-    of fsDone: "  (" & $h.count & ")"
-    of fsNotChecked: "  (not checked)")
 
 type FilterIndex* = array[MapFilter, IntSet]
   ## each filter's traces as a set, for `filterLines`

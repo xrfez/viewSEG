@@ -31,8 +31,10 @@ const
     "selection. Change what is shown with `command` (the same commands the windows " &
     "issue). Commands that read data (opening, showing another record, sorting, a new " &
     "gain) return at once: call `wait` before `screenshot` or `state` to see their " &
-    "result. Every call is written in the program's Messages window. Nothing that " &
-    "writes a file is offered."
+    "result. Every call is written in the program's Messages window. No export or " &
+    "other new file is offered; a station move, a sensor and the project's patterns are " &
+    "kept in the open project. Options carry their own explanation under `options` " &
+    "in `state`."
 
 type
   LineStatus* = enum
