@@ -1,6 +1,6 @@
 # viewSEG
 
-**See what the crew recorded, and know whether it is good, while the crew is still on the line.**
+**See what the crew recorded, and know whether it is good.**
 
 viewSEG is a fast desktop viewer and quality-control tool for seismic field data. It opens
 SEG-Y, SEG-D and SEG-2 files as they come off the recorder, puts them on the survey map,
