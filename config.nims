@@ -162,7 +162,7 @@ task winRelease, "Cross-build bin/viewSEG.exe for Windows x86-64 with zig cc (no
   selfExec winReleaseBuild
 
 # ---------------------------------------------------------------- packaging --
-# `nim package` builds the release binaries and assembles dist/ (README.md,
+# `nim package` builds the release binaries and assembles dist/ (docs/building.md,
 # "Packaging"); tools/package.nim does the assembly. It never reaches the
 # network: the Windows SDL3 build must already exist (`nim winRelease` makes it).
 # `nim -d:packageTargets=linux package` (or windows) packages one OS only.

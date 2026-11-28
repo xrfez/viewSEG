@@ -1,5 +1,5 @@
 ## Checks what `nim package` wrote to dist/: each release folder and archive has
-## the layout of README.md ("Packaging"), and the packaged Linux binary, run
+## the layout of docs/building.md ("Packaging"), and the packaged Linux binary, run
 ## from its unpacked archive, uses that folder's own config/, logs/ and
 ## vendormaps/ (portable mode), or the per-user directories once config/ is gone.
 ##

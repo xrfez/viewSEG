@@ -5,7 +5,7 @@
 ##     [--linux:<viewSEG binary>] [--windows:<viewSEG.exe>]
 ##
 ## For each binary given it writes `<out>/viewSEG-<version>-<os>-x64/` (the layout
-## of README.md, "Packaging") and its archive next to it: `.tar.gz` for Linux,
+## of docs/building.md, "Packaging") and its archive next to it: `.tar.gz` for Linux,
 ## `.zip` for Windows. `<out>` defaults to `<repo>/dist`; the version comes from
 ## viewSEG.nimble. An earlier folder or archive of the same name is replaced, so
 ## running it twice gives the same result.

@@ -1,106 +1,95 @@
 # viewSEG
 
-A viewer for SEG-Y and SEG-D seismic data, with quality-control tools. It reads files
-through [parseSEG](https://github.com/xrfez/parseSEG) and filters, gains and spectra
-through [processSEG](https://github.com/xrfez/processSEG).
+**See what the crew recorded, and know whether it is good, while the crew is still on the line.**
 
-![Land sample: record 1 of shots.sgy, with the survey on the map](docs/images/land.png)
+viewSEG is a fast desktop viewer and quality-control tool for seismic field data. It opens
+SEG-Y, SEG-D and SEG-2 files as they come off the recorder, puts them on the survey map,
+and answers the questions a field QC asks every day: is every trace there, is it clean, is
+it where the survey says it is, and did the vibrator do what it should have done?
 
-## Try it
+![A shot record with the survey on the map](docs/images/hero.png)
 
-Needs Nim 2.4. On a fresh clone, check out the pinned dependencies, build, and open the
-synthetic land survey:
+## Why use it
 
-```sh
-atlas rep atlas.lock
-nim nimRelease
-bin/viewSEG samples/land/shots.sgy samples/land/land.?
-```
+- **It is built for the field, not the processing centre.** One small program, no
+  licence server, no database, no installer. Unzip it on a laptop and open a file.
+- **It is fast.** Records open as you step through them, including from a folder that is
+  still being written or a slow network drive. Large files are read in the background and
+  the window never waits for them.
+- **It checks, and says why.** Every verdict comes with its reason in plain words and the
+  limits it was judged against. Nothing is corrected silently: a reversed polarity or a
+  moved station is reported as a finding, never hidden.
+- **Your data stays yours.** Source files are opened read-only and are never changed.
+  Nothing leaves your computer.
+- **Free and open.** MIT licence, Linux and Windows.
 
-Record 1 of 6 opens (96 traces), and `land.s`, `land.r` and `land.x` go on the map.
-What to do next is in `docs/user/QUICKSTART.md`.
+## What it does
 
-## Building
+**Look at records.** Wiggle and density plots, gain, band-pass and notch filters,
+sorting on any header, auxiliary traces in their own window, trace and binary headers
+decoded with the vendor's own field names, and two traces compared sample by sample.
 
-Requires Nim 2.4.0. Dependencies are pinned in `atlas.lock` and checked out into `deps/`;
-`nim.cfg` holds their search paths.
+**Put them on the map.** Load the survey (SPS or SEG P1) and the plot and the map are
+linked: click a trace to see its station, click a station to see its traces. The map
+shows planned and recorded fold, missing shots and receivers, stations that have moved, and
+first breaks that disagree with their neighbours.
 
-```sh
-atlas rep atlas.lock    # fresh clone: check out the pinned dependencies
-nim test                # compile the suite once, run each test on its own Xvfb display
-                        # (a file that fails runs again alone: "flaky" if it then passes)
-nim c -r tests/tfoo.nim # one file. Its checks are proc main*(), called only when
-                        # the file is the main module. A file that must be its own
-                        # program says ## Separate binary: <why> (tests/tester.nim).
-                        # tests/tester.nim --separate compiles every file alone.
-nim nimRelease          # build bin/viewSEG for this machine
-nim winRelease          # cross-build bin/viewSEG.exe for Windows (zig)
-```
+![The Trace quality report beside the map, with the recorded fold](docs/images/mapqc.png)
 
-SDL3 is linked statically, so neither binary needs an SDL library at run time. On Linux
-its headers and `libSDL3.a` come from `pkg-config sdl3`. For Windows, `nim winRelease` first
-cross-builds SDL 3.4.18 with zig (`tools/sdl3-windows.sh`: git, CMake, Ninja; once, into
-`~/.cache/viewSEG/`, or `$SDL3_WINDOWS_PREFIX`). What makes the Windows build look and
-behave like a Windows program (title bar, icons, tray), and what to check on a Windows
-machine: `docs/windows.md`.
+**Judge a whole folder.** Missing traces, trace quality (dead, clipped, spiky, noisy, weak)
+and vibrator performance are measured over every file in a folder, with a table you can
+sort, a summary you can read at a glance, and a CSV for the daily report.
 
-`nim depsCheck` verifies that `atlas.lock`, `nim.cfg` and `deps/` agree
-(`tools/deps.nim`). `nim help` lists every task. The test suite also runs optional
-checks on private files when a folder `exampleFiles/` exists (its untracked
-`names.cfg` maps a neutral key to each file; `tests/privatefiles.example.cfg`
-says what each key needs), and skips them otherwise.
+**Vibrator QC.** Phase, force, frequency and distortion for every sweep, judged against
+the sweep the project planned and not only against the pilot the vibrator recorded. A
+vibrator that sweeps the wrong band, stops early or runs with reversed polarity fails, and
+the verdict says which.
 
-## Packaging
+![Vibrator QC of one sweep](docs/images/vibrator.png)
 
-`nim package` builds both release binaries (x86-64-v3, static SDL3; the Windows one as
-`nim winRelease` does) and writes a self-contained folder and an archive for each OS into
-`dist/`:
+**Spectra and analysis.** Amplitude spectra of any window of traces, live as you move,
+plus correlation of uncorrelated vibroseis records and slicing of continuous recordings by
+shot log.
 
-```
-dist/viewSEG-<version>-linux-x64/      and  dist/viewSEG-<version>-linux-x64.tar.gz
-dist/viewSEG-<version>-windows-x64/    and  dist/viewSEG-<version>-windows-x64.zip
-  viewSEG | viewSEG.exe
-  vendormaps/   vendor header maps (*.nif): parseSEG's and this repository's vendormaps/
-  config/       settings; its presence makes the release portable
-  assets/       themes, fonts (this repository's assets/)
-  logs/         session logs
-  licences/     viewSEG's licence and those of everything linked or bundled (see its README)
-  docs/         README.md, QUICKSTART.md (docs/user/), BUILD.txt (commits it was built from)
-```
+![Spectrum and spectrogram of a trace carrying 60 Hz noise](docs/images/spectrum.png)
 
-The version comes from `viewSEG.nimble`. Running it again replaces the folders and
-archives. It never reaches the network: the Windows SDL3 build must exist (run
-`nim winRelease` once). `nim -d:packageTargets=linux package` (or `windows`) packages one
-OS; `nim packageTest` packages, then checks `dist/` and runs the packaged Linux binary
-(`tests/package/tpackage.nim`).
+## Where it is strong
 
-**Start-up smoke check.** Before a build goes out, `nim smoke` (`nim smoke new` for
-`bin/viewSEG.new`, or `nim smoke <binary>`) starts the built binary, with no file, with
-`samples/land/shots.sgy` and with `samples/land/shots.sgd` (`nim samples` writes them), and
-checks that `--version` prints the three versions, that the program stays up for a few
-seconds and answers on its agent interface (`state` names the file, and a screenshot of the
-window is not blank), and that it leaves on Ctrl+C with exit code 0 and no "Internal display
-error" or start-up failure in its output or log folder (`tools/smoke.nim`). It runs on a
-private Xvfb display with a private home, XDG folders and agent socket, on a copy of the
-binary in a folder of its own: it opens no window on the desktop and touches neither your
-settings nor a running viewSEG. It needs Xvfb.
+- **Vibroseis.** Sweep QC against the plan, correlation, and continuous records.
+- **Land and node surveys with a relation file.** Templates are respected everywhere, so
+  a report counts the traces the survey asked for and names the ones it left out.
+- **Mixed and awkward files.** Header maps for several recording systems ship with it,
+  and you can add your own without rebuilding.
+- **Honest numbers.** Raw amplitudes read in counts, volts or physical units from your
+  sensor's data sheet, and a value viewSEG cannot stand behind is marked as unknown.
 
-**Portable mode.** While `config/` next to the executable exists and is writable, viewSEG
-writes everything (settings, `logs/`, `cache/`) inside its own folder. Without it, or in a
-read-only location such as `Program Files`, it uses the per-user directories of the OS.
-`viewSEG --paths` prints the directories in use and exits; `viewSEG --version` prints the
-version; `viewSEG --help` lists the options. `viewSEG --reset-windows` starts with the
-windows as at a first start and the main window on the primary screen, for when they are
-arranged so that the menus cannot be reached (Window > Reset the windows, Ctrl+Shift+R, in
-a running viewSEG).
+## Get it
 
-## Agent control
+Download the archive for Linux or Windows from the
+[releases page](https://github.com/xrfez/viewSEG/releases), unzip it and run `viewSEG`.
+Synthetic sample surveys are in [samples/](samples/), and the
+[quick start](docs/user/QUICKSTART.md) walks through them.
 
-An AI agent (any Model Context Protocol client: Claude Code, Claude Desktop, an editor) can
-operate the running program while you watch: `viewSEG --mcp`, or Tools > Agent control, and
-a client that starts `viewSEG --mcp-stdio`. Off by default, local only, every call shown in
-Messages, nothing that writes a file, and what it changes is for that session only: your
-saved settings and recent files stay as you left them. See `docs/agent-control.md`.
+To build it yourself, see [docs/building.md](docs/building.md).
+
+## What is coming
+
+viewSEG is released often. Next in line:
+
+- Receiver gathers collected across a folder of shot files.
+- Trace attributes on the map, with histograms.
+- Signal-to-noise measurement.
+- Rotation of node components.
+- Printable QC reports.
+
+## More
+
+- [Quick start and user guide](docs/user/QUICKSTART.md)
+- [Agent control](docs/agent-control.md): let an AI assistant operate the running program
+  while you watch. Off by default, local only, and it cannot write a file.
+- [Architecture](docs/architecture.md) and [building](docs/building.md)
+- File reading is [parseSEG](https://github.com/xrfez/parseSEG); filters, gains and
+  spectra are [processSEG](https://github.com/xrfez/processSEG).
 
 ## License
 
