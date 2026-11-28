@@ -20,6 +20,10 @@ type Step = object
 func centre(r: Rect): Vec2 =
   vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
 
+func menuSpot(r: Rect): Vec2 =
+  ## Where the plot menu is opened: high enough that its tall list fits below the pointer.
+  vec2(r.centre.x, round(r.pos.y + r.size.y * 0.2))
+
 proc click(f: FrameInfo; q: Vec2; button = 1) =
   f.moveMouse(q)
   f.pressMouse(q, true, button)
@@ -64,8 +68,8 @@ proc main*() =
         other = if "uncorrelated" in shown: "vib_correlated.sgd" else: "vib_uncorrelated.sgd")
 
     step("the plot's menu is grouped: headings, no top-level FFT", proc (f: FrameInfo) =
-      f.moveMouse(plot.centre), proc (f: FrameInfo): bool =
-      if wait == 3: f.click(plot.centre, button = 3)
+      f.moveMouse(plot.menuSpot), proc (f: FrameInfo): bool =
+      if wait == 3: f.click(plot.menuSpot, button = 3)
       result = f.markOf("plot.menu.compare").size.x > 0 and f.markOf("plot.menu").size.x > 100
       if result:
         for h in ["analyse", "find", "record"]:
@@ -74,9 +78,9 @@ proc main*() =
         doAssert f.markOf("plot.menu.compareA").size.x == 0, "Compare is not a submenu")
 
     step("the plot's menu offers Compare", proc (f: FrameInfo) =
-      f.moveMouse(plot.centre), proc (f: FrameInfo): bool =
+      f.moveMouse(plot.menuSpot), proc (f: FrameInfo): bool =
       if f.markOf("plot.menu.compare").size.x == 0 and wait mod 8 == 2:
-        f.click(plot.centre, button = 3)
+        f.click(plot.menuSpot, button = 3)
       elif f.markOf("plot.menu.compareA").size.x == 0 and
           f.markOf("plot.menu.compare").size.x > 0 and wait mod 6 == 3:
         f.click(f.markOf("plot.menu.compare").centre)
@@ -95,9 +99,9 @@ proc main*() =
 
     step("the plot's menu offers Compare on the other file", proc (f: FrameInfo) =
       plot = f.markOf("plot.data")
-      f.moveMouse(plot.centre), proc (f: FrameInfo): bool =
+      f.moveMouse(plot.menuSpot), proc (f: FrameInfo): bool =
       if f.markOf("plot.menu.compare").size.x == 0 and wait mod 8 == 2:
-        f.click(plot.centre, button = 3)
+        f.click(plot.menuSpot, button = 3)
       elif f.markOf("plot.menu.compareB").size.x == 0 and
           f.markOf("plot.menu.compare").size.x > 0 and wait mod 6 == 3:
         f.click(f.markOf("plot.menu.compare").centre)
@@ -131,7 +135,7 @@ proc main*() =
     step("set A and B from one file", proc (f: FrameInfo) =
       f.apply Command(kind: ckCompareWindow, compareOpen: false)
       plot = f.markOf("plot.data")
-      f.moveMouse(plot.centre), proc (f: FrameInfo): bool =
+      f.moveMouse(plot.menuSpot), proc (f: FrameInfo): bool =
       if f.core.compareOpen:
         f.apply Command(kind: ckCompareWindow, compareOpen: false)
         return false
@@ -139,7 +143,7 @@ proc main*() =
       let base = f.core.sessions[0].base
       if not f.core.compareA.filled:
         if f.markOf("plot.menu.compare").size.x == 0 and wait mod 8 == 2:
-          f.click(vec2(plot.pos.x + plot.size.x * 0.25, plot.pos.y + plot.size.y * 0.5), 3)
+          f.click(vec2(plot.pos.x + plot.size.x * 0.25, plot.pos.y + plot.size.y * 0.2), 3)
         elif f.markOf("plot.menu.compareA").size.x == 0 and
             f.markOf("plot.menu.compare").size.x > 0 and wait mod 6 == 3:
           f.click(f.markOf("plot.menu.compare").centre)
@@ -147,7 +151,7 @@ proc main*() =
           f.click(f.markOf("plot.menu.compareA").centre)
       elif not f.core.compareB.filled:
         if f.markOf("plot.menu.compare").size.x == 0 and wait mod 8 == 2:
-          f.click(vec2(plot.pos.x + plot.size.x * 0.72, plot.pos.y + plot.size.y * 0.5), 3)
+          f.click(vec2(plot.pos.x + plot.size.x * 0.72, plot.pos.y + plot.size.y * 0.2), 3)
         elif f.markOf("plot.menu.compareB").size.x == 0 and
             f.markOf("plot.menu.compare").size.x > 0 and wait mod 6 == 3:
           f.click(f.markOf("plot.menu.compare").centre)
@@ -162,9 +166,9 @@ proc main*() =
     step("FFT is reachable through New plot", proc (f: FrameInfo) =
       plot = f.markOf("plot.data")
       spectraBefore = f.core.spectra.len
-      f.moveMouse(plot.centre), proc (f: FrameInfo): bool =
+      f.moveMouse(plot.menuSpot), proc (f: FrameInfo): bool =
       if f.markOf("plot.menu.newplot").size.x == 0:
-        if wait mod 8 == 2: f.click(plot.centre, button = 3)
+        if wait mod 8 == 2: f.click(plot.menuSpot, button = 3)
       elif f.markOf("plot.menu.newplot.fft").size.x == 0:
         if wait mod 6 == 3: f.click(f.markOf("plot.menu.newplot").centre)
       elif wait mod 6 == 3: f.click(f.markOf("plot.menu.newplot.fft").centre)
